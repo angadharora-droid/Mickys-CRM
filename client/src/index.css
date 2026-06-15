@@ -1,0 +1,159 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Micky's design tokens — palette drawn from mickys.in brand:
+ * deep maroon packaging red, saffron gold, soft warm-white surfaces.
+ * Refreshed for a lighter, more modern, mobile-first feel.
+ */
+@layer base {
+  :root {
+    --background: 40 30% 98%;
+    --foreground: 24 18% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 24 18% 12%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 24 18% 12%;
+    --primary: 358 62% 31%;
+    --primary-foreground: 40 60% 98%;
+    --secondary: 40 70% 94%;
+    --secondary-foreground: 358 50% 26%;
+    --muted: 36 24% 95%;
+    --muted-foreground: 24 9% 44%;
+    --accent: 40 80% 93%;
+    --accent-foreground: 358 55% 28%;
+    --destructive: 0 74% 45%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 34 20% 90%;
+    --input: 34 18% 86%;
+    --ring: 358 62% 40%;
+    --gold: 40 93% 50%;
+    --gold-foreground: 26 60% 16%;
+    --radius: 0.85rem;
+
+    /* Brand sidebar (deep maroon, like the packaging) */
+    --sidebar: 357 56% 18%;
+    --sidebar-foreground: 38 45% 92%;
+    --sidebar-muted: 357 26% 70%;
+    --sidebar-active: 357 44% 26%;
+    --sidebar-border: 357 38% 25%;
+  }
+
+  .dark {
+    --background: 22 16% 8%;
+    --foreground: 38 40% 94%;
+    --card: 22 14% 11%;
+    --card-foreground: 38 40% 94%;
+    --popover: 22 14% 11%;
+    --popover-foreground: 38 40% 94%;
+    --primary: 0 55% 53%;
+    --primary-foreground: 40 60% 97%;
+    --secondary: 22 12% 17%;
+    --secondary-foreground: 38 40% 94%;
+    --muted: 22 12% 16%;
+    --muted-foreground: 34 16% 70%;
+    --accent: 357 35% 22%;
+    --accent-foreground: 38 70% 85%;
+    --destructive: 0 65% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 22 12% 20%;
+    --input: 22 12% 24%;
+    --ring: 0 55% 56%;
+    --gold: 40 90% 55%;
+    --gold-foreground: 26 60% 14%;
+
+    --sidebar: 22 16% 10%;
+    --sidebar-foreground: 38 40% 90%;
+    --sidebar-muted: 30 12% 58%;
+    --sidebar-active: 357 38% 23%;
+    --sidebar-border: 22 12% 18%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    /* Avoid grey flash on tap for a native-app mobile feel */
+    -webkit-tap-highlight-color: transparent;
+    text-rendering: optimizeLegibility;
+  }
+  /* Larger, comfortable tap targets for interactive elements on touch devices */
+  @media (hover: none) and (pointer: coarse) {
+    button,
+    a,
+    [role='button'] {
+      touch-action: manipulation;
+    }
+  }
+  ::selection {
+    @apply bg-gold/30;
+  }
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+}
+
+@layer utilities {
+  /* Slim, theme-aware scrollbars */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-border;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-muted-foreground/40;
+  }
+
+  /* Sidebar scrollbar on dark maroon surface */
+  .sidebar-scroll::-webkit-scrollbar-thumb {
+    background: hsl(var(--sidebar-active));
+  }
+
+  /* Subtle dotted texture used on brand surfaces (sidebar) */
+  .brand-texture {
+    background-image: radial-gradient(hsl(40 90% 80% / 0.07) 1px, transparent 1px);
+    background-size: 22px 22px;
+  }
+
+  /* Soft light brand wash for the login / marketing surfaces */
+  .brand-aurora {
+    background:
+      radial-gradient(60% 50% at 15% 0%, hsl(40 92% 60% / 0.16), transparent 60%),
+      radial-gradient(55% 45% at 100% 100%, hsl(358 62% 40% / 0.12), transparent 55%),
+      hsl(var(--background));
+  }
+
+  /* Respect iOS / Android safe areas for the mobile bottom nav */
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .h-safe-nav {
+    height: calc(4rem + env(safe-area-inset-bottom, 0px));
+  }
+  .mb-safe-nav {
+    margin-bottom: calc(4rem + env(safe-area-inset-bottom, 0px));
+  }
+
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}

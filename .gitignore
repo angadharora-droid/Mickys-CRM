@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+
+# Environment / secrets
+.env
+.env.local
+*.env
+
+# Build output
+dist/
+build/
+
+# Runtime uploads (generated kits, attachments)
+server/uploads/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor / tooling
+.claude/
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
