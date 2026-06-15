@@ -8,6 +8,7 @@ const { searchRegex } = require('../utils/sanitize');
 // GET /api/users?role=&search=&isActive=&page=&limit=
 const listUsers = asyncHandler(async (req, res) => {
   const { page, limit, skip } = getPagination(req.query);
+  const isAdmin = req.user.role === 'admin';
   const filter = {};
   if (req.query.role) filter.role = req.query.role;
   if (req.query.isActive !== undefined && req.query.isActive !== '') {
@@ -18,8 +19,18 @@ const listUsers = asyncHandler(async (req, res) => {
     filter.$or = [{ name: rx }, { email: rx }, { employeeCode: rx }];
   }
 
+  // Non-admins only ever need the lead-assignment picker: limit them to active
+  // sales execs and the few fields it renders, so they can't enumerate admin
+  // accounts or harvest other users' PII (phone, last-login, etc.).
+  let projection;
+  if (!isAdmin) {
+    filter.role = 'sales_exec';
+    filter.isActive = true;
+    projection = 'name email employeeCode role';
+  }
+
   const [users, total] = await Promise.all([
-    User.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
+    User.find(filter, projection).sort({ createdAt: -1 }).skip(skip).limit(limit),
     User.countDocuments(filter),
   ]);
   res.json({ success: true, data: users, meta: buildMeta(total, page, limit) });

@@ -4,6 +4,10 @@ const crypto = require('crypto');
 
 const ROLES = ['admin', 'sales_exec'];
 
+// bcrypt work factor. 12 is a sensible 2020s default; the cost is embedded in
+// each hash, so raising it doesn't invalidate passwords hashed at a lower cost.
+const BCRYPT_ROUNDS = 12;
+
 const userSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
@@ -29,7 +33,7 @@ const userSchema = new mongoose.Schema(
 
 userSchema.pre('save', async function (next) {
   if (!this.isModified('password')) return next();
-  this.password = await bcrypt.hash(this.password, 10);
+  this.password = await bcrypt.hash(this.password, BCRYPT_ROUNDS);
   next();
 });
 
