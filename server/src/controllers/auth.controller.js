@@ -1,14 +1,21 @@
+const bcrypt = require('bcryptjs');
 const asyncHandler = require('../utils/asyncHandler');
 const ApiError = require('../utils/ApiError');
 const User = require('../models/User');
 const tokenService = require('../services/token.service');
 const { logActivity } = require('../services/activity.service');
 
+// A throwaway hash to compare against when the email doesn't exist, so a
+// non-existent account costs the same time as a wrong password. Without this,
+// an attacker can enumerate valid emails by timing the response.
+const DUMMY_HASH = bcrypt.hashSync('login-timing-guard', 12);
+
 // POST /api/auth/login
 const login = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
   const user = await User.findOne({ email }).select('+password');
-  if (!user || !(await user.comparePassword(password))) {
+  const passwordOk = await bcrypt.compare(password, user ? user.password : DUMMY_HASH);
+  if (!user || !passwordOk) {
     throw ApiError.unauthorized('Invalid email or password');
   }
   if (!user.isActive) throw ApiError.forbidden('Your account has been deactivated');

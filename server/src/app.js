@@ -3,7 +3,6 @@ const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const cookieParser = require('cookie-parser');
-const path = require('path');
 
 const env = require('./config/env');
 const routes = require('./routes');
@@ -21,8 +20,9 @@ app.use(
   cors({
     origin: (origin, cb) => {
       // Allow same-origin / non-browser clients (no Origin header) and listed origins.
+      // Disallowed origins get no CORS headers (browser blocks) rather than a 500.
       if (!origin || env.corsOrigins.includes(origin)) return cb(null, true);
-      return cb(new Error('Not allowed by CORS'));
+      return cb(null, false);
     },
     credentials: true,
   })
@@ -35,16 +35,11 @@ app.use(cookieParser());
 app.use(mongoSanitize);
 if (env.nodeEnv === 'development') app.use(morgan('dev'));
 
-// Static serving of uploaded attachments + generated PDFs.
-// Access is via unguessable, randomised filenames; deny dotfiles and directory listings.
-app.use(
-  '/uploads',
-  express.static(path.join(__dirname, '..', 'uploads'), {
-    dotfiles: 'deny',
-    index: false,
-    setHeaders: (res) => res.setHeader('X-Content-Type-Options', 'nosniff'),
-  })
-);
+// NOTE: Generated kit PDFs/ZIPs (which contain confidential pricing) are NOT served
+// statically. They live in GridFS and are streamed only through the per-lead,
+// authenticated, ownership-checked routes (/api/leads/:id/documents/:idx, /kit.zip).
+// Serving the uploads/ tree publicly would let anyone fetch those docs by guessing
+// the semi-predictable ref-number path, bypassing auth — so there is no static mount.
 
 app.get('/health', (_req, res) => res.json({ status: 'ok', uptime: process.uptime() }));
 app.use('/api', globalLimiter, routes);

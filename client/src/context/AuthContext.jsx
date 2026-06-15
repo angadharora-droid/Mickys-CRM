@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import api, { setAccessToken, getAccessToken } from '@/lib/api';
+import api, { setAccessToken, refreshSession } from '@/lib/api';
 
 const AuthContext = createContext(null);
 
@@ -7,17 +7,18 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // Restore session on first load
+  // Restore session on first load. The access token lives only in memory, so a
+  // fresh page load starts with none — exchange the httpOnly refresh cookie for
+  // a new token + user. A 401 here just means "not logged in".
   useEffect(() => {
     let cancelled = false;
     async function restore() {
       try {
-        if (getAccessToken()) {
-          const { data } = await api.get('/auth/me');
-          if (!cancelled) setUser(data.data.user);
-        }
+        const { user: restoredUser } = await refreshSession();
+        if (!cancelled) setUser(restoredUser);
       } catch {
         setAccessToken(null);
+        if (!cancelled) setUser(null);
       } finally {
         if (!cancelled) setLoading(false);
       }

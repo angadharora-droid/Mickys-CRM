@@ -14,12 +14,14 @@ const api = axios.create({
   withCredentials: true,
 });
 
-let accessToken = localStorage.getItem('mickys_access_token') || null;
+// The access token is kept in memory only — never in localStorage/sessionStorage
+// — so an XSS payload can't read a long-lived credential off disk and exfiltrate
+// it. The httpOnly refresh cookie re-establishes the session on reload via
+// refreshSession(). Trade-off: a full page load needs one /auth/refresh round-trip.
+let accessToken = null;
 
 export function setAccessToken(token) {
-  accessToken = token;
-  if (token) localStorage.setItem('mickys_access_token', token);
-  else localStorage.removeItem('mickys_access_token');
+  accessToken = token || null;
 }
 
 export function getAccessToken() {
@@ -33,6 +35,37 @@ api.interceptors.request.use((config) => {
 
 let refreshPromise = null;
 
+/**
+ * Exchanges the httpOnly refresh cookie for a fresh access token and returns the
+ * { user, accessToken } payload. Concurrent callers in this tab share one
+ * in-flight request; across tabs a Web Lock serialises the call so two tabs
+ * booting at once can't both spend the same cookie and trip the server's
+ * refresh-token reuse detection (which would log everyone out).
+ */
+export function refreshSession() {
+  if (!refreshPromise) {
+    const run = async () => {
+      const { data } = await axios.post(
+        `${API_ROOT}/api/auth/refresh`,
+        {},
+        { withCredentials: true }
+      );
+      setAccessToken(data.data.accessToken);
+      return data.data;
+    };
+    refreshPromise = (async () => {
+      try {
+        return navigator.locks?.request
+          ? await navigator.locks.request('mickys-refresh', run)
+          : await run();
+      } finally {
+        refreshPromise = null;
+      }
+    })();
+  }
+  return refreshPromise;
+}
+
 api.interceptors.response.use(
   (res) => res,
   async (error) => {
@@ -43,16 +76,10 @@ api.interceptors.response.use(
     if (status === 401 && !original._retry && !original.url.startsWith('/auth/')) {
       original._retry = true;
       try {
-        refreshPromise =
-          refreshPromise ||
-          axios.post(`${API_ROOT}/api/auth/refresh`, {}, { withCredentials: true });
-        const { data } = await refreshPromise;
-        refreshPromise = null;
-        setAccessToken(data.data.accessToken);
-        original.headers.Authorization = `Bearer ${data.data.accessToken}`;
+        const { accessToken: token } = await refreshSession();
+        original.headers.Authorization = `Bearer ${token}`;
         return api(original);
       } catch (refreshErr) {
-        refreshPromise = null;
         setAccessToken(null);
         window.dispatchEvent(new Event('mickys:logout'));
         return Promise.reject(refreshErr);
