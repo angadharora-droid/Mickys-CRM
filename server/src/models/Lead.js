@@ -1,0 +1,158 @@
+const mongoose = require('mongoose');
+
+const BUSINESS_TYPES = [
+  'Hotel',
+  'Restaurant',
+  'Cloud Kitchen',
+  'Caterer',
+  'Distributor',
+  'Institution',
+  'QSR',
+  'Other',
+];
+
+const KIT_TYPES = ['distributor', 'institutional'];
+
+const LEAD_STATUSES = ['new', 'kit_selected', 'rates_confirmed', 'generated', 'delivered'];
+
+/** Allowed forward transitions of the kit pipeline (later steps may be re-run). */
+const LEAD_TRANSITIONS = {
+  new: ['kit_selected'],
+  kit_selected: ['rates_confirmed', 'kit_selected'], // re-selecting kit stays here
+  rates_confirmed: ['generated', 'kit_selected'], // can re-edit rates or switch kit
+  generated: ['delivered', 'rates_confirmed'], // can regenerate after re-confirming
+  delivered: ['delivered', 'generated'], // can re-deliver / regenerate
+};
+
+/** Snapshot of one priced line at the time the kit's rates were confirmed. */
+const rateLineSchema = new mongoose.Schema(
+  {
+    rateItemId: { type: mongoose.Schema.Types.ObjectId, ref: 'RateItem' },
+    sku: { type: String, default: '' },
+    productName: { type: String, required: true },
+    packSize: { type: String, default: '' },
+    mrp: { type: Number, required: true },
+    standardNetRate: { type: Number, required: true }, // master rate at snapshot time
+    netRate: { type: Number, required: true }, // exec-confirmed (may be overridden)
+    suggestiveMargin: { type: Number, default: 0 },
+    gst: { type: Number, required: true },
+    netInclGst: { type: Number, required: true }, // netRate * (1 + gst/100)
+    floorPrice: { type: Number, required: true },
+    deviationPct: { type: Number, default: 0 }, // % below standard (0 if at/above)
+  },
+  { _id: false }
+);
+
+const statusHistorySchema = new mongoose.Schema(
+  {
+    from: String,
+    to: { type: String, required: true },
+    changedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    note: { type: String, default: '' },
+    at: { type: Date, default: Date.now },
+  },
+  { _id: false }
+);
+
+const rateEditSchema = new mongoose.Schema(
+  {
+    productName: String,
+    field: { type: String, default: 'netRate' },
+    from: Number,
+    to: Number,
+    by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    at: { type: Date, default: Date.now },
+  },
+  { _id: false }
+);
+
+const generatedFileSchema = new mongoose.Schema(
+  {
+    docType: { type: String, required: true },
+    label: { type: String, default: '' },
+    fileName: { type: String, required: true },
+    fileId: { type: String, default: '' },
+    url: { type: String, required: true },
+    static: { type: Boolean, default: false },
+  },
+  { _id: false }
+);
+
+const leadSchema = new mongoose.Schema(
+  {
+    refNumber: { type: String, required: true, unique: true, index: true },
+
+    // ---- Step 1: client data ----
+    businessName: { type: String, required: true, trim: true, index: true },
+    contactPerson: { type: String, required: true, trim: true },
+    designation: { type: String, trim: true, default: '' },
+    mobileNumber: { type: String, required: true, trim: true },
+    email: { type: String, required: true, trim: true, lowercase: true },
+    whatsappNumber: { type: String, trim: true, default: '' },
+    city: { type: String, required: true, trim: true, index: true },
+    state: { type: String, required: true, trim: true },
+    address: { type: String, trim: true, default: '' },
+    gstin: { type: String, trim: true, uppercase: true, default: '' },
+    businessType: { type: String, enum: BUSINESS_TYPES, required: true },
+
+    // ---- CRM metadata ----
+    assignedExecId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    leadSource: { type: String, trim: true, default: '' },
+    leadDate: { type: Date, default: Date.now },
+    internalNotes: { type: String, trim: true, default: '' },
+
+    // ---- Kit ----
+    kitType: { type: String, enum: KIT_TYPES },
+    rates: { type: [rateLineSchema], default: [] },
+    customTerms: {
+      paymentTerms: { type: String, default: '' },
+      creditPeriod: { type: String, default: '' },
+      // Editable Terms & Conditions (one clause per line) printed on the kit's
+      // main document. Blank => the standard kit-type terms are used.
+      termsAndConditions: { type: String, default: '' },
+      // Editable distributor agreement rows. One row per line in the format:
+      // Particular | Terms & Conditions. Blank => standard agreement terms.
+      agreementTermsAndConditions: { type: String, default: '' },
+    },
+
+    // ---- Workflow ----
+    status: { type: String, enum: LEAD_STATUSES, default: 'new', index: true },
+    statusHistory: { type: [statusHistorySchema], default: [] },
+    rateEditLog: { type: [rateEditSchema], default: [] },
+
+    // ---- Generated output ----
+    generatedFiles: { type: [generatedFileSchema], default: [] },
+    zipFile: {
+      fileName: { type: String, default: '' },
+      fileId: { type: String, default: '' },
+      url: { type: String, default: '' },
+    },
+    generatedAt: { type: Date },
+
+    // ---- Delivery ----
+    delivery: {
+      method: { type: String, default: '' }, // 'email' | 'download'
+      sentTo: { type: String, default: '' },
+      sentAt: { type: Date },
+      status: { type: String, default: '' }, // 'sent' | 'failed'
+      messageId: { type: String, default: '' },
+    },
+
+    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    modifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  },
+  { timestamps: true }
+);
+
+leadSchema.index({ createdAt: -1 });
+
+leadSchema.statics.canTransition = function (from, to) {
+  return (LEAD_TRANSITIONS[from] || []).includes(to);
+};
+
+const Lead = mongoose.model('Lead', leadSchema);
+Lead.BUSINESS_TYPES = BUSINESS_TYPES;
+Lead.KIT_TYPES = KIT_TYPES;
+Lead.LEAD_STATUSES = LEAD_STATUSES;
+Lead.LEAD_TRANSITIONS = LEAD_TRANSITIONS;
+module.exports = Lead;
