@@ -4,8 +4,13 @@ import axios from 'axios';
  * Axios instance with JWT access-token header + automatic refresh on 401.
  * The refresh token lives in an httpOnly cookie scoped to /api/auth.
  */
+// API origin. Empty for same-origin (dev uses Vite's /api proxy). Set
+// VITE_API_URL (e.g. https://api.centrepointgroup.in) when the backend is on a
+// separate host; trailing slash is trimmed so `${API_ROOT}/api` stays clean.
+const API_ROOT = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '');
+
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: `${API_ROOT}/api`,
   withCredentials: true,
 });
 
@@ -39,7 +44,8 @@ api.interceptors.response.use(
       original._retry = true;
       try {
         refreshPromise =
-          refreshPromise || axios.post('/api/auth/refresh', {}, { withCredentials: true });
+          refreshPromise ||
+          axios.post(`${API_ROOT}/api/auth/refresh`, {}, { withCredentials: true });
         const { data } = await refreshPromise;
         refreshPromise = null;
         setAccessToken(data.data.accessToken);
