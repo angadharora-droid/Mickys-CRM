@@ -120,6 +120,15 @@ const leadSchema = new mongoose.Schema(
     statusHistory: { type: [statusHistorySchema], default: [] },
     rateEditLog: { type: [rateEditSchema], default: [] },
 
+    // ---- Edit lock ----
+    // Set true automatically once a kit is generated: the lead's rates, terms,
+    // kit type and regeneration are frozen until someone explicitly unlocks it
+    // with the "Edit" action. The already-generated documents stay accessible.
+    locked: { type: Boolean, default: false, index: true },
+    // Flagged when a generated lead is changed after the fact (i.e. the live
+    // data no longer matches the kit the client received, until it's regenerated).
+    editedAfterGeneration: { type: Boolean, default: false },
+
     // ---- Generated output ----
     generatedFiles: { type: [generatedFileSchema], default: [] },
     zipFile: {
