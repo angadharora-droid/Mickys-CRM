@@ -1,7 +1,7 @@
 const express = require('express');
 
 const { authenticate, authorize } = require('../middleware/auth');
-const { loginLimiter, authLimiter } = require('../middleware/security');
+const { loginLimiter, authLimiter, generateLimiter, emailLimiter } = require('../middleware/security');
 const validate = require('../middleware/validate');
 const v = require('../validators');
 
@@ -48,10 +48,10 @@ router.put('/leads/:id', authenticate, validate(v.updateLeadSchema), leads.updat
 router.delete('/leads/:id', authenticate, leads.deleteLead);
 router.post('/leads/:id/kit-type', authenticate, validate(v.kitTypeSchema), leads.selectKitType);
 router.put('/leads/:id/rates', authenticate, validate(v.ratesConfirmSchema), leads.confirmRates);
-router.post('/leads/:id/generate', authenticate, leads.generateLeadKit);
+router.post('/leads/:id/generate', authenticate, generateLimiter, leads.generateLeadKit);
 router.get('/leads/:id/kit.zip', authenticate, leads.downloadZip);
 router.get('/leads/:id/documents/:idx', authenticate, leads.downloadDocument);
-router.post('/leads/:id/email', authenticate, validate(v.emailKitSchema), leads.emailKit);
+router.post('/leads/:id/email', authenticate, emailLimiter, validate(v.emailKitSchema), leads.emailKit);
 
 // ---------- Dashboards ----------
 router.get('/dashboard/admin', authenticate, authorize(ADMIN), dashboard.adminAnalytics);
@@ -64,6 +64,6 @@ router.get('/activity-logs', authenticate, authorize(ADMIN), activity.listLogs);
 // ---------- Settings ----------
 router.get('/settings', authenticate, authorize(ADMIN), settings.getSettings);
 router.put('/settings', authenticate, authorize(ADMIN), validate(v.settingsSchema), settings.updateSettings);
-router.post('/settings/test-email', authenticate, authorize(ADMIN), settings.testEmail);
+router.post('/settings/test-email', authenticate, authorize(ADMIN), emailLimiter, settings.testEmail);
 
 module.exports = router;
