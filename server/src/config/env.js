@@ -43,6 +43,20 @@ const env = {
     accessExpires: process.env.JWT_ACCESS_EXPIRES || '15m',
     refreshExpires: process.env.JWT_REFRESH_EXPIRES || '7d',
   },
+  // Session timing. A refresh token is rejected once it has been idle longer than
+  // idleTimeoutMs (sliding window, reset on each refresh) OR once the session is
+  // older than absoluteTimeoutMs since first login (hard cap, survives rotation).
+  session: {
+    idleTimeoutMs: parseInt(process.env.SESSION_IDLE_TIMEOUT_MIN || '30', 10) * 60 * 1000,
+    absoluteTimeoutMs: parseInt(process.env.SESSION_ABSOLUTE_TIMEOUT_HOURS || '168', 10) * 60 * 60 * 1000,
+    maxConcurrent: parseInt(process.env.SESSION_MAX_CONCURRENT || '5', 10),
+  },
+  // Per-account login lockout (defence-in-depth on top of the per-IP rate limiter).
+  // After maxAttempts consecutive failures the account is locked for lockMinutes.
+  lockout: {
+    maxAttempts: parseInt(process.env.LOGIN_MAX_ATTEMPTS || '8', 10),
+    lockMs: parseInt(process.env.LOGIN_LOCK_MINUTES || '15', 10) * 60 * 1000,
+  },
   // Resend is preferred when RESEND_API_KEY is set; SMTP is the fallback.
   resend: {
     apiKey: process.env.RESEND_API_KEY || '',

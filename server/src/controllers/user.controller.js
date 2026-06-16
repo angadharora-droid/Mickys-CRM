@@ -80,7 +80,7 @@ const deleteUser = asyncHandler(async (req, res) => {
   }
   const user = await User.findByIdAndUpdate(
     req.params.id,
-    { isActive: false, refreshTokens: [] },
+    { isActive: false, sessions: [] },
     { new: true }
   );
   if (!user) throw ApiError.notFound('User not found');

@@ -44,4 +44,35 @@ const authLimiter = rateLimit({
   message: jsonMessage('Too many authentication requests. Please try again later.'),
 });
 
-module.exports = { mongoSanitize, globalLimiter, loginLimiter, authLimiter };
+/**
+ * Limiter for kit generation — each call renders multiple PDFs + a ZIP, so it's
+ * CPU/IO heavy. Cap it to stop a single client pinning the server.
+ */
+const generateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: jsonMessage('Too many kit-generation requests. Please wait a moment and try again.'),
+});
+
+/**
+ * Limiter for outbound email — protects the shared mailbox/Resend quota and
+ * stops the endpoint being used to spam third parties from our domain.
+ */
+const emailLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 40,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: jsonMessage('Email sending limit reached. Please try again later.'),
+});
+
+module.exports = {
+  mongoSanitize,
+  globalLimiter,
+  loginLimiter,
+  authLimiter,
+  generateLimiter,
+  emailLimiter,
+};
