@@ -76,6 +76,25 @@ function assertEditable(lead, user) {
   }
 }
 
+/**
+ * Once a kit is generated the lead is frozen until someone clicks "Edit" to
+ * unlock it. This applies to everyone (incl. admin) — the unlock is the explicit
+ * gate. Downloads/email are unaffected since they don't go through this check.
+ */
+function assertNotLocked(lead) {
+  if (lead.locked) {
+    throw ApiError.badRequest('This lead is locked. Click "Edit" to unlock it before making changes.');
+  }
+}
+
+/**
+ * Flag that a generated lead has been changed after the fact, so the UI can warn
+ * that the client's kit is now out of date until it's regenerated.
+ */
+function markEditedIfGenerated(lead) {
+  if (lead.generatedAt) lead.editedAfterGeneration = true;
+}
+
 async function resolveExecId(req, providedId) {
   // Everyone (exec, manager, admin) owns the leads they create. A manager/admin
   // may still explicitly assign a different sales exec by passing their id.
@@ -217,6 +236,7 @@ const updateLead = asyncHandler(async (req, res) => {
   const lead = await Lead.findById(req.params.id);
   if (!lead) throw ApiError.notFound('Lead not found');
   assertCanView(lead, req.user);
+  assertNotLocked(lead);
   assertEditable(lead, req.user);
 
   const { assignedExecId, ...rest } = req.body;
@@ -224,6 +244,7 @@ const updateLead = asyncHandler(async (req, res) => {
     lead.assignedExecId = await resolveExecId(req, assignedExecId);
   }
   Object.assign(lead, rest);
+  markEditedIfGenerated(lead);
   lead.modifiedBy = req.user._id;
   await lead.save();
 
@@ -265,6 +286,7 @@ const selectKitType = asyncHandler(async (req, res) => {
   const lead = await Lead.findById(req.params.id);
   if (!lead) throw ApiError.notFound('Lead not found');
   assertCanView(lead, req.user);
+  assertNotLocked(lead);
   if (lead.status === 'delivered') throw ApiError.badRequest('This lead has already been delivered');
 
   const items = await RateItem.find({ kitType, isActive: true }).sort({ productName: 1 });
@@ -280,6 +302,7 @@ const selectKitType = asyncHandler(async (req, res) => {
     creditPeriod: settings.kit?.defaultCreditPeriod || '',
   };
   lead.status = 'kit_selected';
+  markEditedIfGenerated(lead);
   lead.modifiedBy = req.user._id;
   lead.statusHistory.push({ from, to: 'kit_selected', changedBy: req.user._id, note: `Kit: ${kitType}` });
   await lead.save();
@@ -299,6 +322,7 @@ const confirmRates = asyncHandler(async (req, res) => {
   const lead = await Lead.findById(req.params.id);
   if (!lead) throw ApiError.notFound('Lead not found');
   assertCanView(lead, req.user);
+  assertNotLocked(lead);
   if (!lead.kitType || !lead.rates.length) throw ApiError.badRequest('Select a kit type before confirming rates');
 
   const overrideById = new Map(rates.map((r) => [String(r.rateItemId), r]));
@@ -342,6 +366,7 @@ const confirmRates = asyncHandler(async (req, res) => {
 
   const from = lead.status;
   lead.status = 'rates_confirmed';
+  markEditedIfGenerated(lead);
   lead.modifiedBy = req.user._id;
   lead.statusHistory.push({
     from, to: 'rates_confirmed', changedBy: req.user._id,
@@ -363,6 +388,7 @@ const generateLeadKit = asyncHandler(async (req, res) => {
   const lead = await Lead.findById(req.params.id);
   if (!lead) throw ApiError.notFound('Lead not found');
   assertCanView(lead, req.user);
+  assertNotLocked(lead);
   if (!['rates_confirmed', 'generated', 'delivered'].includes(lead.status)) {
     throw ApiError.badRequest('Confirm the rates before generating the kit');
   }
@@ -370,14 +396,41 @@ const generateLeadKit = asyncHandler(async (req, res) => {
   await buildKitFiles(lead);
   const from = lead.status;
   if (from !== 'delivered') lead.status = 'generated';
+  // Freeze the lead now that a fresh kit exists; the data is back in sync.
+  lead.locked = true;
+  lead.editedAfterGeneration = false;
   lead.modifiedBy = req.user._id;
-  lead.statusHistory.push({ from, to: lead.status, changedBy: req.user._id, note: 'Kit generated' });
+  lead.statusHistory.push({ from, to: lead.status, changedBy: req.user._id, note: 'Kit generated · locked' });
   await lead.save();
 
   await logActivity({
     userId: req.user._id, action: 'LEAD_KIT_GENERATED', entity: 'Lead', entityId: lead._id,
     details: `${lead.refNumber}: generated ${lead.generatedFiles.length}-document ${lead.kitType} kit`, ip: req.ip,
   });
+
+  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  res.json({ success: true, data: populated });
+});
+
+// POST /api/leads/:id/unlock  (re-open a generated/locked lead for editing)
+const unlockLead = asyncHandler(async (req, res) => {
+  const lead = await Lead.findById(req.params.id);
+  if (!lead) throw ApiError.notFound('Lead not found');
+  assertCanView(lead, req.user); // owner or admin
+
+  if (lead.locked) {
+    lead.locked = false;
+    lead.modifiedBy = req.user._id;
+    lead.statusHistory.push({
+      from: lead.status, to: lead.status, changedBy: req.user._id, note: 'Unlocked for editing',
+    });
+    await lead.save();
+
+    await logActivity({
+      userId: req.user._id, action: 'LEAD_UNLOCKED', entity: 'Lead', entityId: lead._id,
+      details: `${lead.refNumber}: unlocked for editing after generation`, ip: req.ip,
+    });
+  }
 
   const populated = await Lead.findById(lead._id).populate(POPULATE);
   res.json({ success: true, data: populated });
@@ -510,6 +563,7 @@ module.exports = {
   selectKitType,
   confirmRates,
   generateLeadKit,
+  unlockLead,
   downloadZip,
   downloadDocument,
   emailKit,

@@ -49,6 +49,7 @@ router.delete('/leads/:id', authenticate, leads.deleteLead);
 router.post('/leads/:id/kit-type', authenticate, validate(v.kitTypeSchema), leads.selectKitType);
 router.put('/leads/:id/rates', authenticate, validate(v.ratesConfirmSchema), leads.confirmRates);
 router.post('/leads/:id/generate', authenticate, generateLimiter, leads.generateLeadKit);
+router.post('/leads/:id/unlock', authenticate, leads.unlockLead);
 router.get('/leads/:id/kit.zip', authenticate, leads.downloadZip);
 router.get('/leads/:id/documents/:idx', authenticate, leads.downloadDocument);
 router.post('/leads/:id/email', authenticate, emailLimiter, validate(v.emailKitSchema), leads.emailKit);

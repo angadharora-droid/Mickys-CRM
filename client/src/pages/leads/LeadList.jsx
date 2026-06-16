@@ -18,7 +18,7 @@ import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { ChevronDown, ChevronRight, Plus, Search, FilterX, Contact } from 'lucide-react';
+import { ChevronDown, ChevronRight, Plus, Search, FilterX, Contact, AlertTriangle, Lock } from 'lucide-react';
 
 const ALL = '__all__';
 
@@ -193,7 +193,19 @@ export default function LeadList() {
                           {lead.kitType ? <Badge variant="outline">{KIT_TYPE_LABELS[lead.kitType]}</Badge> : <span className="text-muted-foreground">—</span>}
                         </TableCell>
                         <TableCell className="hidden lg:table-cell">{lead.assignedExecId?.name || '—'}</TableCell>
-                        <TableCell><StatusBadge status={lead.status} /></TableCell>
+                        <TableCell>
+                          <div className="flex flex-col items-start gap-1">
+                            <div className="flex items-center gap-1.5">
+                              <StatusBadge status={lead.status} />
+                              {lead.locked && <Lock className="h-3 w-3 text-muted-foreground" aria-label="Locked" />}
+                            </div>
+                            {lead.editedAfterGeneration && (
+                              <Badge className="bg-amber-100 text-amber-800 hover:bg-amber-100 text-[10px]">
+                                <AlertTriangle className="h-2.5 w-2.5" /> Edited
+                              </Badge>
+                            )}
+                          </div>
+                        </TableCell>
                       </TableRow>
                       {isExpanded && (
                         <TableRow className="bg-muted/25 hover:bg-muted/25 lg:hidden">

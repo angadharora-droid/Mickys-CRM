@@ -27,7 +27,7 @@ import {
 } from '@/components/ui/dialog';
 import {
   Loader2, Package, Download, Mail, Trash2, RotateCcw, FileText, CheckCircle2,
-  AlertTriangle, ArrowLeft, Boxes, Building2, Sparkles, Eye,
+  AlertTriangle, ArrowLeft, Boxes, Building2, Sparkles, Eye, Lock, Pencil,
 } from 'lucide-react';
 
 const STEPS = ['Client Data', 'Kit Type', 'Rate Review', 'Generate', 'Deliver'];
@@ -174,6 +174,9 @@ export default function LeadDetail() {
   const hasKit = Boolean(lead.kitType);
   const statusIdx = LEAD_STATUSES.indexOf(lead.status);
   const ratesEdited = statusIdx >= LEAD_STATUSES.indexOf('rates_confirmed');
+  // A generated kit freezes the lead until the user clicks Edit (unlock).
+  const locked = Boolean(lead.locked);
+  const editedAfterGen = Boolean(lead.editedAfterGeneration);
   const anyError = rates.some((r) => deriveLine(r).error);
   const agreementRows = parseAgreementTerms(terms.agreementTermsAndConditions, lead.businessName);
 
@@ -214,6 +217,10 @@ export default function LeadDetail() {
   const generate = () =>
     run('generate', () => api.post(`/leads/${lead._id}/generate`))
       .then(() => toast.success('Kit generated')).catch(() => {});
+
+  const unlock = () =>
+    run('unlock', () => api.post(`/leads/${lead._id}/unlock`))
+      .then(() => toast.success('Lead unlocked — you can edit and regenerate')).catch(() => {});
 
   const sendEmail = () =>
     run('email', () => api.post(`/leads/${lead._id}/email`, emailForm))
@@ -289,8 +296,55 @@ export default function LeadDetail() {
         <StatusBadge status={lead.status} />
         {hasKit && <Badge variant="outline">{KIT_TYPE_LABELS[lead.kitType]}</Badge>}
         <Badge variant="secondary">{lead.businessType}</Badge>
+        {locked && (
+          <Badge className="bg-slate-200 text-slate-700 hover:bg-slate-200">
+            <Lock className="h-3 w-3" /> Locked
+          </Badge>
+        )}
+        {editedAfterGen && (
+          <Badge className="bg-amber-100 text-amber-800 hover:bg-amber-100">
+            <AlertTriangle className="h-3 w-3" /> Edited after generation
+          </Badge>
+        )}
         <span className="text-sm text-muted-foreground">Exec: {lead.assignedExecId?.name || '—'}</span>
       </div>
+
+      {/* Lock banner — kit is generated; editing is frozen until unlocked. */}
+      {locked && (
+        <Card className="border-amber-300 bg-amber-50/60">
+          <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4">
+            <div className="flex items-center gap-3">
+              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-amber-100 text-amber-700">
+                <Lock className="h-4 w-4" />
+              </span>
+              <div>
+                <p className="font-semibold">Kit generated — this lead is locked</p>
+                <p className="text-xs text-muted-foreground">
+                  The generated documents below stay available to download and email.
+                  Click <span className="font-medium">Edit</span> to change rates, terms or the kit and regenerate.
+                </p>
+              </div>
+            </div>
+            <Button onClick={unlock} disabled={action === 'unlock'}>
+              {action === 'unlock' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pencil className="h-4 w-4" />}
+              Edit
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Out-of-sync warning once an unlocked lead has been edited post-generation. */}
+      {!locked && editedAfterGen && (
+        <Card className="border-amber-300 bg-amber-50/60">
+          <CardContent className="flex items-center gap-3 py-3 text-sm">
+            <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" />
+            <span>
+              This lead has been edited since the last kit was generated. Regenerate to refresh the
+              documents the client receives.
+            </span>
+          </CardContent>
+        </Card>
+      )}
 
       <Card><CardContent className="pt-5"><Stepper status={lead.status} /></CardContent></Card>
 
@@ -335,7 +389,7 @@ export default function LeadDetail() {
                   <p className="text-xs text-muted-foreground">{(KIT_DOCS[lead.kitType] || []).length} documents · {lead.rates.length} rate lines</p>
                 </div>
               </div>
-              <Button variant="outline" size="sm" onClick={() => setSwitching(true)} disabled={action === 'kit'}>
+              <Button variant="outline" size="sm" onClick={() => setSwitching(true)} disabled={locked || action === 'kit'}>
                 <RotateCcw className="h-4 w-4" /> Switch kit
               </Button>
             </div>
@@ -348,7 +402,7 @@ export default function LeadDetail() {
                 <button
                   key={type}
                   type="button"
-                  disabled={action === 'kit'}
+                  disabled={locked || action === 'kit'}
                   onClick={() => onPickKit(type)}
                   className={cn(
                     'text-left rounded-xl border-2 p-5 transition-all hover:shadow-lifted disabled:opacity-60',
@@ -427,9 +481,11 @@ export default function LeadDetail() {
                               <Input
                                 type="number" step="any" min="0"
                                 value={r.netRate}
+                                readOnly={locked}
                                 onChange={(e) => setRate(idx, e.target.value)}
                                 className={cn(
                                   'h-9 w-24 ml-auto text-right tabular-nums',
+                                  locked && 'cursor-not-allowed bg-muted/50',
                                   d.error && 'border-destructive focus-visible:ring-destructive',
                                   !d.error && d.deviation > 0 && 'border-orange-400 text-orange-600'
                                 )}
@@ -449,7 +505,7 @@ export default function LeadDetail() {
                               <Button
                                 variant="ghost" size="icon" className="h-8 w-8"
                                 title="Reset to standard"
-                                disabled={Number(r.netRate) === r.standardNetRate}
+                                disabled={locked || Number(r.netRate) === r.standardNetRate}
                                 onClick={() => resetRate(idx)}
                               >
                                 <RotateCcw className="h-3.5 w-3.5" />
@@ -465,11 +521,11 @@ export default function LeadDetail() {
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
                     <Label>Payment terms</Label>
-                    <Textarea rows={2} value={terms.paymentTerms} onChange={(e) => setTerms((t) => ({ ...t, paymentTerms: e.target.value }))} />
+                    <Textarea rows={2} disabled={locked} value={terms.paymentTerms} onChange={(e) => setTerms((t) => ({ ...t, paymentTerms: e.target.value }))} />
                   </div>
                   <div className="space-y-2">
                     <Label>Credit period</Label>
-                    <Input value={terms.creditPeriod} onChange={(e) => setTerms((t) => ({ ...t, creditPeriod: e.target.value }))} />
+                    <Input disabled={locked} value={terms.creditPeriod} onChange={(e) => setTerms((t) => ({ ...t, creditPeriod: e.target.value }))} />
                   </div>
                 </div>
 
@@ -482,12 +538,13 @@ export default function LeadDetail() {
                   </Label>
                   <Textarea
                     rows={8}
+                    disabled={locked}
                     value={terms.termsAndConditions}
                     onChange={(e) => setTerms((t) => ({ ...t, termsAndConditions: e.target.value }))}
                   />
                   <div className="flex justify-end">
                     <Button
-                      type="button" variant="ghost" size="sm"
+                      type="button" variant="ghost" size="sm" disabled={locked}
                       onClick={() => setTerms((t) => ({ ...t, termsAndConditions: (DEFAULT_KIT_TERMS[lead.kitType] || []).join('\n') }))}
                     >
                       <RotateCcw className="h-3.5 w-3.5" /> Reset to standard terms
@@ -497,7 +554,7 @@ export default function LeadDetail() {
 
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-xs text-muted-foreground">Net rate must be between floor price and MRP. Deviations from standard show in orange.</p>
-                  <Button onClick={confirmRates} disabled={anyError || action === 'rates'}>
+                  <Button onClick={confirmRates} disabled={locked || anyError || action === 'rates'}>
                     {action === 'rates' ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
                     Confirm rates
                   </Button>
@@ -524,6 +581,7 @@ export default function LeadDetail() {
                             <TableCell className="align-top">
                               <Input
                                 value={row.particular}
+                                readOnly={locked}
                                 onChange={(e) => setAgreementRow(idx, 'particular', e.target.value)}
                                 className="h-8 border-0 bg-transparent px-0 font-semibold shadow-none focus-visible:ring-0"
                               />
@@ -531,6 +589,7 @@ export default function LeadDetail() {
                             <TableCell className="align-top">
                               <Textarea
                                 rows={1}
+                                readOnly={locked}
                                 value={row.term}
                                 onChange={(e) => setAgreementRow(idx, 'term', e.target.value)}
                                 className="min-h-8 resize-y border-0 bg-transparent px-0 py-1 shadow-none focus-visible:ring-0"
@@ -543,7 +602,7 @@ export default function LeadDetail() {
                   </div>
                   <div className="flex justify-end">
                     <Button
-                      type="button" variant="ghost" size="sm"
+                      type="button" variant="ghost" size="sm" disabled={locked}
                       onClick={() => setTerms((t) => ({ ...t, agreementTermsAndConditions: agreementTermsText(lead.businessName) }))}
                     >
                       <RotateCcw className="h-3.5 w-3.5" /> Reset agreement terms
@@ -564,11 +623,19 @@ export default function LeadDetail() {
               <p className="text-sm text-muted-foreground">
                 Builds {(KIT_DOCS[lead.kitType] || []).length} pre-filled PDFs and bundles them into a ZIP.
                 {lead.generatedAt && <> Last generated {formatDateTime(lead.generatedAt)}.</>}
+                {locked && <> Click <span className="font-medium">Edit</span> above to regenerate.</>}
               </p>
-              <Button onClick={generate} disabled={action === 'generate'}>
-                {action === 'generate' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Package className="h-4 w-4" />}
-                {lead.generatedFiles?.length ? 'Regenerate kit' : 'Generate kit'}
-              </Button>
+              {locked ? (
+                <Button variant="outline" onClick={unlock} disabled={action === 'unlock'}>
+                  {action === 'unlock' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pencil className="h-4 w-4" />}
+                  Edit to regenerate
+                </Button>
+              ) : (
+                <Button onClick={generate} disabled={action === 'generate'}>
+                  {action === 'generate' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Package className="h-4 w-4" />}
+                  {lead.generatedFiles?.length ? 'Regenerate kit' : 'Generate kit'}
+                </Button>
+              )}
             </div>
 
             {lead.generatedFiles?.length > 0 && (
