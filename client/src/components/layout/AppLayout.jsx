@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Outlet } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import Header from './Header';
@@ -6,6 +6,22 @@ import MobileNav from './MobileNav';
 
 export default function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // The app shell owns the viewport (h-[100dvh]) and scrolls internally via <main>.
+  // Lock document-level scrolling while it's mounted so the page can never grow a
+  // second, stray scrollbar next to the main one. Restored on unmount so the
+  // standalone login / 404 pages keep their normal document scrolling.
+  useEffect(() => {
+    const html = document.documentElement;
+    const { overflow: prevHtml } = html.style;
+    const { overflow: prevBody } = document.body.style;
+    html.style.overflow = 'hidden';
+    document.body.style.overflow = 'hidden';
+    return () => {
+      html.style.overflow = prevHtml;
+      document.body.style.overflow = prevBody;
+    };
+  }, []);
 
   return (
     <div className="flex h-[100dvh] overflow-hidden">
