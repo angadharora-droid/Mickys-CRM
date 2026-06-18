@@ -14,9 +14,79 @@ import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { ClipboardList, FilterX, Plus, Search } from 'lucide-react';
+import { ClipboardList, Download, FilterX, Loader2, Plus, Search } from 'lucide-react';
 
 const ALL = '__all__';
+
+const escapeExcel = (value) => String(value ?? '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;');
+
+const excelCell = (value) => `<Cell><Data ss:Type="String">${escapeExcel(value)}</Data></Cell>`;
+const excelRow = (values, styleId = '') =>
+  `<Row${styleId ? ` ss:StyleID="${styleId}"` : ''}>${values.map(excelCell).join('')}</Row>`;
+
+const buildRecordsReport = (records, search, status) => {
+  const rows = [
+    excelRow(['My Records Report'], 'Title'),
+    excelRow(['Downloaded on', new Date().toLocaleString('en-IN')]),
+    excelRow(['Search filter', search || 'None']),
+    excelRow(['Status filter', status === ALL ? 'All statuses' : STATUS_LABELS[status] || status]),
+    excelRow(['Total records', records.length]),
+    excelRow([]),
+    excelRow([
+      'Reference', 'Client', 'Contact person', 'Mobile', 'Email', 'Business type',
+      'City', 'State', 'Kit type', 'Status', 'Lead date', 'Created date',
+    ], 'Header'),
+    ...records.map((record) => excelRow([
+      record.refNumber,
+      record.businessName,
+      record.contactPerson,
+      record.mobileNumber,
+      record.email,
+      record.businessType,
+      record.city,
+      record.state,
+      record.kitType || '',
+      STATUS_LABELS[record.status] || record.status,
+      formatDate(record.leadDate),
+      formatDate(record.createdAt),
+    ])),
+  ];
+
+  return `<?xml version="1.0"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook
+  xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+  xmlns:o="urn:schemas-microsoft-com:office:office"
+  xmlns:x="urn:schemas-microsoft-com:office:excel"
+  xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+  <Styles>
+    <Style ss:ID="Title"><Font ss:Bold="1" ss:Size="16" ss:Color="#7f0f16" /></Style>
+    <Style ss:ID="Header">
+      <Font ss:Bold="1" ss:Color="#ffffff" />
+      <Interior ss:Color="#7f0f16" ss:Pattern="Solid" />
+    </Style>
+  </Styles>
+  <Worksheet ss:Name="My Records">
+    <Table>${rows.join('')}</Table>
+  </Worksheet>
+</Workbook>`;
+};
+
+const downloadExcel = (filename, content) => {
+  const blob = new Blob([content], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+};
 
 export default function MyRecords() {
   const navigate = useNavigate();
@@ -26,6 +96,7 @@ export default function MyRecords() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState(ALL);
+  const [reportLoading, setReportLoading] = useState(false);
 
   const fetchRecords = useCallback(async () => {
     setLoading(true);
@@ -56,9 +127,43 @@ export default function MyRecords() {
 
   const hasFilters = search || status !== ALL;
 
+  const downloadReport = async () => {
+    setReportLoading(true);
+    try {
+      const params = { page: 1, limit: 100 };
+      if (search) params.search = search;
+      if (status !== ALL) params.status = status;
+
+      const firstResponse = await api.get('/leads', { params });
+      const allRecords = [...firstResponse.data.data];
+      const totalPages = firstResponse.data.meta?.totalPages || 1;
+
+      if (totalPages > 1) {
+        const remainingResponses = await Promise.all(
+          Array.from({ length: totalPages - 1 }, (_, index) =>
+            api.get('/leads', { params: { ...params, page: index + 2 } })
+          )
+        );
+        remainingResponses.forEach((response) => allRecords.push(...response.data.data));
+      }
+
+      const stamp = new Date().toISOString().slice(0, 10);
+      downloadExcel(`my-records-report-${stamp}.xls`, buildRecordsReport(allRecords, search, status));
+      toast.success('Report downloaded');
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setReportLoading(false);
+    }
+  };
+
   return (
     <div>
       <PageHeader title="My Records" description="View and manage all leads assigned to you">
+        <Button variant="outline" onClick={downloadReport} disabled={reportLoading}>
+          {reportLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+          Download Report
+        </Button>
         <Button onClick={() => navigate('/leads/new')}>
           <Plus className="h-4 w-4" /> New Lead
         </Button>
