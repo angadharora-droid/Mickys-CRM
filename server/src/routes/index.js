@@ -41,6 +41,7 @@ router.put('/rate-items/:id', authenticate, authorize(ADMIN), validate(v.rateIte
 router.delete('/rate-items/:id', authenticate, authorize(ADMIN), rateItems.deleteRateItem);
 
 // ---------- Leads + Kit pipeline ----------
+router.get('/follow-ups', authenticate, leads.listFollowUps);
 router.post('/leads', authenticate, authorize(EXEC, ADMIN), validate(v.leadSchema), leads.createLead);
 router.get('/leads', authenticate, leads.listLeads);
 router.get('/leads/:id', authenticate, leads.getLead);
@@ -53,6 +54,8 @@ router.post('/leads/:id/unlock', authenticate, leads.unlockLead);
 router.post('/leads/:id/notes', authenticate, validate(v.noteSchema), leads.addNote);
 router.put('/leads/:id/notes/:noteId', authenticate, validate(v.noteSchema), leads.updateNote);
 router.delete('/leads/:id/notes/:noteId', authenticate, leads.deleteNote);
+router.put('/leads/:id/follow-up', authenticate, validate(v.followUpSchema), leads.updateFollowUp);
+router.post('/leads/:id/follow-up/close', authenticate, validate(v.closeFollowUpSchema), leads.closeFollowUp);
 router.get('/leads/:id/kit.zip', authenticate, leads.downloadZip);
 router.get('/leads/:id/documents/:idx', authenticate, leads.downloadDocument);
 router.post('/leads/:id/email', authenticate, emailLimiter, validate(v.emailKitSchema), leads.emailKit);

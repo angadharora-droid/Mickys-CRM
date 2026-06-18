@@ -15,6 +15,14 @@ const KIT_TYPES = ['distributor', 'institutional'];
 
 const LEAD_STATUSES = ['new', 'kit_selected', 'rates_confirmed', 'generated', 'delivered'];
 
+/** Selectable next-action for a lead's follow-up. */
+const ACTION_POINTS = [
+  'Need to revisit',
+  'Send Sample',
+  'Send distributor kit',
+  'Send institutional kit',
+];
+
 /** Allowed forward transitions of the kit pipeline (later steps may be re-run). */
 const LEAD_TRANSITIONS = {
   new: ['kit_selected'],
@@ -117,6 +125,18 @@ const leadSchema = new mongoose.Schema(
     internalNotes: { type: String, trim: true, default: '' },
     notes: { type: [noteSchema], default: [] },
 
+    // ---- Follow-up ----
+    // The lead's current next-action and the date it's due. Closing records a
+    // mandatory closing note. Independent of the kit lock — it's CRM metadata.
+    followUp: {
+      actionPoint: { type: String, enum: ['', ...ACTION_POINTS], default: '' },
+      date: { type: Date },
+      status: { type: String, enum: ['', 'open', 'closed'], default: '' },
+      closingNote: { type: String, default: '' },
+      closedAt: { type: Date },
+      closedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    },
+
     // ---- Kit ----
     kitType: { type: String, enum: KIT_TYPES },
     rates: { type: [rateLineSchema], default: [] },
@@ -170,6 +190,7 @@ const leadSchema = new mongoose.Schema(
 );
 
 leadSchema.index({ createdAt: -1 });
+leadSchema.index({ 'followUp.status': 1, 'followUp.date': 1 });
 
 leadSchema.statics.canTransition = function (from, to) {
   return (LEAD_TRANSITIONS[from] || []).includes(to);
@@ -180,4 +201,5 @@ Lead.BUSINESS_TYPES = BUSINESS_TYPES;
 Lead.KIT_TYPES = KIT_TYPES;
 Lead.LEAD_STATUSES = LEAD_STATUSES;
 Lead.LEAD_TRANSITIONS = LEAD_TRANSITIONS;
+Lead.ACTION_POINTS = ACTION_POINTS;
 module.exports = Lead;

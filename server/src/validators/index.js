@@ -13,6 +13,13 @@ const BUSINESS_TYPES = [
   'Other',
 ];
 
+const ACTION_POINTS = [
+  'Need to revisit',
+  'Send Sample',
+  'Send distributor kit',
+  'Send institutional kit',
+];
+
 // ---------- Auth ----------
 const loginSchema = z.object({
   email: z.string().email(),
@@ -102,6 +109,16 @@ const noteSchema = z.object({
   text: z.string().trim().min(1, 'Note text is required').max(4000),
 });
 
+const followUpSchema = z.object({
+  actionPoint: z.enum(ACTION_POINTS).optional().or(z.literal('')),
+  // 'YYYY-MM-DD' string (or '' to clear the follow-up).
+  date: z.union([z.literal(''), z.coerce.date()]).optional(),
+});
+
+const closeFollowUpSchema = z.object({
+  closingNote: z.string().trim().min(1, 'A closing note is required').max(4000),
+});
+
 const emailKitSchema = z.object({
   to: z.string().email().optional().or(z.literal('')),
   subject: z.string().max(300).optional().or(z.literal('')),
@@ -153,6 +170,8 @@ module.exports = {
   kitTypeSchema,
   ratesConfirmSchema,
   noteSchema,
+  followUpSchema,
+  closeFollowUpSchema,
   emailKitSchema,
   settingsSchema,
 };

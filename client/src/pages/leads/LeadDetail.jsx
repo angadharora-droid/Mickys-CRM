@@ -8,6 +8,7 @@ import {
   STATUS_LABELS,
   KIT_TYPE_LABELS,
   KIT_DOCS,
+  ACTION_POINTS,
   DEFAULT_KIT_TERMS,
   DEFAULT_DISTRIBUTOR_AGREEMENT_TERMS,
 } from '@/lib/constants';
@@ -19,18 +20,21 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle,
+  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import {
   Loader2, Package, Download, Mail, Trash2, RotateCcw, FileText, CheckCircle2,
   AlertTriangle, ArrowLeft, Boxes, Building2, Sparkles, Eye, EyeOff, Lock, Pencil, ExternalLink,
-  Plus, MessageSquare, X,
+  Plus, MessageSquare, X, CalendarClock, CalendarCheck,
 } from 'lucide-react';
+
+const NO_ACTION = '__none__';
 
 const STEPS = ['Client Data', 'Kit Type', 'Rate Review', 'Generate', 'Deliver'];
 
@@ -136,6 +140,9 @@ export default function LeadDetail() {
   const [editingNoteId, setEditingNoteId] = useState(null);
   const [editingText, setEditingText] = useState('');
   const [confirmNoteId, setConfirmNoteId] = useState(null);
+  const [followUpForm, setFollowUpForm] = useState({ actionPoint: '', date: '' });
+  const [closingOpen, setClosingOpen] = useState(false);
+  const [closeNote, setCloseNote] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -166,6 +173,10 @@ export default function LeadDetail() {
         lead.customTerms?.agreementTermsAndConditions || agreementTermsText(lead.businessName),
     });
     setEmailForm((f) => ({ ...f, to: f.to || lead.email || '' }));
+    setFollowUpForm({
+      actionPoint: lead.followUp?.actionPoint || '',
+      date: lead.followUp?.date ? new Date(lead.followUp.date).toISOString().slice(0, 10) : '',
+    });
     setSwitching(false);
   }, [lead?.updatedAt, lead?._id, lead?.kitType]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -196,6 +207,15 @@ export default function LeadDetail() {
       ? [{ _id: null, legacy: true, text: lead.internalNotes, createdBy: lead.createdBy, createdAt: lead.createdAt }]
       : []),
   ];
+
+  // Follow-up display state (date strings compared in YYYY-MM-DD form).
+  const followUp = lead.followUp || {};
+  const followUpOpen = followUp.status === 'open';
+  const followUpClosed = followUp.status === 'closed';
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const followUpDateStr = followUp.date ? new Date(followUp.date).toISOString().slice(0, 10) : '';
+  const followUpOverdue = followUpOpen && followUpDateStr && followUpDateStr < todayStr;
+  const followUpDueToday = followUpOpen && followUpDateStr === todayStr;
 
   const run = async (key, fn) => {
     setAction(key);
@@ -319,6 +339,20 @@ export default function LeadDetail() {
     Boolean(note._id) &&
     (user?.role === 'admin' || String(note.createdBy?._id || note.createdBy) === String(user?._id));
 
+  // ---- Follow-up ----
+  const saveFollowUp = () =>
+    run('followup', () =>
+      api.put(`/leads/${lead._id}/follow-up`, {
+        actionPoint: followUpForm.actionPoint,
+        date: followUpForm.date,
+      })
+    ).then(() => toast.success(followUpForm.date ? 'Follow-up saved' : 'Follow-up cleared')).catch(() => {});
+
+  const closeFollowUp = () =>
+    run('followup-close', () =>
+      api.post(`/leads/${lead._id}/follow-up/close`, { closingNote: closeNote.trim() })
+    ).then(() => { setClosingOpen(false); setCloseNote(''); toast.success('Follow-up closed'); }).catch(() => {});
+
   const setRate = (idx, val) => setRates((rs) => rs.map((r, i) => (i === idx ? { ...r, netRate: val } : r)));
   const resetRate = (idx) => setRates((rs) => rs.map((r, i) => (i === idx ? { ...r, netRate: r.standardNetRate } : r)));
   const toggleProduct = (idx) =>
@@ -419,6 +453,90 @@ export default function LeadDetail() {
         </CardContent>
       </Card>
 
+      {/* Follow-up */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center justify-between gap-2">
+            <span className="flex items-center gap-2">
+              <CalendarClock className="h-4 w-4 text-muted-foreground" /> Follow-Up
+            </span>
+            {followUpOpen && (
+              <span
+                className={cn(
+                  'text-xs font-medium rounded-full px-2.5 py-0.5 ring-1',
+                  followUpOverdue
+                    ? 'bg-destructive/10 text-destructive ring-destructive/30'
+                    : followUpDueToday
+                      ? 'bg-amber-50 text-amber-700 ring-amber-300/70 dark:bg-amber-950 dark:text-amber-300'
+                      : 'bg-sky-50 text-sky-700 ring-sky-300/70 dark:bg-sky-950 dark:text-sky-300'
+                )}
+              >
+                {followUpOverdue ? 'Overdue' : followUpDueToday ? 'Due today' : `Due ${formatDate(followUp.date)}`}
+              </span>
+            )}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-[1fr_auto_auto] sm:items-end">
+            <div className="space-y-1.5">
+              <Label>Action point</Label>
+              <Select
+                value={followUpForm.actionPoint || NO_ACTION}
+                onValueChange={(v) =>
+                  setFollowUpForm((f) => ({ ...f, actionPoint: v === NO_ACTION ? '' : v }))
+                }
+              >
+                <SelectTrigger><SelectValue placeholder="Select an action" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_ACTION}>No action</SelectItem>
+                  {ACTION_POINTS.map((ap) => (
+                    <SelectItem key={ap} value={ap}>{ap}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Follow-up date</Label>
+              <Input
+                type="date"
+                className="w-full sm:w-44"
+                value={followUpForm.date}
+                onChange={(e) => setFollowUpForm((f) => ({ ...f, date: e.target.value }))}
+              />
+            </div>
+            <Button onClick={saveFollowUp} disabled={action === 'followup'}>
+              {action === 'followup' ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+              Save
+            </Button>
+          </div>
+
+          {followUpOpen && (
+            <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/30 p-3">
+              <p className="text-sm">
+                <span className="text-muted-foreground">Open follow-up: </span>
+                <span className="font-medium">{followUp.actionPoint || 'Action'}</span>
+                {' · due '}{formatDate(followUp.date)}
+              </p>
+              <Button size="sm" variant="outline" onClick={() => { setCloseNote(''); setClosingOpen(true); }}>
+                <CalendarCheck className="h-4 w-4" /> Close
+              </Button>
+            </div>
+          )}
+
+          {followUpClosed && (
+            <div className="rounded-lg border bg-muted/30 p-3 text-sm">
+              <p className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400 font-medium">
+                <CalendarCheck className="h-4 w-4" /> Last follow-up closed
+              </p>
+              {followUp.closingNote && <p className="mt-1 whitespace-pre-wrap break-words">{followUp.closingNote}</p>}
+              <p className="mt-1 text-xs text-muted-foreground">
+                {followUp.closedBy?.name || 'Unknown'} · {formatDateTime(followUp.closedAt)}
+              </p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Internal notes */}
       <Card>
         <CardHeader className="pb-3">
@@ -450,7 +568,7 @@ export default function LeadDetail() {
             <ul className="space-y-3">
               {notesList.map((note) => (
                 <li key={note._id || 'legacy'} className="rounded-lg border bg-muted/30 p-3">
-                  {editingNoteId === note._id ? (
+                  {note._id && editingNoteId === note._id ? (
                     <div className="space-y-2">
                       <Textarea rows={2} value={editingText} onChange={(e) => setEditingText(e.target.value)} />
                       <div className="flex justify-end gap-2">
@@ -918,6 +1036,33 @@ export default function LeadDetail() {
         loading={action === 'note-del'}
         onConfirm={() => deleteNote(confirmNoteId)}
       />
+
+      <Dialog open={closingOpen} onOpenChange={(o) => { if (!o) setClosingOpen(false); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Close follow-up</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="close-note">Closing note</Label>
+            <Textarea
+              id="close-note"
+              rows={3}
+              placeholder="What was the outcome of this follow-up?"
+              value={closeNote}
+              onChange={(e) => setCloseNote(e.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setClosingOpen(false)} disabled={action === 'followup-close'}>
+              Cancel
+            </Button>
+            <Button onClick={closeFollowUp} disabled={!closeNote.trim() || action === 'followup-close'}>
+              {action === 'followup-close' ? <Loader2 className="h-4 w-4 animate-spin" /> : <CalendarCheck className="h-4 w-4" />}
+              Close follow-up
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={Boolean(previewFile)} onOpenChange={closePreview}>
         <DialogContent className="max-w-5xl p-0">

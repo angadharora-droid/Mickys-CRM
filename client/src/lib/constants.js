@@ -43,6 +43,14 @@ export const BUSINESS_TYPES = [
   'Other',
 ];
 
+/** Selectable next-action for a lead's follow-up. */
+export const ACTION_POINTS = [
+  'Need to revisit',
+  'Send Sample',
+  'Send distributor kit',
+  'Send institutional kit',
+];
+
 export const KIT_TYPES = [
   { value: 'distributor', label: 'Distributor Kit' },
   { value: 'institutional', label: 'Institutional Kit' },

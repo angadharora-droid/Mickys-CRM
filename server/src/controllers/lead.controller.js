@@ -19,6 +19,7 @@ const POPULATE = [
   { path: 'createdBy', select: 'name role' },
   { path: 'statusHistory.changedBy', select: 'name role' },
   { path: 'notes.createdBy', select: 'name role' },
+  { path: 'followUp.closedBy', select: 'name role' },
 ];
 
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
@@ -527,6 +528,77 @@ const deleteNote = asyncHandler(async (req, res) => {
   res.json({ success: true, data: populated });
 });
 
+// GET /api/follow-ups  (leads with an open follow-up, soonest due first)
+const listFollowUps = asyncHandler(async (req, res) => {
+  const filter = { ...scopeFilter(req.user), 'followUp.status': 'open' };
+  const leads = await Lead.find(filter)
+    .populate({ path: 'assignedExecId', select: 'name email employeeCode' })
+    .sort({ 'followUp.date': 1 })
+    .limit(500);
+  res.json({ success: true, data: leads });
+});
+
+// PUT /api/leads/:id/follow-up  (set / update the action point + due date)
+const updateFollowUp = asyncHandler(async (req, res) => {
+  const lead = await Lead.findById(req.params.id);
+  if (!lead) throw ApiError.notFound('Lead not found');
+  assertCanView(lead, req.user);
+
+  const actionPoint = String(req.body.actionPoint || '');
+  const date = req.body.date ? new Date(req.body.date) : null;
+
+  // Saving (re)opens the follow-up; clearing the date removes it entirely.
+  lead.followUp = {
+    actionPoint,
+    date: date || undefined,
+    status: date ? 'open' : '',
+    closingNote: '',
+    closedAt: undefined,
+    closedBy: undefined,
+  };
+  lead.modifiedBy = req.user._id;
+  await lead.save();
+
+  await logActivity({
+    userId: req.user._id, action: 'LEAD_FOLLOWUP_SET', entity: 'Lead', entityId: lead._id,
+    details: date
+      ? `Set follow-up for ${lead.refNumber}${actionPoint ? ` — ${actionPoint}` : ''} due ${date.toISOString().slice(0, 10)}`
+      : `Cleared follow-up for ${lead.refNumber}`,
+    ip: req.ip,
+  });
+
+  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  res.json({ success: true, data: populated });
+});
+
+// POST /api/leads/:id/follow-up/close  (close an open follow-up with a note)
+const closeFollowUp = asyncHandler(async (req, res) => {
+  const lead = await Lead.findById(req.params.id);
+  if (!lead) throw ApiError.notFound('Lead not found');
+  assertCanView(lead, req.user);
+
+  if (lead.followUp?.status !== 'open') {
+    throw ApiError.badRequest('There is no open follow-up to close');
+  }
+  const closingNote = String(req.body.closingNote || '').trim();
+  if (!closingNote) throw ApiError.badRequest('A closing note is required');
+
+  lead.followUp.status = 'closed';
+  lead.followUp.closingNote = closingNote;
+  lead.followUp.closedAt = new Date();
+  lead.followUp.closedBy = req.user._id;
+  lead.modifiedBy = req.user._id;
+  await lead.save();
+
+  await logActivity({
+    userId: req.user._id, action: 'LEAD_FOLLOWUP_CLOSED', entity: 'Lead', entityId: lead._id,
+    details: `Closed follow-up for ${lead.refNumber}`, ip: req.ip,
+  });
+
+  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  res.json({ success: true, data: populated });
+});
+
 // GET /api/leads/:id/kit.zip
 const downloadZip = asyncHandler(async (req, res) => {
   const lead = await Lead.findById(req.params.id);
@@ -658,6 +730,9 @@ module.exports = {
   addNote,
   updateNote,
   deleteNote,
+  listFollowUps,
+  updateFollowUp,
+  closeFollowUp,
   downloadZip,
   downloadDocument,
   emailKit,

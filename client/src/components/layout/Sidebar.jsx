@@ -9,6 +9,7 @@ import {
   Users,
   ScrollText,
   ClipboardList,
+  CalendarClock,
   X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -20,6 +21,7 @@ const NAV_SECTIONS = [
     items: [
       { to: '/', label: 'Dashboard', icon: LayoutDashboard, roles: ['*'] },
       { to: '/leads', label: 'Leads & Kits', icon: Contact, roles: ['*'] },
+      { to: '/follow-ups', label: 'Follow-ups', icon: CalendarClock, roles: ['*'] },
       { to: '/my-records', label: 'My Records', icon: ClipboardList, roles: [ROLES.SALES_EXEC] },
     ],
   },
