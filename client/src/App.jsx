@@ -9,6 +9,7 @@ import LeadList from '@/pages/leads/LeadList';
 import LeadCreate from '@/pages/leads/LeadCreate';
 import LeadDetail from '@/pages/leads/LeadDetail';
 import LeadTracker from '@/pages/leads/LeadTracker';
+import MyRecords from '@/pages/leads/MyRecords';
 import RateMaster from '@/pages/rate-master/RateMaster';
 import UsersPage from '@/pages/users/Users';
 import ActivityLogs from '@/pages/ActivityLogs';
@@ -39,6 +40,14 @@ export default function App() {
           }
         />
         <Route path="/leads/:id" element={<LeadDetail />} />
+        <Route
+          path="/my-records"
+          element={
+            <ProtectedRoute roles={[ROLES.SALES_EXEC]}>
+              <MyRecords />
+            </ProtectedRoute>
+          }
+        />
         <Route
           path="/lead-tracker"
           element={
