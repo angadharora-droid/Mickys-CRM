@@ -42,9 +42,6 @@ const getRateItem = asyncHandler(async (req, res) => {
 });
 
 function assertBounds(body) {
-  if (Number(body.floorPrice) > Number(body.netRate)) {
-    throw ApiError.badRequest('Floor price cannot exceed the standard net rate');
-  }
   if (Number(body.netRate) > Number(body.mrp)) {
     throw ApiError.badRequest('Net rate cannot exceed MRP');
   }

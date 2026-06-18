@@ -57,7 +57,6 @@ const rateItemSchema = z.object({
   netRate: z.coerce.number().min(0),
   suggestiveMargin: z.coerce.number().min(0).max(100).optional(),
   gst: z.coerce.number().min(0).max(100),
-  floorPrice: z.coerce.number().min(0),
   isActive: z.boolean().optional(),
 });
 

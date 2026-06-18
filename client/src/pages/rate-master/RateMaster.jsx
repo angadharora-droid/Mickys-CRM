@@ -29,10 +29,9 @@ const schema = z.object({
   netRate: z.coerce.number().min(0, 'Must be ≥ 0'),
   suggestiveMargin: z.coerce.number().min(0).max(100).optional(),
   gst: z.coerce.number().min(0).max(100),
-  floorPrice: z.coerce.number().min(0, 'Must be ≥ 0'),
 });
 
-const EMPTY = { sku: '', productName: '', packSize: '', category: '', mrp: 0, netRate: 0, suggestiveMargin: 0, gst: 18, floorPrice: 0 };
+const EMPTY = { sku: '', productName: '', packSize: '', category: '', mrp: 0, netRate: 0, suggestiveMargin: 0, gst: 18 };
 
 export default function RateMaster() {
   const [kitType, setKitType] = useState('distributor');
@@ -77,7 +76,7 @@ export default function RateMaster() {
     setEditing(p);
     reset({
       sku: p.sku, productName: p.productName, packSize: p.packSize || '', category: p.category || '',
-      mrp: p.mrp, netRate: p.netRate, suggestiveMargin: p.suggestiveMargin || 0, gst: p.gst, floorPrice: p.floorPrice,
+      mrp: p.mrp, netRate: p.netRate, suggestiveMargin: p.suggestiveMargin || 0, gst: p.gst,
     });
     setDialogOpen(true);
   };
@@ -152,7 +151,6 @@ export default function RateMaster() {
                   <TableHead className="text-right">MRP</TableHead>
                   <TableHead className="text-right">Net</TableHead>
                   {isDistributor && <TableHead className="text-right hidden md:table-cell">Margin</TableHead>}
-                  <TableHead className="text-right hidden md:table-cell">Floor</TableHead>
                   <TableHead className="text-right hidden lg:table-cell">GST</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="w-24" />
@@ -178,7 +176,6 @@ export default function RateMaster() {
                         <TableCell className="text-right tabular-nums">{formatCurrency(p.mrp)}</TableCell>
                         <TableCell className="text-right tabular-nums font-medium">{formatCurrency(p.netRate)}</TableCell>
                         {isDistributor && <TableCell className="text-right tabular-nums hidden md:table-cell">{p.suggestiveMargin || 0}%</TableCell>}
-                        <TableCell className="text-right tabular-nums hidden md:table-cell text-muted-foreground">{formatCurrency(p.floorPrice)}</TableCell>
                         <TableCell className="text-right tabular-nums hidden lg:table-cell">{p.gst}%</TableCell>
                         <TableCell><Badge variant={p.isActive ? 'secondary' : 'outline'}>{p.isActive ? 'Active' : 'Inactive'}</Badge></TableCell>
                         <TableCell>
@@ -194,7 +191,6 @@ export default function RateMaster() {
                         <TableRow className="bg-muted/25 hover:bg-muted/25 lg:hidden">
                           <TableCell colSpan={9} className="px-4 py-3">
                             <dl className="grid gap-3 text-sm grid-cols-2 sm:grid-cols-4">
-                              <div><dt className="text-xs uppercase text-muted-foreground">Floor</dt><dd className="mt-1 font-medium">{formatCurrency(p.floorPrice)}</dd></div>
                               <div><dt className="text-xs uppercase text-muted-foreground">GST</dt><dd className="mt-1 font-medium">{p.gst}%</dd></div>
                               {isDistributor && <div><dt className="text-xs uppercase text-muted-foreground">Margin</dt><dd className="mt-1 font-medium">{p.suggestiveMargin || 0}%</dd></div>}
                               <div><dt className="text-xs uppercase text-muted-foreground">SKU</dt><dd className="mt-1 font-mono text-xs">{p.sku}</dd></div>
@@ -248,11 +244,6 @@ export default function RateMaster() {
                 {errors.netRate && <p className="text-sm text-destructive">{errors.netRate.message}</p>}
               </div>
               <div className="space-y-2">
-                <Label>Floor price (₹) *</Label>
-                <Input type="number" step="any" min="0" {...register('floorPrice')} />
-                {errors.floorPrice && <p className="text-sm text-destructive">{errors.floorPrice.message}</p>}
-              </div>
-              <div className="space-y-2">
                 <Label>GST % *</Label>
                 <Input type="number" step="any" min="0" max="100" {...register('gst')} />
                 {errors.gst && <p className="text-sm text-destructive">{errors.gst.message}</p>}
@@ -264,7 +255,7 @@ export default function RateMaster() {
                 </div>
               )}
             </div>
-            <p className="text-xs text-muted-foreground">Floor price ≤ net rate ≤ MRP. These bound the rates an exec can set when building a kit.</p>
+            <p className="text-xs text-muted-foreground">Net rate must be ≤ MRP. The net rate pre-fills the kit and can be edited per lead.</p>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setDialogOpen(false)} disabled={saving}>Cancel</Button>
               <Button type="submit" disabled={saving}>{saving ? 'Saving…' : editing ? 'Save changes' : 'Create rate'}</Button>

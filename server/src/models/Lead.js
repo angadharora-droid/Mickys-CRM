@@ -47,7 +47,6 @@ const rateLineSchema = new mongoose.Schema(
     suggestiveMargin: { type: Number, default: 0 },
     gst: { type: Number, required: true },
     netInclGst: { type: Number, required: true }, // netRate * (1 + gst/100)
-    floorPrice: { type: Number, required: true },
     deviationPct: { type: Number, default: 0 }, // % below standard (0 if at/above)
   },
   { _id: false }
