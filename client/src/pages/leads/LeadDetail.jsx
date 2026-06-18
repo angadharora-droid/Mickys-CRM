@@ -73,13 +73,12 @@ const serializeAgreementRows = (rows) =>
 function deriveLine(r) {
   const net = Number(r.netRate);
   const valid = !Number.isNaN(net) && r.netRate !== '';
-  const belowFloor = valid && net < r.floorPrice;
   const aboveMrp = valid && net > r.mrp;
   const deviation = valid && r.standardNetRate > 0 && net < r.standardNetRate
     ? ((r.standardNetRate - net) / r.standardNetRate) * 100
     : 0;
   const netInclGst = valid ? net * (1 + r.gst / 100) : 0;
-  return { net, valid, belowFloor, aboveMrp, deviation, netInclGst, error: !valid || belowFloor || aboveMrp };
+  return { net, valid, aboveMrp, deviation, netInclGst, error: !valid || aboveMrp };
 }
 
 function Stepper({ status }) {
@@ -785,7 +784,6 @@ export default function LeadDetail() {
                                   r.included !== false && !d.error && d.deviation > 0 && 'border-orange-400 text-orange-600'
                                 )}
                               />
-                              {r.included !== false && d.belowFloor && <p className="text-[11px] text-destructive mt-1">Below floor {formatCurrency(r.floorPrice)}</p>}
                               {r.included !== false && d.aboveMrp && <p className="text-[11px] text-destructive mt-1">Above MRP</p>}
                               {r.included !== false && !d.error && d.deviation > 10 && (
                                 <p className="text-[11px] text-orange-600 mt-1 flex items-center justify-end gap-1">

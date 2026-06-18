@@ -4,9 +4,9 @@ const KIT_TYPES = ['distributor', 'institutional'];
 
 /**
  * A single SKU in a rate master. The two masters (Distributor & Institutional)
- * are the same collection distinguished by `kitType`. MRP and floorPrice bound
- * the editable net rate when a kit is built; suggestiveMargin only applies to
- * the distributor master.
+ * are the same collection distinguished by `kitType`. MRP caps the editable net
+ * rate when a kit is built; suggestiveMargin only applies to the distributor
+ * master.
  */
 const rateItemSchema = new mongoose.Schema(
   {
@@ -19,7 +19,6 @@ const rateItemSchema = new mongoose.Schema(
     netRate: { type: Number, required: true, min: 0 }, // standard net rate
     suggestiveMargin: { type: Number, min: 0, max: 100, default: 0 }, // % (distributor)
     gst: { type: Number, required: true, min: 0, max: 100, default: 18 },
-    floorPrice: { type: Number, required: true, min: 0 }, // minimum allowed net rate
     isActive: { type: Boolean, default: true },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   },

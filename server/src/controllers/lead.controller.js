@@ -56,7 +56,6 @@ function snapshotLine(item) {
     suggestiveMargin: item.suggestiveMargin || 0,
     gst: item.gst,
     netInclGst: round2(item.netRate * (1 + item.gst / 100)),
-    floorPrice: item.floorPrice,
     deviationPct: 0,
   };
 }
@@ -343,9 +342,6 @@ const confirmRates = asyncHandler(async (req, res) => {
     if (!override) return line;
     const included = override.included !== false;
     const newRate = round2(override.netRate);
-    if (included && newRate < line.floorPrice) {
-      throw ApiError.badRequest(`"${line.productName}": rate ${newRate} is below the floor price ${line.floorPrice}`);
-    }
     if (included && newRate > line.mrp) {
       throw ApiError.badRequest(`"${line.productName}": rate ${newRate} exceeds MRP ${line.mrp}`);
     }
