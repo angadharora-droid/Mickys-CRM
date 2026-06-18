@@ -255,7 +255,11 @@ function priceTable(doc, y, ctx, priceLabel) {
     (groups[it.category] = groups[it.category] || []).push(it);
   });
 
-  content.CATEGORY_ORDER.forEach((cat) => {
+  const categoryOrder = [
+    ...content.CATEGORY_ORDER,
+    ...Object.keys(groups).filter((cat) => !content.CATEGORY_ORDER.includes(cat)),
+  ];
+  categoryOrder.forEach((cat) => {
     const rows = groups[cat];
     if (!rows || !rows.length) return;
     if (y > bottomLimit(doc) - 28) { y = newPage(doc, 'Price Card  ·  Trade Confidential'); y = drawHead(y); }
@@ -484,7 +488,7 @@ function drawQuotation(doc, ctx) {
     return yy + 18;
   };
   y = drawHead(y);
-  const lines = lead.rates || [];
+  const lines = (lead.rates || []).filter((line) => line.included !== false);
   lines.forEach((r, i) => {
     if (y > bottomLimit(doc)) { y = newPage(doc, footerLabel); y = drawHead(y); }
     if (i % 2 === 1) doc.rect(M, y, W, 16).fill('#faf7f2');
@@ -582,8 +586,21 @@ async function generateKit({ lead, exec, settings }) {
   const plan = DOC_PLANS[lead.kitType];
   if (!plan) throw new Error(`Unknown kit type: ${lead.kitType}`);
 
-  // Load the catalogue for the price card (sorted in reference order by SKU).
-  const catalog = await RateItem.find({ kitType: lead.kitType, isActive: true }).sort({ sku: 1 }).lean();
+  // Render the exact confirmed lead snapshot so exclusions and rate overrides
+  // are reflected consistently in both price cards and quotations.
+  const confirmedRates = (lead.rates || []).filter((line) => line.included !== false);
+  const rateItemIds = confirmedRates.map((line) => line.rateItemId).filter(Boolean);
+  const categories = await RateItem.find({ _id: { $in: rateItemIds } }).select('_id category').lean();
+  const categoryById = new Map(categories.map((item) => [String(item._id), item.category || 'Other']));
+  const catalog = confirmedRates
+    .map((line) => {
+      const item = typeof line.toObject === 'function' ? line.toObject() : line;
+      return {
+        ...item,
+        category: item.category || categoryById.get(String(item.rateItemId)) || 'Other',
+      };
+    })
+    .sort((a, b) => String(a.sku || '').localeCompare(String(b.sku || '')));
   const ctx = { lead, exec, settings, company, brand, content, catalog };
   const files = [];
 

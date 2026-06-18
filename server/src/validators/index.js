@@ -60,10 +60,10 @@ const leadSchema = z.object({
   contactPerson: z.string().min(2, 'Contact person is required'),
   designation: z.string().optional().or(z.literal('')),
   mobileNumber: z.string().min(6, 'Mobile number is required'),
-  email: z.string().email(),
+  email: z.string().email().optional().or(z.literal('')),
   whatsappNumber: z.string().optional().or(z.literal('')),
   city: z.string().min(1, 'City is required'),
-  state: z.string().min(1, 'State is required'),
+  state: z.string().optional().or(z.literal('')),
   address: z.string().optional().or(z.literal('')),
   gstin: z.string().max(20).optional().or(z.literal('')),
   businessType: z.enum(BUSINESS_TYPES),
@@ -83,6 +83,7 @@ const kitTypeSchema = z.object({
 const rateLineInputSchema = z.object({
   rateItemId: objectId,
   netRate: z.coerce.number().min(0),
+  included: z.boolean().optional(),
 });
 
 const ratesConfirmSchema = z.object({
@@ -95,6 +96,10 @@ const ratesConfirmSchema = z.object({
       agreementTermsAndConditions: z.string().max(12000).optional().or(z.literal('')),
     })
     .optional(),
+});
+
+const noteSchema = z.object({
+  text: z.string().trim().min(1, 'Note text is required').max(4000),
 });
 
 const emailKitSchema = z.object({
@@ -147,6 +152,7 @@ module.exports = {
   updateLeadSchema,
   kitTypeSchema,
   ratesConfirmSchema,
+  noteSchema,
   emailKitSchema,
   settingsSchema,
 };

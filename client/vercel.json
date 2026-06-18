@@ -27,7 +27,7 @@
         },
         {
           "key": "Content-Security-Policy",
-          "value": "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data: blob:; font-src 'self' https://fonts.gstatic.com data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; script-src 'self'; connect-src 'self' https://mickys-crm-production.up.railway.app; form-action 'self'"
+          "value": "default-src 'self'; base-uri 'self'; object-src 'none'; frame-src 'self' blob:; frame-ancestors 'none'; img-src 'self' data: blob:; font-src 'self' https://fonts.gstatic.com data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; script-src 'self'; connect-src 'self' https://mickys-crm-production.up.railway.app; form-action 'self'"
         }
       ]
     }
