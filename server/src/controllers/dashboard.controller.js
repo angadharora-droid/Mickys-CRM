@@ -1,7 +1,6 @@
 const asyncHandler = require('../utils/asyncHandler');
 const Lead = require('../models/Lead');
 const User = require('../models/User');
-const ActivityLog = require('../models/ActivityLog');
 
 const GENERATED = ['generated', 'delivered'];
 const OPEN = ['new', 'kit_selected', 'rates_confirmed'];
@@ -186,7 +185,7 @@ const execAnalytics = asyncHandler(async (req, res) => {
   const execId = req.user._id;
   const match = { assignedExecId: execId };
 
-  const [todayCount, monthCount, openCount, generatedCount, deliveredCount, monthly, status, recent] =
+  const [todayCount, monthCount, openCount, generatedCount, deliveredCount, monthly, status] =
     await Promise.all([
       Lead.countDocuments({ ...match, createdAt: { $gte: startOfToday() } }),
       Lead.countDocuments({ ...match, createdAt: { $gte: monthsAgo(0) } }),
@@ -195,7 +194,6 @@ const execAnalytics = asyncHandler(async (req, res) => {
       Lead.countDocuments({ ...match, status: 'delivered' }),
       monthlyLeads(match),
       statusBreakdown(match),
-      ActivityLog.find({ userId: execId }).sort({ timestamp: -1 }).limit(10),
     ]);
 
   res.json({
@@ -203,7 +201,6 @@ const execAnalytics = asyncHandler(async (req, res) => {
     data: {
       cards: { todayCount, monthCount, openCount, generatedCount, deliveredCount },
       charts: { monthly, status },
-      recentActivities: recent,
     },
   });
 });

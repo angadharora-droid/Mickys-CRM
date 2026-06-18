@@ -20,6 +20,7 @@ const NAV_SECTIONS = [
     items: [
       { to: '/', label: 'Dashboard', icon: LayoutDashboard, roles: ['*'] },
       { to: '/leads', label: 'Leads & Kits', icon: Contact, roles: ['*'] },
+      { to: '/my-records', label: 'My Records', icon: ClipboardList, roles: [ROLES.SALES_EXEC] },
     ],
   },
   {
