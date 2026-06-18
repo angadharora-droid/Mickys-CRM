@@ -121,6 +121,15 @@ const closeFollowUpSchema = z.object({
 
 const emailKitSchema = z.object({
   to: z.string().email().optional().or(z.literal('')),
+  // One or more CC addresses, comma-separated.
+  cc: z
+    .string()
+    .max(500)
+    .optional()
+    .refine(
+      (val) => !val || val.split(',').every((e) => z.string().email().safeParse(e.trim()).success),
+      { message: 'Enter valid CC email address(es), separated by commas' }
+    ),
   subject: z.string().max(300).optional().or(z.literal('')),
   message: z.string().max(8000).optional().or(z.literal('')),
 });

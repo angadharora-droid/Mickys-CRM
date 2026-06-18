@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -7,14 +7,19 @@ import { toast } from 'sonner';
 import api, { apiError } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { BUSINESS_TYPES } from '@/lib/constants';
+import { formatBytes } from '@/lib/utils';
 import PageHeader from '@/components/shared/PageHeader';
+import FilePreviewDialog from '@/components/shared/FilePreviewDialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { ChevronDown, Loader2, UserPlus, Contact, MapPin, Tag } from 'lucide-react';
+import {
+  ChevronDown, Loader2, UserPlus, Contact, MapPin, Tag,
+  Paperclip, Upload, Eye, FileText, X, Image as ImageIcon,
+} from 'lucide-react';
 
 const schema = z.object({
   businessName: z.string().min(2, 'Business name is required'),
@@ -51,6 +56,9 @@ export default function LeadCreate() {
   const [submitting, setSubmitting] = useState(false);
   const [companySuggestions, setCompanySuggestions] = useState([]);
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
+  const [files, setFiles] = useState([]);
+  const [attPreview, setAttPreview] = useState(null); // { url, name, type }
+  const fileRef = useRef(null);
 
   const { register, control, handleSubmit, watch, setValue, formState: { errors } } = useForm({
     resolver: zodResolver(schema),
@@ -128,14 +136,49 @@ export default function LeadCreate() {
     setSuggestionsOpen(false);
   };
 
+  const onPickFiles = (e) => {
+    const picked = Array.from(e.target.files || []);
+    e.target.value = '';
+    if (picked.length) setFiles((prev) => [...prev, ...picked]);
+  };
+
+  const removeFile = (idx) => setFiles((prev) => prev.filter((_, i) => i !== idx));
+
+  const previewLocal = (file) =>
+    setAttPreview((cur) => {
+      if (cur?.url) URL.revokeObjectURL(cur.url);
+      return { url: URL.createObjectURL(file), name: file.name, type: file.type };
+    });
+
+  const closePreview = (open) => {
+    if (open) return;
+    setAttPreview((cur) => {
+      if (cur?.url) URL.revokeObjectURL(cur.url);
+      return null;
+    });
+  };
+
   const onSubmit = async (values) => {
     setSubmitting(true);
     try {
       // Leads are always owned by their creator.
       const payload = { ...values, assignedExecId: user._id };
       const { data } = await api.post('/leads', payload);
+      const leadId = data.data._id;
+
+      // Upload any selected attachments to the freshly created lead.
+      if (files.length) {
+        try {
+          const form = new FormData();
+          files.forEach((f) => form.append('files', f));
+          await api.post(`/leads/${leadId}/attachments`, form);
+        } catch (uploadErr) {
+          toast.error(`Lead created, but file upload failed: ${apiError(uploadErr)}`);
+        }
+      }
+
       toast.success(`Lead ${data.data.refNumber} created`);
-      navigate(`/leads/${data.data._id}`);
+      navigate(`/leads/${leadId}`);
     } catch (err) {
       toast.error(apiError(err));
     } finally {
@@ -260,6 +303,55 @@ export default function LeadCreate() {
           </CardContent>
         </Card>
 
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base flex items-center justify-between gap-2">
+              <span className="flex items-center gap-2"><Paperclip className="h-4 w-4" /> Attachments</span>
+              <Button type="button" size="sm" variant="outline" onClick={() => fileRef.current?.click()}>
+                <Upload className="h-4 w-4" /> Add files
+              </Button>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <input ref={fileRef} type="file" multiple className="hidden" onChange={onPickFiles} />
+            {files.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                Optionally attach photos, PDFs or spreadsheets — they&rsquo;ll be uploaded with the lead.
+              </p>
+            ) : (
+              <div className="rounded-lg border divide-y">
+                {files.map((file, idx) => {
+                  const isImage = (file.type || '').startsWith('image/');
+                  return (
+                    <div key={`${file.name}-${idx}`} className="flex items-center justify-between gap-3 px-3 py-2.5">
+                      <div className="flex min-w-0 items-center gap-2">
+                        {isImage
+                          ? <ImageIcon className="h-4 w-4 text-primary shrink-0" />
+                          : <FileText className="h-4 w-4 text-primary shrink-0" />}
+                        <div className="min-w-0">
+                          <p className="text-sm truncate">{file.name}</p>
+                          <p className="text-xs text-muted-foreground">{formatBytes(file.size)}</p>
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1">
+                        <Button type="button" variant="ghost" size="sm" onClick={() => previewLocal(file)}>
+                          <Eye className="h-4 w-4" /> Preview
+                        </Button>
+                        <Button
+                          type="button" variant="ghost" size="icon" className="h-8 w-8 text-destructive"
+                          title="Remove" onClick={() => removeFile(idx)}
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
         <div className="flex flex-col-reverse sm:flex-row justify-end gap-3">
           <Button type="button" variant="outline" onClick={() => navigate(-1)} disabled={submitting}>Cancel</Button>
           <Button type="submit" disabled={submitting}>
@@ -268,6 +360,8 @@ export default function LeadCreate() {
           </Button>
         </div>
       </form>
+
+      <FilePreviewDialog file={attPreview} onOpenChange={closePreview} />
     </div>
   );
 }

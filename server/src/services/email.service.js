@@ -63,7 +63,7 @@ function toResendAttachments(attachments = []) {
   }));
 }
 
-async function sendViaResend(provider, { from, to, subject, html, attachments, replyTo, bcc }) {
+async function sendViaResend(provider, { from, to, subject, html, attachments, replyTo, cc, bcc }) {
   if (!resendClient) {
     const { Resend } = require('resend');
     resendClient = new Resend(provider.apiKey);
@@ -72,6 +72,7 @@ async function sendViaResend(provider, { from, to, subject, html, attachments, r
   const { data, error } = await resendClient.emails.send({
     from,
     to,
+    cc: cc || undefined,
     bcc: bcc || undefined,
     replyTo: replyTo || undefined,
     subject,
@@ -82,12 +83,13 @@ async function sendViaResend(provider, { from, to, subject, html, attachments, r
   return data?.id;
 }
 
-async function sendViaSmtp(provider, { from, to, subject, html, attachments, replyTo, bcc }) {
+async function sendViaSmtp(provider, { from, to, subject, html, attachments, replyTo, cc, bcc }) {
   const nodemailer = require('nodemailer');
   const transporter = nodemailer.createTransport(provider.smtp);
   const info = await transporter.sendMail({
     from,
     to,
+    cc: cc || undefined,
     bcc: bcc || undefined,
     replyTo: replyTo || undefined,
     subject,
@@ -97,7 +99,7 @@ async function sendViaSmtp(provider, { from, to, subject, html, attachments, rep
   return info.messageId;
 }
 
-async function sendMail({ to, subject, html, attachments = [], replyTo, fromName, bcc }) {
+async function sendMail({ to, subject, html, attachments = [], replyTo, fromName, cc, bcc }) {
   const provider = await getProvider();
   if (!provider) {
     console.warn(`[email] skipped "${subject}" — email provider not configured`);
@@ -105,7 +107,7 @@ async function sendMail({ to, subject, html, attachments = [], replyTo, fromName
   }
   // Keep the verified/authenticated sending address but show the exec's name when provided.
   const from = fromName ? `"${fromName}" <${addressOf(provider.from)}>` : provider.from;
-  const payload = { from, to, subject, html, attachments, replyTo, bcc };
+  const payload = { from, to, subject, html, attachments, replyTo, cc, bcc };
 
   const messageId =
     provider.type === 'resend'
@@ -147,7 +149,7 @@ function baseTemplate(title, bodyHtml) {
  * document is attached separately (as its own PDF). Skips silently when no
  * email provider is configured.
  */
-async function sendKitEmail({ lead, exec, to, subject, message, files = [], bcc }) {
+async function sendKitEmail({ lead, exec, to, cc, subject, message, files = [], bcc }) {
   const recipient = to || lead.email;
   if (!recipient) return { skipped: true, reason: 'No recipient email' };
 
@@ -173,6 +175,7 @@ async function sendKitEmail({ lead, exec, to, subject, message, files = [], bcc 
 
   return sendMail({
     to: recipient,
+    cc,
     bcc,
     subject: subject || `Micky's Sales Kit for ${lead.businessName} — Ref: ${lead.refNumber}`,
     html,

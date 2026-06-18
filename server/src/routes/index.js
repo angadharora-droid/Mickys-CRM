@@ -3,6 +3,7 @@ const express = require('express');
 const { authenticate, authorize } = require('../middleware/auth');
 const { loginLimiter, authLimiter, generateLimiter, emailLimiter } = require('../middleware/security');
 const validate = require('../middleware/validate');
+const upload = require('../middleware/upload');
 const v = require('../validators');
 
 const auth = require('../controllers/auth.controller');
@@ -56,6 +57,9 @@ router.put('/leads/:id/notes/:noteId', authenticate, validate(v.noteSchema), lea
 router.delete('/leads/:id/notes/:noteId', authenticate, leads.deleteNote);
 router.put('/leads/:id/follow-up', authenticate, validate(v.followUpSchema), leads.updateFollowUp);
 router.post('/leads/:id/follow-up/close', authenticate, validate(v.closeFollowUpSchema), leads.closeFollowUp);
+router.post('/leads/:id/attachments', authenticate, upload.array('files', 10), leads.uploadAttachments);
+router.get('/leads/:id/attachments/:attId', authenticate, leads.downloadAttachment);
+router.delete('/leads/:id/attachments/:attId', authenticate, leads.deleteAttachment);
 router.get('/leads/:id/kit.zip', authenticate, leads.downloadZip);
 router.get('/leads/:id/documents/:idx', authenticate, leads.downloadDocument);
 router.post('/leads/:id/email', authenticate, emailLimiter, validate(v.emailKitSchema), leads.emailKit);
