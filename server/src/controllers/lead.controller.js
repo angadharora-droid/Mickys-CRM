@@ -162,7 +162,7 @@ const createLead = asyncHandler(async (req, res) => {
   const execId = await resolveExecId(req, assignedExecId);
   const refNumber = await nextRefNumber(rest.city);
 
-  // An optional note typed on the create form seeds the notes timeline.
+  // A lead has one editable internal note.
   const initialNote = String(internalNotes || '').trim();
 
   const lead = await Lead.create({
@@ -170,7 +170,8 @@ const createLead = asyncHandler(async (req, res) => {
     assignedExecId: execId,
     refNumber,
     status: 'new',
-    notes: initialNote ? [{ text: initialNote, createdBy: req.user._id }] : [],
+    internalNotes: initialNote,
+    notes: [],
     statusHistory: [{ from: null, to: 'new', changedBy: req.user._id, note: 'Lead created' }],
     createdBy: req.user._id,
     modifiedBy: req.user._id,
@@ -455,7 +456,7 @@ function assertCanModifyNote(note, user) {
   }
 }
 
-// POST /api/leads/:id/notes  (add an internal note)
+// POST /api/leads/:id/notes  (create or replace the single internal note)
 const addNote = asyncHandler(async (req, res) => {
   const lead = await Lead.findById(req.params.id);
   if (!lead) throw ApiError.notFound('Lead not found');
@@ -464,17 +465,18 @@ const addNote = asyncHandler(async (req, res) => {
   const text = String(req.body.text || '').trim();
   if (!text) throw ApiError.badRequest('Note text is required');
 
-  lead.notes.push({ text, createdBy: req.user._id });
+  lead.internalNotes = text;
+  lead.notes = [];
   lead.modifiedBy = req.user._id;
   await lead.save();
 
   await logActivity({
-    userId: req.user._id, action: 'LEAD_NOTE_ADDED', entity: 'Lead', entityId: lead._id,
-    details: `Added an internal note to ${lead.refNumber}`, ip: req.ip,
+    userId: req.user._id, action: 'LEAD_NOTE_UPDATED', entity: 'Lead', entityId: lead._id,
+    details: `Updated the internal note on ${lead.refNumber}`, ip: req.ip,
   });
 
   const populated = await Lead.findById(lead._id).populate(POPULATE);
-  res.status(201).json({ success: true, data: populated });
+  res.json({ success: true, data: populated });
 });
 
 // PUT /api/leads/:id/notes/:noteId  (edit an internal note)

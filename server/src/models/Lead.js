@@ -131,8 +131,8 @@ const leadSchema = new mongoose.Schema(
     assignedExecId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     leadSource: { type: String, trim: true, default: '' },
     leadDate: { type: Date, default: Date.now },
-    // Legacy single note from older leads (set at creation). New notes go in the
-    // `notes` timeline below; this is kept so existing data still displays.
+    // One shared editable internal note. The legacy `notes` array remains only
+    // so older records can be consolidated on their next note save.
     internalNotes: { type: String, trim: true, default: '' },
     notes: { type: [noteSchema], default: [] },
 
