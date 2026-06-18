@@ -28,10 +28,15 @@ function errorHandler(err, _req, res, _next) {
     message = 'Validation failed';
     details = Object.values(err.errors).map((e) => e.message);
   }
-  // Multer file-size error
-  if (err.code === 'LIMIT_FILE_SIZE') {
+  // Multer upload errors (bad multipart, too many files, etc.)
+  if (err.name === 'MulterError') {
     statusCode = 400;
-    message = `File too large. Max size is ${env.maxFileSizeMb}MB`;
+    message =
+      err.code === 'LIMIT_FILE_SIZE'
+        ? `File too large. Max size is ${env.maxFileSizeMb}MB`
+        : err.code === 'LIMIT_FILE_COUNT'
+          ? 'Too many files. Upload up to 10 at a time.'
+          : `Upload failed: ${err.message}`;
   }
 
   if (statusCode >= 500) console.error('[error]', err);

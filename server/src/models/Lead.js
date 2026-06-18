@@ -75,6 +75,18 @@ const noteSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+/** A manually uploaded file (photo, PDF, spreadsheet, …) stored in GridFS. */
+const attachmentSchema = new mongoose.Schema(
+  {
+    fileName: { type: String, required: true },
+    fileId: { type: String, required: true },
+    contentType: { type: String, default: 'application/octet-stream' },
+    size: { type: Number, default: 0 },
+    uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  },
+  { timestamps: true }
+);
+
 const rateEditSchema = new mongoose.Schema(
   {
     productName: String,
@@ -124,6 +136,9 @@ const leadSchema = new mongoose.Schema(
     // `notes` timeline below; this is kept so existing data still displays.
     internalNotes: { type: String, trim: true, default: '' },
     notes: { type: [noteSchema], default: [] },
+
+    // Manually uploaded files (photos, PDFs, sheets) kept alongside the lead.
+    attachments: { type: [attachmentSchema], default: [] },
 
     // ---- Follow-up ----
     // The lead's current next-action and the date it's due. Closing records a

@@ -20,6 +20,7 @@ const POPULATE = [
   { path: 'statusHistory.changedBy', select: 'name role' },
   { path: 'notes.createdBy', select: 'name role' },
   { path: 'followUp.closedBy', select: 'name role' },
+  { path: 'attachments.uploadedBy', select: 'name role' },
 ];
 
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
@@ -275,6 +276,7 @@ const deleteLead = asyncHandler(async (req, res) => {
   const fileIds = [
     lead.zipFile?.fileId,
     ...(lead.generatedFiles || []).map((f) => f.fileId),
+    ...(lead.attachments || []).map((a) => a.fileId),
   ].filter(Boolean);
   if (fileIds.length) await deleteFiles(fileIds);
   const dir = path.join(KITS_DIR, lead.refNumber);
@@ -599,6 +601,78 @@ const closeFollowUp = asyncHandler(async (req, res) => {
   res.json({ success: true, data: populated });
 });
 
+// POST /api/leads/:id/attachments  (manual file upload — photos, PDFs, sheets)
+const uploadAttachments = asyncHandler(async (req, res) => {
+  const lead = await Lead.findById(req.params.id);
+  if (!lead) throw ApiError.notFound('Lead not found');
+  assertCanView(lead, req.user);
+
+  const files = req.files || [];
+  if (!files.length) throw ApiError.badRequest('No files were uploaded');
+
+  for (const f of files) {
+    const fileId = await uploadBuffer({
+      buffer: f.buffer,
+      filename: f.originalname,
+      contentType: f.mimetype,
+      metadata: { leadId: String(lead._id), refNumber: lead.refNumber, docType: 'Attachment' },
+    });
+    lead.attachments.push({
+      fileName: f.originalname,
+      fileId: String(fileId),
+      contentType: f.mimetype,
+      size: f.size,
+      uploadedBy: req.user._id,
+    });
+  }
+  lead.modifiedBy = req.user._id;
+  await lead.save();
+
+  await logActivity({
+    userId: req.user._id, action: 'LEAD_ATTACHMENT_ADDED', entity: 'Lead', entityId: lead._id,
+    details: `Uploaded ${files.length} file(s) to ${lead.refNumber}`, ip: req.ip,
+  });
+
+  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  res.status(201).json({ success: true, data: populated });
+});
+
+// GET /api/leads/:id/attachments/:attId  (stream inline for preview / download)
+const downloadAttachment = asyncHandler(async (req, res) => {
+  const lead = await Lead.findById(req.params.id);
+  if (!lead) throw ApiError.notFound('Lead not found');
+  assertCanView(lead, req.user);
+
+  const att = lead.attachments.id(req.params.attId);
+  if (!att || !att.fileId) throw ApiError.notFound('Attachment not found');
+
+  res.setHeader('Content-Type', att.contentType || 'application/octet-stream');
+  res.setHeader('Content-Disposition', `inline; filename="${String(att.fileName).replace(/"/g, '')}"`);
+  return openDownloadStream(att.fileId).pipe(res);
+});
+
+// DELETE /api/leads/:id/attachments/:attId
+const deleteAttachment = asyncHandler(async (req, res) => {
+  const lead = await Lead.findById(req.params.id);
+  if (!lead) throw ApiError.notFound('Lead not found');
+  assertCanView(lead, req.user);
+
+  const att = lead.attachments.id(req.params.attId);
+  if (!att) throw ApiError.notFound('Attachment not found');
+  if (att.fileId) await deleteFiles([att.fileId]);
+  lead.attachments.pull(att._id);
+  lead.modifiedBy = req.user._id;
+  await lead.save();
+
+  await logActivity({
+    userId: req.user._id, action: 'LEAD_ATTACHMENT_DELETED', entity: 'Lead', entityId: lead._id,
+    details: `Deleted attachment "${att.fileName}" from ${lead.refNumber}`, ip: req.ip,
+  });
+
+  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  res.json({ success: true, data: populated });
+});
+
 // GET /api/leads/:id/kit.zip
 const downloadZip = asyncHandler(async (req, res) => {
   const lead = await Lead.findById(req.params.id);
@@ -670,7 +744,7 @@ const emailKit = asyncHandler(async (req, res) => {
     await lead.save();
   }
 
-  const files = await Promise.all(
+  const generatedFiles = await Promise.all(
     lead.generatedFiles.map(async (f) => ({
       filename: f.fileName,
       content: f.fileId ? await getBuffer(f.fileId) : undefined,
@@ -678,10 +752,29 @@ const emailKit = asyncHandler(async (req, res) => {
     }))
   );
 
+  // Manually uploaded attachments (photos, PDFs, sheets) ride along with the kit.
+  const attachmentFiles = await Promise.all(
+    (lead.attachments || [])
+      .filter((a) => a.fileId)
+      .map(async (a) => ({
+        filename: a.fileName,
+        content: await getBuffer(a.fileId),
+        contentType: a.contentType || undefined,
+      }))
+  );
+
+  const files = [...generatedFiles, ...attachmentFiles];
+
+  const cc = String(req.body.cc || '')
+    .split(',')
+    .map((e) => e.trim())
+    .filter(Boolean);
+
   const [exec, settings] = await Promise.all([User.findById(lead.assignedExecId), Setting.getGlobal()]);
   const result = await sendKitEmail({
     lead, exec,
     to: req.body.to || lead.email,
+    cc: cc.length ? cc : undefined,
     subject: req.body.subject,
     message: req.body.message,
     files,
@@ -733,6 +826,9 @@ module.exports = {
   listFollowUps,
   updateFollowUp,
   closeFollowUp,
+  uploadAttachments,
+  downloadAttachment,
+  deleteAttachment,
   downloadZip,
   downloadDocument,
   emailKit,
