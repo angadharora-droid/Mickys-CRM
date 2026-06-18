@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import api, { apiError } from '@/lib/api';
-import { useAuth } from '@/context/AuthContext';
 import {
   LEAD_STATUSES,
   STATUS_LABELS,
@@ -32,7 +31,7 @@ import {
 import {
   Loader2, Package, Download, Mail, Trash2, RotateCcw, FileText, CheckCircle2,
   AlertTriangle, ArrowLeft, Boxes, Building2, Sparkles, Eye, EyeOff, Lock, Pencil, ExternalLink,
-  Plus, MessageSquare, X, CalendarClock, CalendarCheck, Paperclip, Upload, Image as ImageIcon,
+  MessageSquare, CalendarClock, CalendarCheck, Paperclip, Upload, Image as ImageIcon,
 } from 'lucide-react';
 
 const NO_ACTION = '__none__';
@@ -118,7 +117,6 @@ function InfoRow({ label, value }) {
 export default function LeadDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { user } = useAuth();
 
   const [lead, setLead] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -137,9 +135,6 @@ export default function LeadDetail() {
   const [emailForm, setEmailForm] = useState({ to: '', cc: '', subject: '', message: '' });
   const [previewFile, setPreviewFile] = useState(null);
   const [noteDraft, setNoteDraft] = useState('');
-  const [editingNoteId, setEditingNoteId] = useState(null);
-  const [editingText, setEditingText] = useState('');
-  const [confirmNoteId, setConfirmNoteId] = useState(null);
   const [followUpForm, setFollowUpForm] = useState({ actionPoint: '', date: '' });
   const [closingOpen, setClosingOpen] = useState(false);
   const [closeNote, setCloseNote] = useState('');
@@ -181,6 +176,9 @@ export default function LeadDetail() {
       actionPoint: lead.followUp?.actionPoint || '',
       date: lead.followUp?.date ? new Date(lead.followUp.date).toISOString().slice(0, 10) : '',
     });
+    const latestLegacyNote = [...(lead.notes || [])]
+      .sort((a, b) => new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt))[0];
+    setNoteDraft(latestLegacyNote?.text || lead.internalNotes || '');
     setSwitching(false);
   }, [lead?.updatedAt, lead?._id, lead?.kitType]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -202,15 +200,6 @@ export default function LeadDetail() {
   const includedRates = rates.filter((r) => r.included !== false);
   const anyError = includedRates.length === 0 || includedRates.some((r) => deriveLine(r).error);
   const agreementRows = parseAgreementTerms(terms.agreementTermsAndConditions, lead.businessName);
-
-  // Notes timeline, newest first. A legacy single internalNotes string (from
-  // leads created before the timeline existed) is shown last, read-only.
-  const notesList = [
-    ...[...(lead.notes || [])].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)),
-    ...(lead.internalNotes
-      ? [{ _id: null, legacy: true, text: lead.internalNotes, createdBy: lead.createdBy, createdAt: lead.createdAt }]
-      : []),
-  ];
 
   // Follow-up display state (date strings compared in YYYY-MM-DD form).
   const followUp = lead.followUp || {};
@@ -319,29 +308,10 @@ export default function LeadDetail() {
   };
 
   // ---- Internal notes ----
-  const addNote = () =>
+  const saveInternalNote = () =>
     run('note-add', () => api.post(`/leads/${lead._id}/notes`, { text: noteDraft.trim() }))
-      .then(() => { setNoteDraft(''); toast.success('Note added'); })
+      .then(() => toast.success('Internal note saved'))
       .catch(() => {});
-
-  const startEditNote = (note) => { setEditingNoteId(note._id); setEditingText(note.text); };
-  const cancelEditNote = () => { setEditingNoteId(null); setEditingText(''); };
-
-  const saveNote = (noteId) =>
-    run('note-edit', () => api.put(`/leads/${lead._id}/notes/${noteId}`, { text: editingText.trim() }))
-      .then(() => { cancelEditNote(); toast.success('Note updated'); })
-      .catch(() => {});
-
-  const deleteNote = (noteId) =>
-    run('note-del', () => api.delete(`/leads/${lead._id}/notes/${noteId}`))
-      .then(() => { setConfirmNoteId(null); toast.success('Note deleted'); })
-      .catch(() => {});
-
-  // A note can be edited/deleted by its author or an admin. Legacy notes (the
-  // old single internalNotes string) have no id and are read-only.
-  const canModifyNote = (note) =>
-    Boolean(note._id) &&
-    (user?.role === 'admin' || String(note.createdBy?._id || note.createdBy) === String(user?._id));
 
   // ---- Follow-up ----
   const saveFollowUp = () =>
@@ -594,78 +564,23 @@ export default function LeadDetail() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          {/* Add a note */}
           <div className="space-y-2">
             <Textarea
-              rows={2}
-              placeholder="Add an internal note (visible to your team, not the client)…"
+              rows={4}
+              placeholder="Internal note (visible to your team, not the client)…"
               value={noteDraft}
               onChange={(e) => setNoteDraft(e.target.value)}
             />
             <div className="flex justify-end">
-              <Button size="sm" onClick={addNote} disabled={!noteDraft.trim() || action === 'note-add'}>
-                {action === 'note-add' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                Add note
+              <Button size="sm" onClick={saveInternalNote} disabled={!noteDraft.trim() || action === 'note-add'}>
+                {action === 'note-add' ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                Save note
               </Button>
             </div>
           </div>
-
-          {/* Timeline */}
-          {notesList.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No internal notes yet.</p>
-          ) : (
-            <ul className="space-y-3">
-              {notesList.map((note) => (
-                <li key={note._id || 'legacy'} className="rounded-lg border bg-muted/30 p-3">
-                  {note._id && editingNoteId === note._id ? (
-                    <div className="space-y-2">
-                      <Textarea rows={2} value={editingText} onChange={(e) => setEditingText(e.target.value)} />
-                      <div className="flex justify-end gap-2">
-                        <Button size="sm" variant="ghost" onClick={cancelEditNote} disabled={action === 'note-edit'}>
-                          <X className="h-4 w-4" /> Cancel
-                        </Button>
-                        <Button
-                          size="sm"
-                          onClick={() => saveNote(note._id)}
-                          disabled={!editingText.trim() || action === 'note-edit'}
-                        >
-                          {action === 'note-edit' ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                          Save
-                        </Button>
-                      </div>
-                    </div>
-                  ) : (
-                    <>
-                      <div className="flex items-start justify-between gap-2">
-                        <p className="text-sm whitespace-pre-wrap break-words">{note.text}</p>
-                        {canModifyNote(note) && (
-                          <div className="flex shrink-0 gap-1">
-                            <Button
-                              variant="ghost" size="icon" className="h-7 w-7"
-                              title="Edit note" onClick={() => startEditNote(note)}
-                            >
-                              <Pencil className="h-3.5 w-3.5" />
-                            </Button>
-                            <Button
-                              variant="ghost" size="icon" className="h-7 w-7 text-destructive"
-                              title="Delete note" onClick={() => setConfirmNoteId(note._id)}
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
-                          </div>
-                        )}
-                      </div>
-                      <p className="mt-1.5 text-xs text-muted-foreground">
-                        {note.createdBy?.name || 'Unknown'} · {formatDateTime(note.createdAt)}
-                        {note.updatedAt && note.updatedAt !== note.createdAt && ' · edited'}
-                        {note.legacy && ' · added at creation'}
-                      </p>
-                    </>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
+          <p className="text-xs text-muted-foreground">
+            Saving replaces the existing internal note; it does not create another note.
+          </p>
         </CardContent>
       </Card>
 
@@ -1139,16 +1054,6 @@ export default function LeadDetail() {
         description="This permanently removes the lead and any generated kit files."
         confirmLabel="Delete lead"
         onConfirm={deleteLead}
-      />
-
-      <ConfirmDialog
-        open={Boolean(confirmNoteId)}
-        onOpenChange={(o) => { if (!o) setConfirmNoteId(null); }}
-        title="Delete note?"
-        description="This internal note will be permanently removed."
-        confirmLabel="Delete note"
-        loading={action === 'note-del'}
-        onConfirm={() => deleteNote(confirmNoteId)}
       />
 
       <ConfirmDialog
