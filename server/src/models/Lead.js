@@ -31,6 +31,8 @@ const rateLineSchema = new mongoose.Schema(
     sku: { type: String, default: '' },
     productName: { type: String, required: true },
     packSize: { type: String, default: '' },
+    category: { type: String, default: '' },
+    included: { type: Boolean, default: true },
     mrp: { type: Number, required: true },
     standardNetRate: { type: Number, required: true }, // master rate at snapshot time
     netRate: { type: Number, required: true }, // exec-confirmed (may be overridden)
@@ -52,6 +54,17 @@ const statusHistorySchema = new mongoose.Schema(
     at: { type: Date, default: Date.now },
   },
   { _id: false }
+);
+
+/** A free-text internal note, authored by a team member. Each note tracks its
+ *  own createdAt/updatedAt via timestamps so the timeline can show when it was
+ *  added or last edited. */
+const noteSchema = new mongoose.Schema(
+  {
+    text: { type: String, required: true, trim: true, maxlength: 4000 },
+    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  },
+  { timestamps: true }
 );
 
 const rateEditSchema = new mongoose.Schema(
@@ -87,10 +100,10 @@ const leadSchema = new mongoose.Schema(
     contactPerson: { type: String, required: true, trim: true },
     designation: { type: String, trim: true, default: '' },
     mobileNumber: { type: String, required: true, trim: true },
-    email: { type: String, required: true, trim: true, lowercase: true },
+    email: { type: String, trim: true, lowercase: true, default: '' },
     whatsappNumber: { type: String, trim: true, default: '' },
     city: { type: String, required: true, trim: true, index: true },
-    state: { type: String, required: true, trim: true },
+    state: { type: String, trim: true, default: '' },
     address: { type: String, trim: true, default: '' },
     gstin: { type: String, trim: true, uppercase: true, default: '' },
     businessType: { type: String, enum: BUSINESS_TYPES, required: true },
@@ -99,7 +112,10 @@ const leadSchema = new mongoose.Schema(
     assignedExecId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     leadSource: { type: String, trim: true, default: '' },
     leadDate: { type: Date, default: Date.now },
+    // Legacy single note from older leads (set at creation). New notes go in the
+    // `notes` timeline below; this is kept so existing data still displays.
     internalNotes: { type: String, trim: true, default: '' },
+    notes: { type: [noteSchema], default: [] },
 
     // ---- Kit ----
     kitType: { type: String, enum: KIT_TYPES },

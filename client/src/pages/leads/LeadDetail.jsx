@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import api, { apiError } from '@/lib/api';
+import { useAuth } from '@/context/AuthContext';
 import {
   LEAD_STATUSES,
   STATUS_LABELS,
@@ -27,7 +28,8 @@ import {
 } from '@/components/ui/dialog';
 import {
   Loader2, Package, Download, Mail, Trash2, RotateCcw, FileText, CheckCircle2,
-  AlertTriangle, ArrowLeft, Boxes, Building2, Sparkles, Eye, Lock, Pencil,
+  AlertTriangle, ArrowLeft, Boxes, Building2, Sparkles, Eye, EyeOff, Lock, Pencil, ExternalLink,
+  Plus, MessageSquare, X,
 } from 'lucide-react';
 
 const STEPS = ['Client Data', 'Kit Type', 'Rate Review', 'Generate', 'Deliver'];
@@ -112,6 +114,7 @@ function InfoRow({ label, value }) {
 export default function LeadDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
 
   const [lead, setLead] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -129,6 +132,10 @@ export default function LeadDetail() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [emailForm, setEmailForm] = useState({ to: '', subject: '', message: '' });
   const [previewFile, setPreviewFile] = useState(null);
+  const [noteDraft, setNoteDraft] = useState('');
+  const [editingNoteId, setEditingNoteId] = useState(null);
+  const [editingText, setEditingText] = useState('');
+  const [confirmNoteId, setConfirmNoteId] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -148,7 +155,7 @@ export default function LeadDetail() {
   // Re-seed the editable rate table whenever the server copy changes.
   useEffect(() => {
     if (!lead) return;
-    setRates((lead.rates || []).map((r) => ({ ...r })));
+    setRates((lead.rates || []).map((r) => ({ ...r, included: r.included !== false })));
     setTerms({
       paymentTerms: lead.customTerms?.paymentTerms || '',
       creditPeriod: lead.customTerms?.creditPeriod || '',
@@ -177,8 +184,18 @@ export default function LeadDetail() {
   // A generated kit freezes the lead until the user clicks Edit (unlock).
   const locked = Boolean(lead.locked);
   const editedAfterGen = Boolean(lead.editedAfterGeneration);
-  const anyError = rates.some((r) => deriveLine(r).error);
+  const includedRates = rates.filter((r) => r.included !== false);
+  const anyError = includedRates.length === 0 || includedRates.some((r) => deriveLine(r).error);
   const agreementRows = parseAgreementTerms(terms.agreementTermsAndConditions, lead.businessName);
+
+  // Notes timeline, newest first. A legacy single internalNotes string (from
+  // leads created before the timeline existed) is shown last, read-only.
+  const notesList = [
+    ...[...(lead.notes || [])].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)),
+    ...(lead.internalNotes
+      ? [{ _id: null, legacy: true, text: lead.internalNotes, createdBy: lead.createdBy, createdAt: lead.createdAt }]
+      : []),
+  ];
 
   const run = async (key, fn) => {
     setAction(key);
@@ -209,7 +226,11 @@ export default function LeadDetail() {
   const confirmRates = () =>
     run('rates', () =>
       api.put(`/leads/${lead._id}/rates`, {
-        rates: rates.map((r) => ({ rateItemId: r.rateItemId, netRate: Number(r.netRate) })),
+        rates: rates.map((r) => ({
+          rateItemId: r.rateItemId,
+          netRate: Number(r.netRate),
+          included: r.included !== false,
+        })),
         customTerms: terms,
       })
     ).then(() => toast.success('Rates confirmed')).catch(() => {});
@@ -273,8 +294,35 @@ export default function LeadDetail() {
     }
   };
 
+  // ---- Internal notes ----
+  const addNote = () =>
+    run('note-add', () => api.post(`/leads/${lead._id}/notes`, { text: noteDraft.trim() }))
+      .then(() => { setNoteDraft(''); toast.success('Note added'); })
+      .catch(() => {});
+
+  const startEditNote = (note) => { setEditingNoteId(note._id); setEditingText(note.text); };
+  const cancelEditNote = () => { setEditingNoteId(null); setEditingText(''); };
+
+  const saveNote = (noteId) =>
+    run('note-edit', () => api.put(`/leads/${lead._id}/notes/${noteId}`, { text: editingText.trim() }))
+      .then(() => { cancelEditNote(); toast.success('Note updated'); })
+      .catch(() => {});
+
+  const deleteNote = (noteId) =>
+    run('note-del', () => api.delete(`/leads/${lead._id}/notes/${noteId}`))
+      .then(() => { setConfirmNoteId(null); toast.success('Note deleted'); })
+      .catch(() => {});
+
+  // A note can be edited/deleted by its author or an admin. Legacy notes (the
+  // old single internalNotes string) have no id and are read-only.
+  const canModifyNote = (note) =>
+    Boolean(note._id) &&
+    (user?.role === 'admin' || String(note.createdBy?._id || note.createdBy) === String(user?._id));
+
   const setRate = (idx, val) => setRates((rs) => rs.map((r, i) => (i === idx ? { ...r, netRate: val } : r)));
   const resetRate = (idx) => setRates((rs) => rs.map((r, i) => (i === idx ? { ...r, netRate: r.standardNetRate } : r)));
+  const toggleProduct = (idx) =>
+    setRates((rs) => rs.map((r, i) => (i === idx ? { ...r, included: r.included === false } : r)));
   const setAgreementRow = (idx, key, value) => {
     setTerms((current) => {
       const rows = parseAgreementTerms(current.agreementTermsAndConditions, lead.businessName);
@@ -362,16 +410,94 @@ export default function LeadDetail() {
             <InfoRow label="Mobile" value={lead.mobileNumber} />
             <InfoRow label="Email" value={lead.email} />
             <InfoRow label="WhatsApp" value={lead.whatsappNumber} />
-            <InfoRow label="City / State" value={`${lead.city}, ${lead.state}`} />
+            <InfoRow label="City / State" value={[lead.city, lead.state].filter(Boolean).join(', ')} />
             <InfoRow label="GSTIN" value={lead.gstin} />
             <InfoRow label="Lead source" value={lead.leadSource} />
             <InfoRow label="Lead date" value={formatDate(lead.leadDate)} />
             <InfoRow label="Address" value={lead.address} />
           </dl>
-          {lead.internalNotes && (
-            <div className="mt-4 rounded-lg bg-muted/40 p-3 text-sm">
-              <span className="font-medium">Internal notes: </span>{lead.internalNotes}
+        </CardContent>
+      </Card>
+
+      {/* Internal notes */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <MessageSquare className="h-4 w-4 text-muted-foreground" /> Internal Notes
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Add a note */}
+          <div className="space-y-2">
+            <Textarea
+              rows={2}
+              placeholder="Add an internal note (visible to your team, not the client)…"
+              value={noteDraft}
+              onChange={(e) => setNoteDraft(e.target.value)}
+            />
+            <div className="flex justify-end">
+              <Button size="sm" onClick={addNote} disabled={!noteDraft.trim() || action === 'note-add'}>
+                {action === 'note-add' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                Add note
+              </Button>
             </div>
+          </div>
+
+          {/* Timeline */}
+          {notesList.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No internal notes yet.</p>
+          ) : (
+            <ul className="space-y-3">
+              {notesList.map((note) => (
+                <li key={note._id || 'legacy'} className="rounded-lg border bg-muted/30 p-3">
+                  {editingNoteId === note._id ? (
+                    <div className="space-y-2">
+                      <Textarea rows={2} value={editingText} onChange={(e) => setEditingText(e.target.value)} />
+                      <div className="flex justify-end gap-2">
+                        <Button size="sm" variant="ghost" onClick={cancelEditNote} disabled={action === 'note-edit'}>
+                          <X className="h-4 w-4" /> Cancel
+                        </Button>
+                        <Button
+                          size="sm"
+                          onClick={() => saveNote(note._id)}
+                          disabled={!editingText.trim() || action === 'note-edit'}
+                        >
+                          {action === 'note-edit' ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                          Save
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="text-sm whitespace-pre-wrap break-words">{note.text}</p>
+                        {canModifyNote(note) && (
+                          <div className="flex shrink-0 gap-1">
+                            <Button
+                              variant="ghost" size="icon" className="h-7 w-7"
+                              title="Edit note" onClick={() => startEditNote(note)}
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                              variant="ghost" size="icon" className="h-7 w-7 text-destructive"
+                              title="Delete note" onClick={() => setConfirmNoteId(note._id)}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                      <p className="mt-1.5 text-xs text-muted-foreground">
+                        {note.createdBy?.name || 'Unknown'} · {formatDateTime(note.createdAt)}
+                        {note.updatedAt && note.updatedAt !== note.createdAt && ' · edited'}
+                        {note.legacy && ' · added at creation'}
+                      </p>
+                    </>
+                  )}
+                </li>
+              ))}
+            </ul>
           )}
         </CardContent>
       </Card>
@@ -463,6 +589,7 @@ export default function LeadDetail() {
                         {isDistributor && <TableHead className="text-right hidden md:table-cell">Margin</TableHead>}
                         <TableHead className="text-right hidden md:table-cell">GST</TableHead>
                         <TableHead className="text-right">Net+GST</TableHead>
+                        <TableHead className="text-center">Include</TableHead>
                         <TableHead className="w-10" />
                       </TableRow>
                     </TableHeader>
@@ -471,8 +598,8 @@ export default function LeadDetail() {
                         const d = deriveLine(r);
                         return (
                           <TableRow key={r.rateItemId || idx}>
-                            <TableCell>
-                              <p className="font-medium">{r.productName}</p>
+                            <TableCell className={cn(r.included === false && 'opacity-50')}>
+                              <p className={cn('font-medium', r.included === false && 'line-through')}>{r.productName}</p>
                               <p className="text-xs text-muted-foreground">{r.packSize} {r.sku ? `· ${r.sku}` : ''}</p>
                             </TableCell>
                             <TableCell className="text-right tabular-nums">{formatCurrency(r.mrp)}</TableCell>
@@ -481,18 +608,18 @@ export default function LeadDetail() {
                               <Input
                                 type="number" step="any" min="0"
                                 value={r.netRate}
-                                readOnly={locked}
+                                readOnly={locked || r.included === false}
                                 onChange={(e) => setRate(idx, e.target.value)}
                                 className={cn(
                                   'h-9 w-24 ml-auto text-right tabular-nums',
-                                  locked && 'cursor-not-allowed bg-muted/50',
-                                  d.error && 'border-destructive focus-visible:ring-destructive',
-                                  !d.error && d.deviation > 0 && 'border-orange-400 text-orange-600'
+                                  (locked || r.included === false) && 'cursor-not-allowed bg-muted/50',
+                                  r.included !== false && d.error && 'border-destructive focus-visible:ring-destructive',
+                                  r.included !== false && !d.error && d.deviation > 0 && 'border-orange-400 text-orange-600'
                                 )}
                               />
-                              {d.belowFloor && <p className="text-[11px] text-destructive mt-1">Below floor {formatCurrency(r.floorPrice)}</p>}
-                              {d.aboveMrp && <p className="text-[11px] text-destructive mt-1">Above MRP</p>}
-                              {!d.error && d.deviation > 10 && (
+                              {r.included !== false && d.belowFloor && <p className="text-[11px] text-destructive mt-1">Below floor {formatCurrency(r.floorPrice)}</p>}
+                              {r.included !== false && d.aboveMrp && <p className="text-[11px] text-destructive mt-1">Above MRP</p>}
+                              {r.included !== false && !d.error && d.deviation > 10 && (
                                 <p className="text-[11px] text-orange-600 mt-1 flex items-center justify-end gap-1">
                                   <AlertTriangle className="h-3 w-3" /> {d.deviation.toFixed(1)}% off
                                 </p>
@@ -501,11 +628,24 @@ export default function LeadDetail() {
                             {isDistributor && <TableCell className="text-right tabular-nums hidden md:table-cell">{r.suggestiveMargin || 0}%</TableCell>}
                             <TableCell className="text-right tabular-nums hidden md:table-cell text-muted-foreground">{r.gst}%</TableCell>
                             <TableCell className="text-right tabular-nums font-medium">{formatCurrency(d.netInclGst)}</TableCell>
+                            <TableCell className="text-center">
+                              <Button
+                                type="button"
+                                variant={r.included === false ? 'outline' : 'ghost'}
+                                size="sm"
+                                disabled={locked}
+                                title={r.included === false ? 'Include product in generated PDFs' : 'Exclude product from generated PDFs'}
+                                onClick={() => toggleProduct(idx)}
+                              >
+                                {r.included === false ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                                <span className="hidden xl:inline">{r.included === false ? 'Excluded' : 'Included'}</span>
+                              </Button>
+                            </TableCell>
                             <TableCell>
                               <Button
                                 variant="ghost" size="icon" className="h-8 w-8"
                                 title="Reset to standard"
-                                disabled={locked || Number(r.netRate) === r.standardNetRate}
+                                disabled={locked || r.included === false || Number(r.netRate) === r.standardNetRate}
                                 onClick={() => resetRate(idx)}
                               >
                                 <RotateCcw className="h-3.5 w-3.5" />
@@ -553,7 +693,9 @@ export default function LeadDetail() {
                 </div>
 
                 <div className="flex items-center justify-between gap-3">
-                  <p className="text-xs text-muted-foreground">Net rate must be between floor price and MRP. Deviations from standard show in orange.</p>
+                  <p className="text-xs text-muted-foreground">
+                    {includedRates.length} of {rates.length} products included. Excluded products will not appear in generated PDFs.
+                  </p>
                   <Button onClick={confirmRates} disabled={locked || anyError || action === 'rates'}>
                     {action === 'rates' ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
                     Confirm rates
@@ -767,10 +909,30 @@ export default function LeadDetail() {
         onConfirm={deleteLead}
       />
 
+      <ConfirmDialog
+        open={Boolean(confirmNoteId)}
+        onOpenChange={(o) => { if (!o) setConfirmNoteId(null); }}
+        title="Delete note?"
+        description="This internal note will be permanently removed."
+        confirmLabel="Delete note"
+        loading={action === 'note-del'}
+        onConfirm={() => deleteNote(confirmNoteId)}
+      />
+
       <Dialog open={Boolean(previewFile)} onOpenChange={closePreview}>
         <DialogContent className="max-w-5xl p-0">
           <DialogHeader className="px-5 pt-5">
             <DialogTitle className="truncate pr-8">{previewFile?.filename || 'PDF Preview'}</DialogTitle>
+            {previewFile?.url && (
+              <a
+                href={previewFile.url}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex w-fit items-center gap-1 text-xs text-primary hover:underline"
+              >
+                <ExternalLink className="h-3.5 w-3.5" /> Open in new tab
+              </a>
+            )}
           </DialogHeader>
           {previewFile?.url && (
             <iframe

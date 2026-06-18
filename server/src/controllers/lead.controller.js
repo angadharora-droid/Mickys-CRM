@@ -18,6 +18,7 @@ const POPULATE = [
   { path: 'assignedExecId', select: 'name email employeeCode phone' },
   { path: 'createdBy', select: 'name role' },
   { path: 'statusHistory.changedBy', select: 'name role' },
+  { path: 'notes.createdBy', select: 'name role' },
 ];
 
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
@@ -45,6 +46,8 @@ function snapshotLine(item) {
     sku: item.sku,
     productName: item.productName,
     packSize: item.packSize,
+    category: item.category || '',
+    included: true,
     mrp: item.mrp,
     standardNetRate: item.netRate,
     netRate: item.netRate,
@@ -154,15 +157,19 @@ function setDownloadHeaders(res, filename, contentType) {
 
 // POST /api/leads
 const createLead = asyncHandler(async (req, res) => {
-  const { assignedExecId, ...rest } = req.body;
+  const { assignedExecId, internalNotes, ...rest } = req.body;
   const execId = await resolveExecId(req, assignedExecId);
   const refNumber = await nextRefNumber(rest.city);
+
+  // An optional note typed on the create form seeds the notes timeline.
+  const initialNote = String(internalNotes || '').trim();
 
   const lead = await Lead.create({
     ...rest,
     assignedExecId: execId,
     refNumber,
     status: 'new',
+    notes: initialNote ? [{ text: initialNote, createdBy: req.user._id }] : [],
     statusHistory: [{ from: null, to: 'new', changedBy: req.user._id, note: 'Lead created' }],
     createdBy: req.user._id,
     modifiedBy: req.user._id,
@@ -331,11 +338,12 @@ const confirmRates = asyncHandler(async (req, res) => {
   lead.rates = lead.rates.map((line) => {
     const override = overrideById.get(String(line.rateItemId));
     if (!override) return line;
+    const included = override.included !== false;
     const newRate = round2(override.netRate);
-    if (newRate < line.floorPrice) {
+    if (included && newRate < line.floorPrice) {
       throw ApiError.badRequest(`"${line.productName}": rate ${newRate} is below the floor price ${line.floorPrice}`);
     }
-    if (newRate > line.mrp) {
+    if (included && newRate > line.mrp) {
       throw ApiError.badRequest(`"${line.productName}": rate ${newRate} exceeds MRP ${line.mrp}`);
     }
     if (newRate !== line.netRate) {
@@ -347,11 +355,14 @@ const confirmRates = asyncHandler(async (req, res) => {
         : 0;
     return {
       ...line.toObject(),
+      included,
       netRate: newRate,
       netInclGst: round2(newRate * (1 + line.gst / 100)),
       deviationPct,
     };
   });
+  const includedCount = lead.rates.filter((line) => line.included !== false).length;
+  if (!includedCount) throw ApiError.badRequest('Include at least one product before confirming rates');
 
   if (customTerms) {
     lead.customTerms = {
@@ -370,13 +381,13 @@ const confirmRates = asyncHandler(async (req, res) => {
   lead.modifiedBy = req.user._id;
   lead.statusHistory.push({
     from, to: 'rates_confirmed', changedBy: req.user._id,
-    note: edits.length ? `${edits.length} rate override(s)` : 'Rates confirmed at standard',
+    note: `${includedCount} product(s) included${edits.length ? ` · ${edits.length} rate override(s)` : ''}`,
   });
   await lead.save();
 
   await logActivity({
     userId: req.user._id, action: 'LEAD_RATES_CONFIRMED', entity: 'Lead', entityId: lead._id,
-    details: `${lead.refNumber}: confirmed rates${edits.length ? ` with ${edits.length} override(s)` : ''}`, ip: req.ip,
+    details: `${lead.refNumber}: confirmed ${includedCount} product rate(s)${edits.length ? ` with ${edits.length} override(s)` : ''}`, ip: req.ip,
   });
 
   const populated = await Lead.findById(lead._id).populate(POPULATE);
@@ -431,6 +442,86 @@ const unlockLead = asyncHandler(async (req, res) => {
       details: `${lead.refNumber}: unlocked for editing after generation`, ip: req.ip,
     });
   }
+
+  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  res.json({ success: true, data: populated });
+});
+
+/** A note may be edited/deleted by its author or any admin. Notes are
+ *  collaboration metadata, so they're never frozen by the kit lock. */
+function assertCanModifyNote(note, user) {
+  if (user.role === 'admin') return;
+  if (String(note.createdBy) !== String(user._id)) {
+    throw ApiError.forbidden('You can only edit or delete your own notes');
+  }
+}
+
+// POST /api/leads/:id/notes  (add an internal note)
+const addNote = asyncHandler(async (req, res) => {
+  const lead = await Lead.findById(req.params.id);
+  if (!lead) throw ApiError.notFound('Lead not found');
+  assertCanView(lead, req.user);
+
+  const text = String(req.body.text || '').trim();
+  if (!text) throw ApiError.badRequest('Note text is required');
+
+  lead.notes.push({ text, createdBy: req.user._id });
+  lead.modifiedBy = req.user._id;
+  await lead.save();
+
+  await logActivity({
+    userId: req.user._id, action: 'LEAD_NOTE_ADDED', entity: 'Lead', entityId: lead._id,
+    details: `Added an internal note to ${lead.refNumber}`, ip: req.ip,
+  });
+
+  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  res.status(201).json({ success: true, data: populated });
+});
+
+// PUT /api/leads/:id/notes/:noteId  (edit an internal note)
+const updateNote = asyncHandler(async (req, res) => {
+  const lead = await Lead.findById(req.params.id);
+  if (!lead) throw ApiError.notFound('Lead not found');
+  assertCanView(lead, req.user);
+
+  const note = lead.notes.id(req.params.noteId);
+  if (!note) throw ApiError.notFound('Note not found');
+  assertCanModifyNote(note, req.user);
+
+  const text = String(req.body.text || '').trim();
+  if (!text) throw ApiError.badRequest('Note text is required');
+
+  note.text = text;
+  lead.modifiedBy = req.user._id;
+  await lead.save();
+
+  await logActivity({
+    userId: req.user._id, action: 'LEAD_NOTE_UPDATED', entity: 'Lead', entityId: lead._id,
+    details: `Edited an internal note on ${lead.refNumber}`, ip: req.ip,
+  });
+
+  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  res.json({ success: true, data: populated });
+});
+
+// DELETE /api/leads/:id/notes/:noteId  (remove an internal note)
+const deleteNote = asyncHandler(async (req, res) => {
+  const lead = await Lead.findById(req.params.id);
+  if (!lead) throw ApiError.notFound('Lead not found');
+  assertCanView(lead, req.user);
+
+  const note = lead.notes.id(req.params.noteId);
+  if (!note) throw ApiError.notFound('Note not found');
+  assertCanModifyNote(note, req.user);
+
+  lead.notes.pull(note._id);
+  lead.modifiedBy = req.user._id;
+  await lead.save();
+
+  await logActivity({
+    userId: req.user._id, action: 'LEAD_NOTE_DELETED', entity: 'Lead', entityId: lead._id,
+    details: `Deleted an internal note from ${lead.refNumber}`, ip: req.ip,
+  });
 
   const populated = await Lead.findById(lead._id).populate(POPULATE);
   res.json({ success: true, data: populated });
@@ -564,6 +655,9 @@ module.exports = {
   confirmRates,
   generateLeadKit,
   unlockLead,
+  addNote,
+  updateNote,
+  deleteNote,
   downloadZip,
   downloadDocument,
   emailKit,

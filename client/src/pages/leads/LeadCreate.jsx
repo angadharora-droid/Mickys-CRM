@@ -21,10 +21,10 @@ const schema = z.object({
   contactPerson: z.string().min(2, 'Contact person is required'),
   designation: z.string().optional(),
   mobileNumber: z.string().min(6, 'Mobile number is required'),
-  email: z.string().email('Valid email is required'),
+  email: z.string().email('Enter a valid email').optional().or(z.literal('')),
   whatsappNumber: z.string().optional(),
   city: z.string().min(1, 'City is required'),
-  state: z.string().min(1, 'State is required'),
+  state: z.string().optional(),
   address: z.string().optional(),
   gstin: z.string().optional(),
   businessType: z.enum(BUSINESS_TYPES, { errorMap: () => ({ message: 'Select a business type' }) }),
@@ -194,7 +194,7 @@ export default function LeadCreate() {
             <Field label="Mobile number" required error={errors.mobileNumber}>
               <Input {...register('mobileNumber')} />
             </Field>
-            <Field label="Email" required error={errors.email}>
+            <Field label="Email" error={errors.email}>
               <Input type="email" {...register('email')} />
             </Field>
             <Field label="WhatsApp number" error={errors.whatsappNumber}>
@@ -209,7 +209,7 @@ export default function LeadCreate() {
             <Field label="City" required error={errors.city}>
               <Input {...register('city')} />
             </Field>
-            <Field label="State" required error={errors.state}>
+            <Field label="State" error={errors.state}>
               <Input {...register('state')} />
             </Field>
             <Field label="Business type" required error={errors.businessType}>

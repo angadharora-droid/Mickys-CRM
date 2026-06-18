@@ -213,7 +213,7 @@ export default function LeadList() {
                             <dl className="grid gap-3 text-sm sm:grid-cols-3">
                               <div>
                                 <dt className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">City</dt>
-                                <dd className="mt-1 font-medium">{lead.city}, {lead.state}</dd>
+                                <dd className="mt-1 font-medium">{[lead.city, lead.state].filter(Boolean).join(', ')}</dd>
                               </div>
                               <div>
                                 <dt className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Kit</dt>
