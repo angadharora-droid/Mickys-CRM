@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import api, { apiError } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
-import { BUSINESS_TYPES } from '@/lib/constants';
+import { BUSINESS_TYPES, ACTION_POINTS } from '@/lib/constants';
 import { formatBytes } from '@/lib/utils';
 import PageHeader from '@/components/shared/PageHeader';
 import FilePreviewDialog from '@/components/shared/FilePreviewDialog';
@@ -37,7 +37,12 @@ const schema = z.object({
   leadSource: z.string().optional(),
   leadDate: z.string().min(1, 'Lead date is required'),
   internalNotes: z.string().optional(),
+  actionPoint: z.string().optional(),
+  followUpDate: z.string().optional(),
+  followUpNote: z.string().optional(),
 });
+
+const NO_ACTION = '__none__';
 
 function Field({ label, required, error, children }) {
   return (
@@ -67,6 +72,7 @@ export default function LeadCreate() {
       whatsappNumber: '', city: '', state: '', address: '', gstin: '', businessType: '',
       assignedExecId: user._id, leadSource: '',
       leadDate: new Date().toISOString().slice(0, 10), internalNotes: '',
+      actionPoint: '', followUpDate: '', followUpNote: '',
     },
   });
   const businessName = watch('businessName');
@@ -292,6 +298,32 @@ export default function LeadCreate() {
             <Field label="Lead date" required error={errors.leadDate}>
               <Input type="date" {...register('leadDate')} />
             </Field>
+            <Field label="Action point" error={errors.actionPoint}>
+              <Controller
+                control={control}
+                name="actionPoint"
+                render={({ field }) => (
+                  <Select
+                    value={field.value || NO_ACTION}
+                    onValueChange={(v) => field.onChange(v === NO_ACTION ? '' : v)}
+                  >
+                    <SelectTrigger><SelectValue placeholder="Select an action" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={NO_ACTION}>No action</SelectItem>
+                      {ACTION_POINTS.map((ap) => <SelectItem key={ap} value={ap}>{ap}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                )}
+              />
+            </Field>
+            <Field label="Follow-up date" error={errors.followUpDate}>
+              <Input type="date" {...register('followUpDate')} />
+            </Field>
+            <div className="sm:col-span-2">
+              <Field label="Follow-up note" error={errors.followUpNote}>
+                <Textarea rows={2} placeholder="Why are you following up? (optional)…" {...register('followUpNote')} />
+              </Field>
+            </div>
             <div className="sm:col-span-2">
               <Field label="Internal notes" error={errors.internalNotes}>
                 <Textarea rows={3} placeholder="Notes for your team (not shown to the client)…" {...register('internalNotes')} />

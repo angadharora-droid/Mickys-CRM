@@ -139,11 +139,16 @@ const leadSchema = new mongoose.Schema(
     // Manually uploaded files (photos, PDFs, sheets) kept alongside the lead.
     attachments: { type: [attachmentSchema], default: [] },
 
+    // ---- Action point ----
+    // The lead's current next-action, chosen from a preset list. A standalone
+    // piece of CRM metadata, independent of whether a follow-up is scheduled.
+    actionPoint: { type: String, enum: ['', ...ACTION_POINTS], default: '' },
+
     // ---- Follow-up ----
-    // The lead's current next-action and the date it's due. Closing records a
+    // A scheduled reminder: a due date with an optional note. Closing records a
     // mandatory closing note. Independent of the kit lock — it's CRM metadata.
     followUp: {
-      actionPoint: { type: String, enum: ['', ...ACTION_POINTS], default: '' },
+      note: { type: String, default: '' },
       date: { type: Date },
       status: { type: String, enum: ['', 'open', 'closed'], default: '' },
       closingNote: { type: String, default: '' },

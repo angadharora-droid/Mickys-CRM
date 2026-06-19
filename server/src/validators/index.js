@@ -78,6 +78,11 @@ const leadSchema = z.object({
   leadSource: z.string().optional().or(z.literal('')),
   leadDate: z.coerce.date().optional(),
   internalNotes: z.string().max(4000).optional().or(z.literal('')),
+  // CRM metadata captured at creation — the lead's next action and an optional
+  // first follow-up (date + note).
+  actionPoint: z.enum(ACTION_POINTS).optional().or(z.literal('')),
+  followUpDate: z.union([z.literal(''), z.coerce.date()]).optional(),
+  followUpNote: z.string().max(4000).optional().or(z.literal('')),
 });
 
 const updateLeadSchema = leadSchema.partial();
@@ -108,8 +113,13 @@ const noteSchema = z.object({
   text: z.string().trim().min(1, 'Note text is required').max(4000),
 });
 
-const followUpSchema = z.object({
+const actionPointSchema = z.object({
   actionPoint: z.enum(ACTION_POINTS).optional().or(z.literal('')),
+});
+
+const followUpSchema = z.object({
+  // Optional free-text reason for the follow-up.
+  note: z.string().max(4000).optional().or(z.literal('')),
   // 'YYYY-MM-DD' string (or '' to clear the follow-up).
   date: z.union([z.literal(''), z.coerce.date()]).optional(),
 });
@@ -178,6 +188,7 @@ module.exports = {
   kitTypeSchema,
   ratesConfirmSchema,
   noteSchema,
+  actionPointSchema,
   followUpSchema,
   closeFollowUpSchema,
   emailKitSchema,

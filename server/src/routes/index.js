@@ -55,6 +55,7 @@ router.post('/leads/:id/unlock', authenticate, leads.unlockLead);
 router.post('/leads/:id/notes', authenticate, validate(v.noteSchema), leads.addNote);
 router.put('/leads/:id/notes/:noteId', authenticate, validate(v.noteSchema), leads.updateNote);
 router.delete('/leads/:id/notes/:noteId', authenticate, leads.deleteNote);
+router.put('/leads/:id/action-point', authenticate, validate(v.actionPointSchema), leads.setActionPoint);
 router.put('/leads/:id/follow-up', authenticate, validate(v.followUpSchema), leads.updateFollowUp);
 router.post('/leads/:id/follow-up/close', authenticate, validate(v.closeFollowUpSchema), leads.closeFollowUp);
 router.post('/leads/:id/attachments', authenticate, upload.array('files', 10), leads.uploadAttachments);
