@@ -31,7 +31,7 @@ import {
 import {
   Loader2, Package, Download, Mail, Trash2, RotateCcw, FileText, CheckCircle2,
   AlertTriangle, ArrowLeft, Boxes, Building2, Sparkles, Eye, EyeOff, Lock, Pencil, ExternalLink,
-  MessageSquare, CalendarClock, CalendarCheck, Paperclip, Upload, Image as ImageIcon, Target,
+  MessageSquare, CalendarCheck, Paperclip, Upload, Image as ImageIcon, Target,
 } from 'lucide-react';
 
 const NO_ACTION = '__none__';
@@ -322,20 +322,34 @@ export default function LeadDetail() {
       .then(() => { setEditingNote(false); toast.success('Internal note saved'); })
       .catch(() => {});
 
-  // ---- Action point ----
-  const saveActionPoint = () =>
-    run('action-point', () => api.put(`/leads/${lead._id}/action-point`, { actionPoint }))
-      .then(() => toast.success(actionPoint ? 'Action point saved' : 'Action point cleared'))
-      .catch(() => {});
+  // ---- Action point + follow-up (one section, saved together) ----
+  const savedFollowUpDate = lead.followUp?.date
+    ? new Date(lead.followUp.date).toISOString().slice(0, 10)
+    : '';
+  const followUpDirty =
+    (followUpForm.date || '') !== savedFollowUpDate ||
+    (followUpForm.note || '') !== (lead.followUp?.note || '');
 
-  // ---- Follow-up ----
-  const saveFollowUp = () =>
-    run('followup', () =>
-      api.put(`/leads/${lead._id}/follow-up`, {
-        note: followUpForm.note,
-        date: followUpForm.date,
-      })
-    ).then(() => toast.success(followUpForm.date ? 'Follow-up saved' : 'Follow-up cleared')).catch(() => {});
+  const saveCrmMeta = async () => {
+    setAction('crm-meta');
+    try {
+      let latest = (await api.put(`/leads/${lead._id}/action-point`, { actionPoint })).data.data;
+      // Only touch the follow-up when it actually changed — avoids reopening a
+      // closed follow-up when only the action point was edited.
+      if (followUpDirty) {
+        latest = (await api.put(`/leads/${lead._id}/follow-up`, {
+          note: followUpForm.note,
+          date: followUpForm.date,
+        })).data.data;
+      }
+      setLead(latest);
+      toast.success('Saved');
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setAction('');
+    }
+  };
 
   const closeFollowUp = () =>
     run('followup-close', () =>
@@ -487,44 +501,12 @@ export default function LeadDetail() {
         </CardContent>
       </Card>
 
-      {/* Action point */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base flex items-center gap-2">
-            <Target className="h-4 w-4 text-muted-foreground" /> Action Point
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
-            <div className="space-y-1.5">
-              <Label>Next action</Label>
-              <Select
-                value={actionPoint || NO_ACTION}
-                onValueChange={(v) => setActionPoint(v === NO_ACTION ? '' : v)}
-              >
-                <SelectTrigger><SelectValue placeholder="Select an action" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={NO_ACTION}>No action</SelectItem>
-                  {ACTION_POINTS.map((ap) => (
-                    <SelectItem key={ap} value={ap}>{ap}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <Button onClick={saveActionPoint} disabled={action === 'action-point'}>
-              {action === 'action-point' ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-              Save
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Follow-up */}
+      {/* Action point & follow-up */}
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center justify-between gap-2">
             <span className="flex items-center gap-2">
-              <CalendarClock className="h-4 w-4 text-muted-foreground" /> Follow-Up
+              <Target className="h-4 w-4 text-muted-foreground" /> Action Point &amp; Follow-Up
             </span>
             {followUpOpen && (
               <span
@@ -542,32 +524,45 @@ export default function LeadDetail() {
             )}
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-1.5">
-            <Label>Note (optional)</Label>
-            <Textarea
-              rows={2}
-              placeholder="Why are you following up?…"
-              value={followUpForm.note}
-              onChange={(e) => setFollowUpForm((f) => ({ ...f, note: e.target.value }))}
-            />
-          </div>
-          <div className="grid gap-3 sm:grid-cols-[auto_1fr] sm:items-end">
+        <CardContent className="space-y-3">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label>Action point</Label>
+              <Select
+                value={actionPoint || NO_ACTION}
+                onValueChange={(v) => setActionPoint(v === NO_ACTION ? '' : v)}
+              >
+                <SelectTrigger><SelectValue placeholder="Select an action" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_ACTION}>No action</SelectItem>
+                  {ACTION_POINTS.map((ap) => (
+                    <SelectItem key={ap} value={ap}>{ap}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             <div className="space-y-1.5">
               <Label>Follow-up date</Label>
               <Input
                 type="date"
-                className="w-full sm:w-44"
                 value={followUpForm.date}
                 onChange={(e) => setFollowUpForm((f) => ({ ...f, date: e.target.value }))}
               />
             </div>
-            <div className="flex sm:justify-end">
-              <Button onClick={saveFollowUp} disabled={action === 'followup'}>
-                {action === 'followup' ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                Save
-              </Button>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+            <div className="space-y-1.5">
+              <Label>Follow-up note (optional)</Label>
+              <Input
+                placeholder="Why are you following up?…"
+                value={followUpForm.note}
+                onChange={(e) => setFollowUpForm((f) => ({ ...f, note: e.target.value }))}
+              />
             </div>
+            <Button onClick={saveCrmMeta} disabled={action === 'crm-meta'}>
+              {action === 'crm-meta' ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+              Save
+            </Button>
           </div>
 
           {followUpOpen && (
