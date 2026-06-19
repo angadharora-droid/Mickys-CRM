@@ -135,6 +135,7 @@ export default function LeadDetail() {
   const [emailForm, setEmailForm] = useState({ to: '', cc: '', subject: '', message: '' });
   const [previewFile, setPreviewFile] = useState(null);
   const [noteDraft, setNoteDraft] = useState('');
+  const [editingNote, setEditingNote] = useState(false);
   const [followUpForm, setFollowUpForm] = useState({ actionPoint: '', date: '' });
   const [closingOpen, setClosingOpen] = useState(false);
   const [closeNote, setCloseNote] = useState('');
@@ -209,6 +210,12 @@ export default function LeadDetail() {
   const followUpDateStr = followUp.date ? new Date(followUp.date).toISOString().slice(0, 10) : '';
   const followUpOverdue = followUpOpen && followUpDateStr && followUpDateStr < todayStr;
   const followUpDueToday = followUpOpen && followUpDateStr === todayStr;
+
+  // Internal note (single, editable) — latest legacy note or the new single field.
+  const savedNote =
+    [...(lead.notes || [])]
+      .sort((a, b) => new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt))[0]
+      ?.text || lead.internalNotes || '';
 
   const run = async (key, fn) => {
     setAction(key);
@@ -310,7 +317,7 @@ export default function LeadDetail() {
   // ---- Internal notes ----
   const saveInternalNote = () =>
     run('note-add', () => api.post(`/leads/${lead._id}/notes`, { text: noteDraft.trim() }))
-      .then(() => toast.success('Internal note saved'))
+      .then(() => { setEditingNote(false); toast.success('Internal note saved'); })
       .catch(() => {});
 
   // ---- Follow-up ----
@@ -564,23 +571,51 @@ export default function LeadDetail() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Textarea
-              rows={4}
-              placeholder="Internal note (visible to your team, not the client)…"
-              value={noteDraft}
-              onChange={(e) => setNoteDraft(e.target.value)}
-            />
-            <div className="flex justify-end">
-              <Button size="sm" onClick={saveInternalNote} disabled={!noteDraft.trim() || action === 'note-add'}>
-                {action === 'note-add' ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                Save note
-              </Button>
+          {editingNote ? (
+            <div className="space-y-2">
+              <Textarea
+                rows={4}
+                placeholder="Internal note (visible to your team, not the client)…"
+                value={noteDraft}
+                onChange={(e) => setNoteDraft(e.target.value)}
+              />
+              <div className="flex justify-end gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => { setNoteDraft(savedNote); setEditingNote(false); }}
+                  disabled={action === 'note-add'}
+                >
+                  Cancel
+                </Button>
+                <Button size="sm" onClick={saveInternalNote} disabled={!noteDraft.trim() || action === 'note-add'}>
+                  {action === 'note-add' ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                  Save note
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Saving replaces the existing internal note; it does not create another note.
+              </p>
             </div>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            Saving replaces the existing internal note; it does not create another note.
-          </p>
+          ) : (
+            <div className="space-y-3">
+              {savedNote ? (
+                <p className="text-sm whitespace-pre-wrap">{savedNote}</p>
+              ) : (
+                <p className="text-sm text-muted-foreground">No internal note yet.</p>
+              )}
+              <div className="flex justify-end">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => { setNoteDraft(savedNote); setEditingNote(true); }}
+                >
+                  <Pencil className="h-4 w-4" />
+                  {savedNote ? 'Edit note' : 'Add note'}
+                </Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
