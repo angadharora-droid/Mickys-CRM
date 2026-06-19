@@ -64,6 +64,7 @@ router.delete('/leads/:id/attachments/:attId', authenticate, leads.deleteAttachm
 router.get('/leads/:id/kit.zip', authenticate, leads.downloadZip);
 router.get('/leads/:id/documents/:idx', authenticate, leads.downloadDocument);
 router.post('/leads/:id/email', authenticate, emailLimiter, validate(v.emailKitSchema), leads.emailKit);
+router.post('/leads/:id/deliver-manual', authenticate, validate(v.manualDeliverySchema), leads.markDelivered);
 
 // ---------- Dashboards ----------
 router.get('/dashboard/admin', authenticate, authorize(ADMIN), dashboard.adminAnalytics);

@@ -128,6 +128,13 @@ const closeFollowUpSchema = z.object({
   closingNote: z.string().trim().min(1, 'A closing note is required').max(4000),
 });
 
+const manualDeliverySchema = z.object({
+  // How/where the kit was handed over (e.g. WhatsApp, hand delivered).
+  note: z.string().max(500).optional().or(z.literal('')),
+  // Optional recipient label (name / number / channel).
+  sentTo: z.string().max(200).optional().or(z.literal('')),
+});
+
 const emailKitSchema = z.object({
   to: z.string().email().optional().or(z.literal('')),
   // One or more CC addresses, comma-separated.
@@ -191,6 +198,7 @@ module.exports = {
   actionPointSchema,
   followUpSchema,
   closeFollowUpSchema,
+  manualDeliverySchema,
   emailKitSchema,
   settingsSchema,
 };
