@@ -133,6 +133,8 @@ export default function LeadDetail() {
   const [confirmSwitch, setConfirmSwitch] = useState(null); // pending kitType
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [emailForm, setEmailForm] = useState({ to: '', cc: '', subject: '', message: '' });
+  const [deliverNote, setDeliverNote] = useState('');
+  const [deliverOpen, setDeliverOpen] = useState(false);
   const [previewFile, setPreviewFile] = useState(null);
   const [noteDraft, setNoteDraft] = useState('');
   const [editingNote, setEditingNote] = useState(false);
@@ -255,7 +257,7 @@ export default function LeadDetail() {
         })),
         customTerms: terms,
       })
-    ).then(() => toast.success('Rates confirmed')).catch(() => {});
+    ).then(() => toast.success('Rates confirmed — kit generated')).catch(() => {});
 
   const generate = () =>
     run('generate', () => api.post(`/leads/${lead._id}/generate`))
@@ -268,6 +270,10 @@ export default function LeadDetail() {
   const sendEmail = () =>
     run('email', () => api.post(`/leads/${lead._id}/email`, emailForm))
       .then(() => toast.success('Kit emailed to client')).catch(() => {});
+
+  const markDelivered = () =>
+    run('deliver-manual', () => api.post(`/leads/${lead._id}/deliver-manual`, { note: deliverNote.trim() }))
+      .then(() => { setDeliverOpen(false); setDeliverNote(''); toast.success('Kit marked as delivered'); }).catch(() => {});
 
   const download = async (url, filename) => {
     try {
@@ -627,22 +633,21 @@ export default function LeadDetail() {
               </p>
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="flex items-start justify-between gap-3">
               {savedNote ? (
-                <p className="text-sm whitespace-pre-wrap">{savedNote}</p>
+                <p className="min-w-0 flex-1 text-sm whitespace-pre-wrap break-words">{savedNote}</p>
               ) : (
-                <p className="text-sm text-muted-foreground">No internal note yet.</p>
+                <p className="flex-1 text-sm text-muted-foreground">No internal note yet.</p>
               )}
-              <div className="flex justify-end">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => { setNoteDraft(savedNote); setEditingNote(true); }}
-                >
-                  <Pencil className="h-4 w-4" />
-                  {savedNote ? 'Edit note' : 'Add note'}
-                </Button>
-              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                className="shrink-0"
+                onClick={() => { setNoteDraft(savedNote); setEditingNote(true); }}
+              >
+                <Pencil className="h-4 w-4" />
+                {savedNote ? 'Edit note' : 'Add note'}
+              </Button>
             </div>
           )}
         </CardContent>
@@ -843,7 +848,7 @@ export default function LeadDetail() {
                   </p>
                   <Button onClick={confirmRates} disabled={locked || anyError || action === 'rates'}>
                     {action === 'rates' ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                    Confirm rates
+                    Confirm rates &amp; generate kit
                   </Button>
                 </div>
               </CardContent>
@@ -1019,7 +1024,9 @@ export default function LeadDetail() {
               {lead.delivery?.sentAt && (
                 <span className="text-xs text-muted-foreground flex items-center gap-1">
                   <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
-                  Emailed to {lead.delivery.sentTo} on {formatDateTime(lead.delivery.sentAt)}
+                  {lead.delivery.method === 'manual'
+                    ? `Manually delivered${lead.delivery.note ? ` (${lead.delivery.note})` : ''} on ${formatDateTime(lead.delivery.sentAt)}`
+                    : `Emailed to ${lead.delivery.sentTo} on ${formatDateTime(lead.delivery.sentAt)}`}
                 </span>
               )}
             </div>
@@ -1054,10 +1061,15 @@ export default function LeadDetail() {
                 <Textarea rows={3} value={emailForm.message} onChange={(e) => setEmailForm((f) => ({ ...f, message: e.target.value }))} />
               </div>
               <p className="text-xs text-muted-foreground">Sent from the system SMTP account with your name and reply-to. The ZIP is attached.</p>
-              <Button onClick={sendEmail} disabled={action === 'email'}>
-                {action === 'email' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
-                Send kit email
-              </Button>
+              <div className="flex flex-wrap items-center gap-3">
+                <Button onClick={sendEmail} disabled={action === 'email'}>
+                  {action === 'email' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
+                  Send kit email
+                </Button>
+                <Button variant="outline" onClick={() => { setDeliverNote(''); setDeliverOpen(true); }} disabled={action === 'deliver-manual'}>
+                  <Package className="h-4 w-4" /> Mark as delivered
+                </Button>
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -1154,6 +1166,35 @@ export default function LeadDetail() {
             <Button onClick={closeFollowUp} disabled={!closeNote.trim() || action === 'followup-close'}>
               {action === 'followup-close' ? <Loader2 className="h-4 w-4 animate-spin" /> : <CalendarCheck className="h-4 w-4" />}
               Close follow-up
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deliverOpen} onOpenChange={(o) => { if (!o) setDeliverOpen(false); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Mark as delivered</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Use this when the kit was shared outside email — handed over in person, WhatsApp, courier, etc. It marks the lead as delivered without sending an email.
+          </p>
+          <div className="space-y-2">
+            <Label htmlFor="deliver-note">How it was delivered (optional)</Label>
+            <Input
+              id="deliver-note"
+              placeholder="e.g. WhatsApp, hand delivered at store, courier"
+              value={deliverNote}
+              onChange={(e) => setDeliverNote(e.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeliverOpen(false)} disabled={action === 'deliver-manual'}>
+              Cancel
+            </Button>
+            <Button onClick={markDelivered} disabled={action === 'deliver-manual'}>
+              {action === 'deliver-manual' ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+              Mark as delivered
             </Button>
           </DialogFooter>
         </DialogContent>

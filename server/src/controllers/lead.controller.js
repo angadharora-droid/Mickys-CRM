@@ -396,6 +396,24 @@ const confirmRates = asyncHandler(async (req, res) => {
     details: `${lead.refNumber}: confirmed ${includedCount} product rate(s)${edits.length ? ` with ${edits.length} override(s)` : ''}`, ip: req.ip,
   });
 
+  // Finalizing the rates auto-(re)generates the kit, so the documents always
+  // reflect the latest rates without a separate Generate step. Saved as two
+  // steps so the confirmed rates persist even if the build fails.
+  await buildKitFiles(lead);
+  lead.status = from === 'delivered' ? 'delivered' : 'generated';
+  lead.locked = true;
+  lead.editedAfterGeneration = false;
+  lead.modifiedBy = req.user._id;
+  lead.statusHistory.push({
+    from: 'rates_confirmed', to: lead.status, changedBy: req.user._id, note: 'Kit generated · locked',
+  });
+  await lead.save();
+
+  await logActivity({
+    userId: req.user._id, action: 'LEAD_KIT_GENERATED', entity: 'Lead', entityId: lead._id,
+    details: `${lead.refNumber}: generated ${lead.generatedFiles.length}-document ${lead.kitType} kit`, ip: req.ip,
+  });
+
   const populated = await Lead.findById(lead._id).populate(POPULATE);
   res.json({ success: true, data: populated });
 });
@@ -837,6 +855,44 @@ const emailKit = asyncHandler(async (req, res) => {
   res.json({ success: true, data: populated });
 });
 
+// POST /api/leads/:id/deliver-manual  (record that the kit was handed over outside email)
+const markDelivered = asyncHandler(async (req, res) => {
+  const lead = await Lead.findById(req.params.id);
+  if (!lead) throw ApiError.notFound('Lead not found');
+  assertCanView(lead, req.user);
+  if (!lead.generatedFiles?.length) throw ApiError.badRequest('Generate the kit before marking it delivered');
+
+  const note = String(req.body.note || '').trim();
+  const sentTo = String(req.body.sentTo || '').trim();
+
+  const from = lead.status;
+  lead.status = 'delivered';
+  lead.delivery = {
+    method: 'manual',
+    sentTo,
+    sentAt: new Date(),
+    status: 'sent',
+    messageId: '',
+    note,
+  };
+  lead.modifiedBy = req.user._id;
+  if (from !== 'delivered') {
+    lead.statusHistory.push({
+      from, to: 'delivered', changedBy: req.user._id,
+      note: note ? `Manually delivered — ${note}` : 'Manually delivered',
+    });
+  }
+  await lead.save();
+
+  await logActivity({
+    userId: req.user._id, action: 'LEAD_KIT_DELIVERED_MANUAL', entity: 'Lead', entityId: lead._id,
+    details: `${lead.refNumber}: marked kit manually delivered${note ? ` (${note})` : ''}`, ip: req.ip,
+  });
+
+  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  res.json({ success: true, data: populated });
+});
+
 module.exports = {
   createLead,
   listLeads,
@@ -860,4 +916,5 @@ module.exports = {
   downloadZip,
   downloadDocument,
   emailKit,
+  markDelivered,
 };

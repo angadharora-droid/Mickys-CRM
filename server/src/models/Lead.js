@@ -195,11 +195,13 @@ const leadSchema = new mongoose.Schema(
 
     // ---- Delivery ----
     delivery: {
-      method: { type: String, default: '' }, // 'email' | 'download'
+      method: { type: String, default: '' }, // 'email' | 'manual' | 'download'
       sentTo: { type: String, default: '' },
       sentAt: { type: Date },
       status: { type: String, default: '' }, // 'sent' | 'failed'
       messageId: { type: String, default: '' },
+      // For manual delivery: how/where the kit was handed over (e.g. WhatsApp).
+      note: { type: String, default: '' },
     },
 
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
