@@ -158,12 +158,15 @@ function setDownloadHeaders(res, filename, contentType) {
 
 // POST /api/leads
 const createLead = asyncHandler(async (req, res) => {
-  const { assignedExecId, internalNotes, ...rest } = req.body;
+  const { assignedExecId, internalNotes, followUpDate, followUpNote, ...rest } = req.body;
   const execId = await resolveExecId(req, assignedExecId);
   const refNumber = await nextRefNumber(rest.city);
 
   // A lead has one editable internal note.
   const initialNote = String(internalNotes || '').trim();
+
+  // An optional first follow-up: a due date opens it, with an optional note.
+  const followDate = followUpDate ? new Date(followUpDate) : null;
 
   const lead = await Lead.create({
     ...rest,
@@ -171,6 +174,9 @@ const createLead = asyncHandler(async (req, res) => {
     refNumber,
     status: 'new',
     internalNotes: initialNote,
+    followUp: followDate
+      ? { note: String(followUpNote || '').trim(), date: followDate, status: 'open' }
+      : undefined,
     notes: [],
     statusHistory: [{ from: null, to: 'new', changedBy: req.user._id, note: 'Lead created' }],
     createdBy: req.user._id,
@@ -538,18 +544,41 @@ const listFollowUps = asyncHandler(async (req, res) => {
   res.json({ success: true, data: leads });
 });
 
-// PUT /api/leads/:id/follow-up  (set / update the action point + due date)
-const updateFollowUp = asyncHandler(async (req, res) => {
+// PUT /api/leads/:id/action-point  (set / clear the lead's next action)
+const setActionPoint = asyncHandler(async (req, res) => {
   const lead = await Lead.findById(req.params.id);
   if (!lead) throw ApiError.notFound('Lead not found');
   assertCanView(lead, req.user);
 
   const actionPoint = String(req.body.actionPoint || '');
+  lead.actionPoint = actionPoint;
+  lead.modifiedBy = req.user._id;
+  await lead.save();
+
+  await logActivity({
+    userId: req.user._id, action: 'LEAD_ACTION_POINT_SET', entity: 'Lead', entityId: lead._id,
+    details: actionPoint
+      ? `Set action point for ${lead.refNumber} — ${actionPoint}`
+      : `Cleared action point for ${lead.refNumber}`,
+    ip: req.ip,
+  });
+
+  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  res.json({ success: true, data: populated });
+});
+
+// PUT /api/leads/:id/follow-up  (set / update the follow-up date + note)
+const updateFollowUp = asyncHandler(async (req, res) => {
+  const lead = await Lead.findById(req.params.id);
+  if (!lead) throw ApiError.notFound('Lead not found');
+  assertCanView(lead, req.user);
+
+  const note = String(req.body.note || '').trim();
   const date = req.body.date ? new Date(req.body.date) : null;
 
   // Saving (re)opens the follow-up; clearing the date removes it entirely.
   lead.followUp = {
-    actionPoint,
+    note,
     date: date || undefined,
     status: date ? 'open' : '',
     closingNote: '',
@@ -562,7 +591,7 @@ const updateFollowUp = asyncHandler(async (req, res) => {
   await logActivity({
     userId: req.user._id, action: 'LEAD_FOLLOWUP_SET', entity: 'Lead', entityId: lead._id,
     details: date
-      ? `Set follow-up for ${lead.refNumber}${actionPoint ? ` — ${actionPoint}` : ''} due ${date.toISOString().slice(0, 10)}`
+      ? `Set follow-up for ${lead.refNumber} due ${date.toISOString().slice(0, 10)}`
       : `Cleared follow-up for ${lead.refNumber}`,
     ip: req.ip,
   });
@@ -822,6 +851,7 @@ module.exports = {
   updateNote,
   deleteNote,
   listFollowUps,
+  setActionPoint,
   updateFollowUp,
   closeFollowUp,
   uploadAttachments,

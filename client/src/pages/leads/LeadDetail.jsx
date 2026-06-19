@@ -31,7 +31,7 @@ import {
 import {
   Loader2, Package, Download, Mail, Trash2, RotateCcw, FileText, CheckCircle2,
   AlertTriangle, ArrowLeft, Boxes, Building2, Sparkles, Eye, EyeOff, Lock, Pencil, ExternalLink,
-  MessageSquare, CalendarClock, CalendarCheck, Paperclip, Upload, Image as ImageIcon,
+  MessageSquare, CalendarClock, CalendarCheck, Paperclip, Upload, Image as ImageIcon, Target,
 } from 'lucide-react';
 
 const NO_ACTION = '__none__';
@@ -136,7 +136,8 @@ export default function LeadDetail() {
   const [previewFile, setPreviewFile] = useState(null);
   const [noteDraft, setNoteDraft] = useState('');
   const [editingNote, setEditingNote] = useState(false);
-  const [followUpForm, setFollowUpForm] = useState({ actionPoint: '', date: '' });
+  const [actionPoint, setActionPoint] = useState('');
+  const [followUpForm, setFollowUpForm] = useState({ note: '', date: '' });
   const [closingOpen, setClosingOpen] = useState(false);
   const [closeNote, setCloseNote] = useState('');
   const [attUploading, setAttUploading] = useState(false);
@@ -173,8 +174,9 @@ export default function LeadDetail() {
         lead.customTerms?.agreementTermsAndConditions || agreementTermsText(lead.businessName),
     });
     setEmailForm((f) => ({ ...f, to: f.to || lead.email || '' }));
+    setActionPoint(lead.actionPoint || '');
     setFollowUpForm({
-      actionPoint: lead.followUp?.actionPoint || '',
+      note: lead.followUp?.note || '',
       date: lead.followUp?.date ? new Date(lead.followUp.date).toISOString().slice(0, 10) : '',
     });
     const latestLegacyNote = [...(lead.notes || [])]
@@ -320,11 +322,17 @@ export default function LeadDetail() {
       .then(() => { setEditingNote(false); toast.success('Internal note saved'); })
       .catch(() => {});
 
+  // ---- Action point ----
+  const saveActionPoint = () =>
+    run('action-point', () => api.put(`/leads/${lead._id}/action-point`, { actionPoint }))
+      .then(() => toast.success(actionPoint ? 'Action point saved' : 'Action point cleared'))
+      .catch(() => {});
+
   // ---- Follow-up ----
   const saveFollowUp = () =>
     run('followup', () =>
       api.put(`/leads/${lead._id}/follow-up`, {
-        actionPoint: followUpForm.actionPoint,
+        note: followUpForm.note,
         date: followUpForm.date,
       })
     ).then(() => toast.success(followUpForm.date ? 'Follow-up saved' : 'Follow-up cleared')).catch(() => {});
@@ -479,6 +487,38 @@ export default function LeadDetail() {
         </CardContent>
       </Card>
 
+      {/* Action point */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Target className="h-4 w-4 text-muted-foreground" /> Action Point
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+            <div className="space-y-1.5">
+              <Label>Next action</Label>
+              <Select
+                value={actionPoint || NO_ACTION}
+                onValueChange={(v) => setActionPoint(v === NO_ACTION ? '' : v)}
+              >
+                <SelectTrigger><SelectValue placeholder="Select an action" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_ACTION}>No action</SelectItem>
+                  {ACTION_POINTS.map((ap) => (
+                    <SelectItem key={ap} value={ap}>{ap}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <Button onClick={saveActionPoint} disabled={action === 'action-point'}>
+              {action === 'action-point' ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+              Save
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Follow-up */}
       <Card>
         <CardHeader className="pb-3">
@@ -503,24 +543,16 @@ export default function LeadDetail() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid gap-3 sm:grid-cols-[1fr_auto_auto] sm:items-end">
-            <div className="space-y-1.5">
-              <Label>Action point</Label>
-              <Select
-                value={followUpForm.actionPoint || NO_ACTION}
-                onValueChange={(v) =>
-                  setFollowUpForm((f) => ({ ...f, actionPoint: v === NO_ACTION ? '' : v }))
-                }
-              >
-                <SelectTrigger><SelectValue placeholder="Select an action" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={NO_ACTION}>No action</SelectItem>
-                  {ACTION_POINTS.map((ap) => (
-                    <SelectItem key={ap} value={ap}>{ap}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+          <div className="space-y-1.5">
+            <Label>Note (optional)</Label>
+            <Textarea
+              rows={2}
+              placeholder="Why are you following up?…"
+              value={followUpForm.note}
+              onChange={(e) => setFollowUpForm((f) => ({ ...f, note: e.target.value }))}
+            />
+          </div>
+          <div className="grid gap-3 sm:grid-cols-[auto_1fr] sm:items-end">
             <div className="space-y-1.5">
               <Label>Follow-up date</Label>
               <Input
@@ -530,17 +562,19 @@ export default function LeadDetail() {
                 onChange={(e) => setFollowUpForm((f) => ({ ...f, date: e.target.value }))}
               />
             </div>
-            <Button onClick={saveFollowUp} disabled={action === 'followup'}>
-              {action === 'followup' ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-              Save
-            </Button>
+            <div className="flex sm:justify-end">
+              <Button onClick={saveFollowUp} disabled={action === 'followup'}>
+                {action === 'followup' ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                Save
+              </Button>
+            </div>
           </div>
 
           {followUpOpen && (
             <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/30 p-3">
               <p className="text-sm">
-                <span className="text-muted-foreground">Open follow-up: </span>
-                <span className="font-medium">{followUp.actionPoint || 'Action'}</span>
+                <span className="text-muted-foreground">Open follow-up</span>
+                {followUp.note ? <span className="font-medium"> — {followUp.note}</span> : null}
                 {' · due '}{formatDate(followUp.date)}
               </p>
               <Button size="sm" variant="outline" onClick={() => { setCloseNote(''); setClosingOpen(true); }}>

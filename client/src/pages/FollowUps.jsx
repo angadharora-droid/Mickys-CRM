@@ -106,12 +106,15 @@ export default function FollowUps() {
                       <p className="mt-0.5 text-xs text-muted-foreground">
                         <span className="font-mono font-semibold text-primary">{lead.refNumber}</span> · {lead.contactPerson}
                       </p>
-                      {lead.followUp?.actionPoint && (
-                        <p className="mt-0.5 text-xs md:hidden">{lead.followUp.actionPoint}</p>
+                      {lead.actionPoint && (
+                        <p className="mt-0.5 text-xs md:hidden">{lead.actionPoint}</p>
+                      )}
+                      {lead.followUp?.note && (
+                        <p className="mt-0.5 text-xs text-muted-foreground italic">{lead.followUp.note}</p>
                       )}
                     </TableCell>
                     <TableCell className="hidden md:table-cell">
-                      {lead.followUp?.actionPoint || <span className="text-muted-foreground">—</span>}
+                      {lead.actionPoint || <span className="text-muted-foreground">—</span>}
                     </TableCell>
                     <TableCell className={cn('whitespace-nowrap', meta.cls)}>{meta.label}</TableCell>
                     {isAdmin && (
