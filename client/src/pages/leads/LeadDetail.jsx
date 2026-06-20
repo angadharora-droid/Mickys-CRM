@@ -8,9 +8,11 @@ import {
   KIT_TYPE_LABELS,
   KIT_DOCS,
   ACTION_POINTS,
+  BUSINESS_TYPES,
   DEFAULT_KIT_TERMS,
   DEFAULT_DISTRIBUTOR_AGREEMENT_TERMS,
 } from '@/lib/constants';
+import { useAuth } from '@/context/AuthContext';
 import { cn, formatCurrency, formatDate, formatDateTime, formatBytes } from '@/lib/utils';
 import PageHeader from '@/components/shared/PageHeader';
 import StatusBadge from '@/components/shared/StatusBadge';
@@ -117,6 +119,7 @@ function InfoRow({ label, value }) {
 export default function LeadDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
 
   const [lead, setLead] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -138,6 +141,8 @@ export default function LeadDetail() {
   const [previewFile, setPreviewFile] = useState(null);
   const [noteDraft, setNoteDraft] = useState('');
   const [editingNote, setEditingNote] = useState(false);
+  const [editingClient, setEditingClient] = useState(false);
+  const [clientForm, setClientForm] = useState(null);
   const [actionPoint, setActionPoint] = useState('');
   const [followUpForm, setFollowUpForm] = useState({ note: '', date: '' });
   const [closingOpen, setClosingOpen] = useState(false);
@@ -185,6 +190,7 @@ export default function LeadDetail() {
       .sort((a, b) => new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt))[0];
     setNoteDraft(latestLegacyNote?.text || lead.internalNotes || '');
     setSwitching(false);
+    setEditingClient(false);
   }, [lead?.updatedAt, lead?._id, lead?.kitType]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading || !lead) {
@@ -202,6 +208,9 @@ export default function LeadDetail() {
   // A generated kit freezes the lead until the user clicks Edit (unlock).
   const locked = Boolean(lead.locked);
   const editedAfterGen = Boolean(lead.editedAfterGeneration);
+  // Client details: execs may edit only while the lead is brand new; admins
+  // anytime — but never while a generated kit has it locked (unlock first).
+  const canEditClient = !locked && (user?.role === 'admin' || lead.status === 'new');
   const includedRates = rates.filter((r) => r.included !== false);
   const anyError = includedRates.length === 0 || includedRates.some((r) => deriveLine(r).error);
   const agreementRows = parseAgreementTerms(terms.agreementTermsAndConditions, lead.businessName);
@@ -321,6 +330,34 @@ export default function LeadDetail() {
       toast.error(apiError(err));
     }
   };
+
+  // ---- Client details (inline edit) ----
+  const clientFromLead = (l) => ({
+    businessName: l.businessName || '',
+    contactPerson: l.contactPerson || '',
+    designation: l.designation || '',
+    mobileNumber: l.mobileNumber || '',
+    email: l.email || '',
+    whatsappNumber: l.whatsappNumber || '',
+    city: l.city || '',
+    state: l.state || '',
+    address: l.address || '',
+    gstin: l.gstin || '',
+    businessType: l.businessType || '',
+    leadSource: l.leadSource || '',
+    leadDate: l.leadDate ? new Date(l.leadDate).toISOString().slice(0, 10) : '',
+  });
+  const startEditClient = () => { setClientForm(clientFromLead(lead)); setEditingClient(true); };
+  const setClientField = (key, val) => setClientForm((f) => ({ ...f, [key]: val }));
+  const clientValid =
+    clientForm &&
+    ['businessName', 'contactPerson', 'mobileNumber', 'city', 'businessType']
+      .every((k) => String(clientForm[k] || '').trim());
+
+  const saveClient = () =>
+    run('client', () => api.put(`/leads/${lead._id}`, clientForm))
+      .then(() => { setEditingClient(false); toast.success('Lead details updated'); })
+      .catch(() => {});
 
   // ---- Internal notes ----
   const saveInternalNote = () =>
@@ -487,23 +524,102 @@ export default function LeadDetail() {
       {/* Client summary */}
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base flex items-center justify-between">
+          <CardTitle className="text-base flex items-center justify-between gap-2">
             <span>Client Details</span>
-            {lead.status !== 'new' && <span className="text-xs font-normal text-muted-foreground">🔒 Locked (kit selected)</span>}
+            {editingClient ? null : canEditClient ? (
+              <Button variant="outline" size="sm" onClick={startEditClient}>
+                <Pencil className="h-4 w-4" /> Edit details
+              </Button>
+            ) : (
+              <span className="text-xs font-normal text-muted-foreground">
+                {locked ? '🔒 Unlock the kit to edit' : '🔒 Locked (kit selected)'}
+              </span>
+            )}
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <dl className="grid gap-4 sm:grid-cols-3">
-            <InfoRow label="Contact" value={`${lead.contactPerson}${lead.designation ? `, ${lead.designation}` : ''}`} />
-            <InfoRow label="Mobile" value={lead.mobileNumber} />
-            <InfoRow label="Email" value={lead.email} />
-            <InfoRow label="WhatsApp" value={lead.whatsappNumber} />
-            <InfoRow label="City / State" value={[lead.city, lead.state].filter(Boolean).join(', ')} />
-            <InfoRow label="GSTIN" value={lead.gstin} />
-            <InfoRow label="Lead source" value={lead.leadSource} />
-            <InfoRow label="Lead date" value={formatDate(lead.leadDate)} />
-            <InfoRow label="Address" value={lead.address} />
-          </dl>
+          {editingClient && clientForm ? (
+            <div className="space-y-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label>Client / Business name *</Label>
+                  <Input value={clientForm.businessName} onChange={(e) => setClientField('businessName', e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Contact person *</Label>
+                  <Input value={clientForm.contactPerson} onChange={(e) => setClientField('contactPerson', e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Designation / Role</Label>
+                  <Input placeholder="e.g. Owner, Purchase Manager" value={clientForm.designation} onChange={(e) => setClientField('designation', e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Mobile number *</Label>
+                  <Input value={clientForm.mobileNumber} onChange={(e) => setClientField('mobileNumber', e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>WhatsApp number</Label>
+                  <Input value={clientForm.whatsappNumber} onChange={(e) => setClientField('whatsappNumber', e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Email</Label>
+                  <Input type="email" value={clientForm.email} onChange={(e) => setClientField('email', e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Business type *</Label>
+                  <Select value={clientForm.businessType} onValueChange={(v) => setClientField('businessType', v)}>
+                    <SelectTrigger><SelectValue placeholder="Select type" /></SelectTrigger>
+                    <SelectContent>
+                      {BUSINESS_TYPES.map((b) => <SelectItem key={b} value={b}>{b}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>City *</Label>
+                  <Input value={clientForm.city} onChange={(e) => setClientField('city', e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>State</Label>
+                  <Input value={clientForm.state} onChange={(e) => setClientField('state', e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>GSTIN</Label>
+                  <Input className="uppercase" value={clientForm.gstin} onChange={(e) => setClientField('gstin', e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Lead source</Label>
+                  <Input placeholder="e.g. Field visit, Referral, Call" value={clientForm.leadSource} onChange={(e) => setClientField('leadSource', e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Lead date</Label>
+                  <Input type="date" value={clientForm.leadDate} onChange={(e) => setClientField('leadDate', e.target.value)} />
+                </div>
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label>Address</Label>
+                  <Textarea rows={2} value={clientForm.address} onChange={(e) => setClientField('address', e.target.value)} />
+                </div>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setEditingClient(false)} disabled={action === 'client'}>Cancel</Button>
+                <Button onClick={saveClient} disabled={!clientValid || action === 'client'}>
+                  {action === 'client' ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                  Save details
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <dl className="grid gap-4 sm:grid-cols-3">
+              <InfoRow label="Contact" value={`${lead.contactPerson}${lead.designation ? `, ${lead.designation}` : ''}`} />
+              <InfoRow label="Mobile" value={lead.mobileNumber} />
+              <InfoRow label="Email" value={lead.email} />
+              <InfoRow label="WhatsApp" value={lead.whatsappNumber} />
+              <InfoRow label="City / State" value={[lead.city, lead.state].filter(Boolean).join(', ')} />
+              <InfoRow label="GSTIN" value={lead.gstin} />
+              <InfoRow label="Lead source" value={lead.leadSource} />
+              <InfoRow label="Lead date" value={formatDate(lead.leadDate)} />
+              <InfoRow label="Address" value={lead.address} />
+            </dl>
+          )}
         </CardContent>
       </Card>
 
