@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import api, { apiError } from '@/lib/api';
-import { LEAD_STATUSES, STATUS_LABELS, ROLE_LABELS, KIT_TYPE_LABELS, CHART_COLORS, CHART_TOOLTIP_STYLE } from '@/lib/constants';
+import { LEAD_STATUSES, STATUS_LABELS, ROLE_LABELS, CHART_COLORS, CHART_TOOLTIP_STYLE } from '@/lib/constants';
 import { formatDate, cn } from '@/lib/utils';
 import PageHeader from '@/components/shared/PageHeader';
 import StatusBadge from '@/components/shared/StatusBadge';
@@ -83,8 +83,6 @@ const downloadTextFile = (filename, text, type = 'application/vnd.ms-excel;chars
   URL.revokeObjectURL(url);
 };
 
-const FOLLOWUP_STATUS_LABELS = { open: 'Open', closed: 'Closed' };
-
 /** The lead's single internal note — newest legacy note, else the shared field. */
 const internalNoteText = (lead) => {
   const latest = [...(lead.notes || [])]
@@ -94,34 +92,17 @@ const internalNoteText = (lead) => {
 
 /** Full per-lead column set for the detailed report sheet. */
 const DETAIL_COLUMNS = [
-  ['Reference', (l) => l.refNumber],
+  ['Reference no', (l) => l.refNumber],
   ['Client', (l) => l.businessName],
   ['Contact person', (l) => l.contactPerson],
-  ['Designation', (l) => l.designation],
   ['Mobile', (l) => l.mobileNumber],
-  ['WhatsApp', (l) => l.whatsappNumber],
-  ['Email', (l) => l.email],
   ['Business type', (l) => l.businessType],
   ['City', (l) => l.city],
-  ['State', (l) => l.state],
-  ['Address', (l) => l.address],
-  ['GSTIN', (l) => l.gstin],
-  ['Assigned to', (l) => l.assignedExecId?.name || ''],
   ['Created by', (l) => l.createdBy?.name || ''],
-  ['Lead source', (l) => l.leadSource],
-  ['Kit type', (l) => (l.kitType ? KIT_TYPE_LABELS[l.kitType] || l.kitType : '')],
-  ['Status', (l) => STATUS_LABELS[l.status] || l.status],
   ['Action point', (l) => l.actionPoint],
-  ['Internal notes', (l) => internalNoteText(l)],
+  ['Internal note', (l) => internalNoteText(l)],
   ['Follow-up note', (l) => l.followUp?.note],
   ['Follow-up date', (l) => (l.followUp?.date ? formatDate(l.followUp.date) : '')],
-  ['Follow-up status', (l) => (l.followUp?.status ? FOLLOWUP_STATUS_LABELS[l.followUp.status] || l.followUp.status : '')],
-  ['Follow-up closing note', (l) => l.followUp?.closingNote],
-  ['Delivery method', (l) => l.delivery?.method],
-  ['Delivered on', (l) => (l.delivery?.sentAt ? formatDate(l.delivery.sentAt) : '')],
-  ['Lead date', (l) => formatDate(l.leadDate)],
-  ['Generated on', (l) => (l.generatedAt ? formatDate(l.generatedAt) : '')],
-  ['Created date', (l) => formatDate(l.createdAt)],
 ];
 
 export default function LeadTracker() {
