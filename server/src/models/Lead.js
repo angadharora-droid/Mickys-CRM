@@ -183,6 +183,10 @@ const leadSchema = new mongoose.Schema(
     // Flagged when a generated lead is changed after the fact (i.e. the live
     // data no longer matches the kit the client received, until it's regenerated).
     editedAfterGeneration: { type: Boolean, default: false },
+    // Set when a referenced rate item is renamed after this lead's kit was
+    // generated: the stored PDFs still show the old product name, so they are
+    // lazily rebuilt (name only — prices stay snapshotted) on next download/email.
+    pdfStale: { type: Boolean, default: false },
 
     // ---- Generated output ----
     generatedFiles: { type: [generatedFileSchema], default: [] },

@@ -1,9 +1,41 @@
 const asyncHandler = require('../utils/asyncHandler');
 const ApiError = require('../utils/ApiError');
 const RateItem = require('../models/RateItem');
+const Lead = require('../models/Lead');
 const { getPagination, buildMeta } = require('../utils/pagination');
 const { logActivity } = require('../services/activity.service');
 const { searchRegex } = require('../utils/sanitize');
+
+/**
+ * Lead rate lines are snapshots of the master taken when rates were confirmed.
+ * Prices are intentionally frozen, but the descriptive fields (name, pack size,
+ * category) should always reflect the current master — so a SKU rename shows up
+ * on every lead, even old ones. Pushes the new values into all matching snapshot
+ * lines and flags already-generated leads so their PDFs are rebuilt (name only)
+ * on next download/email. Returns how many leads were touched.
+ */
+async function syncRateItemToLeads(rateItem) {
+  const match = { 'rates.rateItemId': rateItem._id };
+  const [snapshotRes] = await Promise.all([
+    Lead.updateMany(
+      match,
+      {
+        $set: {
+          'rates.$[elem].productName': rateItem.productName,
+          'rates.$[elem].packSize': rateItem.packSize || '',
+          'rates.$[elem].category': rateItem.category || '',
+        },
+      },
+      { arrayFilters: [{ 'elem.rateItemId': rateItem._id }] }
+    ),
+    // Only leads whose kit has actually been generated have stale PDFs to rebuild.
+    Lead.updateMany(
+      { ...match, generatedAt: { $ne: null } },
+      { $set: { pdfStale: true } }
+    ),
+  ]);
+  return snapshotRes.modifiedCount || 0;
+}
 
 // GET /api/rate-items?kitType=&search=&category=&isActive=&page=&limit=
 const listRateItems = asyncHandler(async (req, res) => {
@@ -72,9 +104,26 @@ const updateRateItem = asyncHandler(async (req, res) => {
     new: true,
     runValidators: true,
   });
+
+  // If the descriptive fields changed, propagate them to every lead's snapshot
+  // (incl. previously generated ones) so the name/pack/category stay in sync.
+  const descriptiveChanged =
+    item.productName !== current.productName ||
+    (item.packSize || '') !== (current.packSize || '') ||
+    (item.category || '') !== (current.category || '');
+  let syncedLeads = 0;
+  if (descriptiveChanged) {
+    syncedLeads = await syncRateItemToLeads(item);
+  }
+
+  const renamed = item.productName !== current.productName;
   await logActivity({
     userId: req.user._id, action: 'RATE_ITEM_UPDATED', entity: 'RateItem', entityId: item._id,
-    details: `Updated rate "${item.productName}" (${item.kitType})`, ip: req.ip,
+    details:
+      `Updated rate "${item.productName}" (${item.kitType})` +
+      (renamed ? ` — renamed from "${current.productName}"` : '') +
+      (syncedLeads ? `; synced to ${syncedLeads} lead(s)` : ''),
+    ip: req.ip,
   });
   res.json({ success: true, data: item });
 });

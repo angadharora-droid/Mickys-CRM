@@ -156,6 +156,19 @@ function setDownloadHeaders(res, filename, contentType) {
   res.setHeader('Content-Disposition', `attachment; filename="${filename.replace(/"/g, '')}"`);
 }
 
+/**
+ * Rebuild a lead's stored PDFs if a referenced rate item was renamed after the
+ * kit was generated (pdfStale). The snapshot already carries the new name, so
+ * this only refreshes the documents' text — prices are unchanged. Called lazily
+ * before any download/email so PDFs catch up the moment they are next used.
+ */
+async function ensureFreshKit(lead) {
+  if (!lead.pdfStale || !lead.generatedAt) return;
+  await buildKitFiles(lead);
+  lead.pdfStale = false;
+  await lead.save();
+}
+
 // POST /api/leads
 const createLead = asyncHandler(async (req, res) => {
   const { assignedExecId, internalNotes, followUpDate, followUpNote, ...rest } = req.body;
@@ -724,6 +737,7 @@ const downloadZip = asyncHandler(async (req, res) => {
   if (!lead) throw ApiError.notFound('Lead not found');
   assertCanView(lead, req.user);
   if (!lead.zipFile?.fileName) throw ApiError.badRequest('Generate the kit before downloading it');
+  await ensureFreshKit(lead);
 
   if (lead.zipFile.fileId) {
     await logActivity({
@@ -754,6 +768,7 @@ const downloadDocument = asyncHandler(async (req, res) => {
   const lead = await Lead.findById(req.params.id);
   if (!lead) throw ApiError.notFound('Lead not found');
   assertCanView(lead, req.user);
+  await ensureFreshKit(lead);
 
   const file = lead.generatedFiles[Number(req.params.idx)];
   if (!file) throw ApiError.notFound('Document not found');
@@ -774,6 +789,7 @@ const emailKit = asyncHandler(async (req, res) => {
   if (!lead) throw ApiError.notFound('Lead not found');
   assertCanView(lead, req.user);
   if (!lead.generatedFiles?.length) throw ApiError.badRequest('Generate the kit before emailing it');
+  await ensureFreshKit(lead);
 
   if (!lead.generatedFiles.every((f) => f.fileId)) {
     const dir = path.join(KITS_DIR, lead.refNumber);
