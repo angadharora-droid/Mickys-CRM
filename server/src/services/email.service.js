@@ -124,24 +124,6 @@ function addressOf(from) {
   return match ? match[1] : from;
 }
 
-function baseTemplate(title, bodyHtml) {
-  return `
-  <div style="font-family:Segoe UI,Arial,sans-serif;background:#faf9f7;padding:24px">
-    <div style="max-width:640px;margin:auto;background:#fff;border-radius:8px;overflow:hidden;border:1px solid #e2ddd7">
-      <div style="background:#6F0E13;color:#fff;padding:18px 24px">
-        <h2 style="margin:0;font-size:18px">Micky&rsquo;s &mdash; Sales CRM</h2>
-      </div>
-      <div style="padding:24px;color:#2a2220">
-        <h3 style="margin-top:0;color:#6F0E13">${title}</h3>
-        ${bodyHtml}
-      </div>
-      <div style="padding:14px 24px;background:#f4f1ec;color:#6a6767;font-size:12px">
-        Rasoi Ki Taiyaari, Micky&rsquo;s Ki Zimmedari.
-      </div>
-    </div>
-  </div>`;
-}
-
 /**
  * Sends a generated sales kit to the client. Uses the shared SMTP account but
  * presents the assigned exec as the sender (From name + Reply-To) so client
@@ -156,22 +138,24 @@ async function sendKitEmail({ lead, exec, to, cc, subject, message, files = [], 
   const kitLabel = lead.kitType === 'distributor' ? 'Distributor' : 'Institutional';
   const intro =
     message && message.trim()
-      ? `<p>${escapeHtml(message).replace(/\n/g, '<br>')}</p>`
-      : `<p>Dear ${escapeHtml(lead.contactPerson || lead.businessName)},</p>
-         <p>Please find attached your Micky&rsquo;s ${kitLabel} sales kit. It includes our rate card,
+      ? `<p style="margin:0 0 12px">${escapeHtml(message).replace(/\n/g, '<br>')}</p>`
+      : `<p style="margin:0 0 12px">Dear ${escapeHtml(lead.contactPerson || lead.businessName)},</p>
+         <p style="margin:0 0 12px">Please find attached your Micky&rsquo;s ${kitLabel} sales kit. It includes our rate card,
          ${lead.kitType === 'distributor' ? 'term sheet' : 'quotation'} and supporting documents.
          We look forward to partnering with you.</p>`;
 
-  const html = baseTemplate(
-    `Micky's ${kitLabel} Sales Kit`,
-    `${intro}
-     <table style="width:100%;font-size:14px;margin:16px 0">
-       <tr><td style="color:#6a6767;padding:4px 0;width:150px">Reference</td><td><strong>${escapeHtml(lead.refNumber)}</strong></td></tr>
-       <tr><td style="color:#6a6767;padding:4px 0">Prepared for</td><td>${escapeHtml(lead.businessName)}</td></tr>
-       <tr><td style="color:#6a6767;padding:4px 0">Sales Executive</td><td>${escapeHtml(exec?.name || '-')}${exec?.phone ? ' · ' + escapeHtml(exec.phone) : ''}</td></tr>
-     </table>
-     <p style="color:#6a6767;font-size:13px">The kit documents are attached to this email.</p>`
-  );
+  // A plain, personal-looking email (no branded card/header/footer) — just the
+  // message, a small details block and the attachment note.
+  const html = `
+    <div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;color:#222">
+      ${intro}
+      <table style="border-collapse:collapse;font-size:14px;margin:12px 0">
+        <tr><td style="padding:2px 24px 2px 0;color:#666">Reference</td><td><strong>${escapeHtml(lead.refNumber)}</strong></td></tr>
+        <tr><td style="padding:2px 24px 2px 0;color:#666">Prepared for</td><td>${escapeHtml(lead.businessName)}</td></tr>
+        <tr><td style="padding:2px 24px 2px 0;color:#666">Sales Executive</td><td>${escapeHtml(exec?.name || '-')}${exec?.phone ? ' · ' + escapeHtml(exec.phone) : ''}</td></tr>
+      </table>
+      <p style="margin:12px 0 0;color:#666">The kit documents are attached to this email.</p>
+    </div>`;
 
   return sendMail({
     to: recipient,

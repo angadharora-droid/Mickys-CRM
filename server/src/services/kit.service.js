@@ -1,4 +1,5 @@
 const PDFDocument = require('pdfkit');
+const fs = require('fs');
 const path = require('path');
 const archiver = require('archiver');
 const { PassThrough } = require('stream');
@@ -8,6 +9,11 @@ const content = require('../config/kitContent');
 
 const UPLOADS_ROOT = path.join(__dirname, '..', '..', 'uploads');
 const KITS_DIR = path.join(UPLOADS_ROOT, 'kits');
+
+// Pre-built marketing PDFs shipped with the app (committed, not in uploads/).
+// Attached as-is to every kit alongside the generated documents.
+const ASSETS_DIR = path.join(__dirname, '..', 'assets');
+const BROCHURE_PATH = path.join(ASSETS_DIR, 'Mickys_Brochure.pdf');
 
 // ---- Brand palette ----
 const MAROON = '#6F0E13';
@@ -488,25 +494,47 @@ function drawQuotation(doc, ctx) {
     return yy + 18;
   };
   y = drawHead(y);
-  const lines = (lead.rates || []).filter((line) => line.included !== false);
-  lines.forEach((r, i) => {
-    if (y > bottomLimit(doc)) { y = newPage(doc, footerLabel); y = drawHead(y); }
-    if (i % 2 === 1) doc.rect(M, y, W, 16).fill('#faf7f2');
-    const gstAmt = r.netRate * (r.gst / 100);
-    const vals = {
-      sr: String(i + 1),
-      name: r.productName + (r.packSize ? ` (${r.packSize})` : ''),
-      qty: '',
-      unit: 'Pack',
-      price: inr(r.netRate),
-      gst: inr2(gstAmt),
-      amt: '',
-      rem: '',
-    };
-    doc.font('Helvetica').fontSize(8).fill(INK);
-    cols.forEach((c) => doc.text(vals[c.key], c.x + 3, y + 4, { width: c.w - 6, align: c.align }));
+  // Group the included items by category (same ordering as the price card) so
+  // the quotation reads as a categorised list rather than one flat run. ctx.catalog
+  // is the confirmed/included snapshot with categories already resolved.
+  const groups = {};
+  (ctx.catalog || []).forEach((it) => {
+    const cat = it.category || 'Other';
+    (groups[cat] = groups[cat] || []).push(it);
+  });
+  const categoryOrder = [
+    ...content.CATEGORY_ORDER,
+    ...Object.keys(groups).filter((cat) => !content.CATEGORY_ORDER.includes(cat)),
+  ];
+  let sr = 0;
+  categoryOrder.forEach((cat) => {
+    const rows = groups[cat];
+    if (!rows || !rows.length) return;
+    if (y > bottomLimit(doc) - 28) { y = newPage(doc, footerLabel); y = drawHead(y); }
+    // category band
+    doc.rect(M, y, W, 16).fill(BAND);
+    doc.font('Helvetica-Bold').fontSize(8).fill(MAROON).text(cat, M + 6, y + 4);
     y += 16;
-    doc.moveTo(M, y).lineTo(M + W, y).stroke(BORDER);
+    rows.forEach((r) => {
+      if (y > bottomLimit(doc)) { y = newPage(doc, footerLabel); y = drawHead(y); }
+      sr += 1;
+      if (sr % 2 === 0) doc.rect(M, y, W, 16).fill('#faf7f2');
+      const gstAmt = r.netRate * (r.gst / 100);
+      const vals = {
+        sr: String(sr),
+        name: r.productName + (r.packSize ? ` (${r.packSize})` : ''),
+        qty: '',
+        unit: 'Pack',
+        price: inr(r.netRate),
+        gst: inr2(gstAmt),
+        amt: '',
+        rem: '',
+      };
+      doc.font('Helvetica').fontSize(8).fill(INK);
+      cols.forEach((c) => doc.text(vals[c.key], c.x + 3, y + 4, { width: c.w - 6, align: c.align }));
+      y += 16;
+      doc.moveTo(M, y).lineTo(M + W, y).stroke(BORDER);
+    });
   });
   // Totals (qty/amount confirmed on order)
   const totals = [['Subtotal (Basic — before GST)', ''], ['GST @ 5%', ''], ['GRAND TOTAL  (Incl. GST)', '']];
@@ -545,15 +573,22 @@ function drawQuotation(doc, ctx) {
 }
 
 // ---------------- Kit assembly ----------------
+// A pre-built brochure shipped with both kits. `staticFile` entries are read
+// from disk as-is instead of being rendered from lead data.
+const BROCHURE_DOC = { docType: 'Brochure', label: "Micky's Brochure", staticFile: BROCHURE_PATH };
+
 const DOC_PLANS = {
   distributor: [
     { docType: 'PriceCard', label: 'Distributor Price Card', draw: drawPriceCard },
     { docType: 'Agreement', label: 'HORECA Distributor Agreement', draw: drawAgreement },
     { docType: 'OnboardingChecklist', label: 'Annexure B – Onboarding Checklist', draw: drawAnnexure },
+    BROCHURE_DOC,
   ],
   institutional: [
-    { docType: 'PriceCard', label: 'Institutional Price Card', draw: drawPriceCard },
+    // The institutional price card is intentionally omitted — the quotation
+    // (with categorised items) is the single pricing document for this kit.
     { docType: 'Quotation', label: 'Quotation with Terms & Conditions', draw: drawQuotation },
+    BROCHURE_DOC,
   ],
 };
 
@@ -605,15 +640,28 @@ async function generateKit({ lead, exec, settings }) {
   const files = [];
 
   for (const d of plan) {
-    const fileName = `Mickys_${d.docType}_${clientSlug}_${ref}.pdf`;
-    const buffer = await renderPdfBuffer((doc) => d.draw(doc, ctx));
+    let buffer;
+    let fileName;
+    if (d.staticFile) {
+      // Pre-built asset (e.g. the brochure): identical for every client, so it
+      // keeps a generic name. Skip gracefully if the file isn't deployed.
+      if (!fs.existsSync(d.staticFile)) {
+        console.warn(`[kit] static document missing, skipping: ${d.staticFile}`);
+        continue;
+      }
+      buffer = fs.readFileSync(d.staticFile);
+      fileName = `Mickys_${d.docType}.pdf`;
+    } else {
+      fileName = `Mickys_${d.docType}_${clientSlug}_${ref}.pdf`;
+      buffer = await renderPdfBuffer((doc) => d.draw(doc, ctx));
+    }
     files.push({
       docType: d.docType,
       label: d.label,
       fileName,
       buffer,
       contentType: 'application/pdf',
-      static: false,
+      static: !!d.staticFile,
     });
   }
 

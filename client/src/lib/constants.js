@@ -62,15 +62,20 @@ export const KIT_TYPE_LABELS = {
 };
 
 /** Document set per kit type (matches the developer brief). */
+// Always CC'd on outgoing kit emails (enforced again on the server). Shown in
+// the email form so the sender knows it's included and can add more addresses.
+export const FIXED_KIT_CC = 'angadh.arora@cpgh.in';
+
 export const KIT_DOCS = {
   distributor: [
     'Distributor Price Card',
     'HORECA Distributor Agreement',
     'Annexure B – Onboarding Checklist',
+    "Micky's Brochure",
   ],
   institutional: [
-    'Institutional Price Card',
     'Quotation with Terms & Conditions',
+    "Micky's Brochure",
   ],
 };
 

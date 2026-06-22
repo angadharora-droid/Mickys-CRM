@@ -25,6 +25,9 @@ const POPULATE = [
 
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
+// Always copied on outgoing kit emails (in addition to any sender-added CCs).
+const FIXED_KIT_CC = 'angadh.arora@cpgh.in';
+
 /** Builds the next quotation reference: MKY-[CITY3]-[DDMMYY]-[###]. */
 async function nextRefNumber(city) {
   const code = String(city || '')
@@ -826,10 +829,15 @@ const emailKit = asyncHandler(async (req, res) => {
 
   const files = [...generatedFiles, ...attachmentFiles];
 
-  const cc = String(req.body.cc || '')
+  // angadh.arora@cpgh.in is always CC'd on every kit email; any addresses the
+  // sender adds are appended. Deduped case-insensitively so it is never doubled.
+  const extraCc = String(req.body.cc || '')
     .split(',')
     .map((e) => e.trim())
     .filter(Boolean);
+  const cc = [FIXED_KIT_CC, ...extraCc].filter(
+    (e, i, arr) => arr.findIndex((x) => x.toLowerCase() === e.toLowerCase()) === i
+  );
 
   const [exec, settings] = await Promise.all([User.findById(lead.assignedExecId), Setting.getGlobal()]);
   const result = await sendKitEmail({
