@@ -609,6 +609,8 @@ export default function LeadDetail() {
             </div>
           ) : (
             <dl className="grid gap-4 sm:grid-cols-3">
+              <InfoRow label="Company" value={lead.businessName} />
+              <InfoRow label="Business type" value={lead.businessType} />
               <InfoRow label="Contact" value={`${lead.contactPerson}${lead.designation ? `, ${lead.designation}` : ''}`} />
               <InfoRow label="Mobile" value={lead.mobileNumber} />
               <InfoRow label="Email" value={lead.email} />
