@@ -11,6 +11,7 @@ import {
   BUSINESS_TYPES,
   DEFAULT_KIT_TERMS,
   DEFAULT_DISTRIBUTOR_AGREEMENT_TERMS,
+  FIXED_KIT_CC,
 } from '@/lib/constants';
 import { useAuth } from '@/context/AuthContext';
 import { cn, formatCurrency, formatDate, formatDateTime, formatBytes } from '@/lib/utils';
@@ -180,7 +181,20 @@ export default function LeadDetail() {
       agreementTermsAndConditions:
         lead.customTerms?.agreementTermsAndConditions || agreementTermsText(lead.businessName),
     });
-    setEmailForm((f) => ({ ...f, to: f.to || lead.email || '' }));
+    // Prefill the email draft so it reads as an editable preview (never blank).
+    const kitLabel = lead.kitType === 'distributor' ? 'Distributor' : 'Institutional';
+    const docNoun = lead.kitType === 'distributor' ? 'term sheet' : 'quotation';
+    const defaultSubject = `Micky's Sales Kit for ${lead.businessName} — Ref: ${lead.refNumber}`;
+    const defaultMessage =
+      `Dear ${lead.contactPerson || lead.businessName},\n\n` +
+      `Please find attached your Micky's ${kitLabel} sales kit. It includes our rate card, ` +
+      `${docNoun} and supporting documents. We look forward to partnering with you.`;
+    setEmailForm((f) => ({
+      ...f,
+      to: f.to || lead.email || '',
+      subject: f.subject || defaultSubject,
+      message: f.message || defaultMessage,
+    }));
     setActionPoint(lead.actionPoint || '');
     setFollowUpForm({
       note: lead.followUp?.note || '',
@@ -1157,28 +1171,28 @@ export default function LeadDetail() {
                   <Input type="email" value={emailForm.to} onChange={(e) => setEmailForm((f) => ({ ...f, to: e.target.value }))} />
                 </div>
                 <div className="space-y-2">
-                  <Label>CC (optional)</Label>
+                  <Label>CC</Label>
                   <Input
                     type="text"
-                    placeholder="Comma-separate multiple emails"
+                    placeholder="Add more emails, comma-separated"
                     value={emailForm.cc}
                     onChange={(e) => setEmailForm((f) => ({ ...f, cc: e.target.value }))}
                   />
+                  <p className="text-xs text-muted-foreground">Always CC&rsquo;d: {FIXED_KIT_CC}</p>
                 </div>
               </div>
               <div className="space-y-2">
-                <Label>Subject (optional)</Label>
+                <Label>Subject</Label>
                 <Input
-                  placeholder={`Micky's Sales Kit for ${lead.businessName} — Ref: ${lead.refNumber}`}
                   value={emailForm.subject}
                   onChange={(e) => setEmailForm((f) => ({ ...f, subject: e.target.value }))}
                 />
               </div>
               <div className="space-y-2">
-                <Label>Message (optional — a default note is used if blank)</Label>
-                <Textarea rows={3} value={emailForm.message} onChange={(e) => setEmailForm((f) => ({ ...f, message: e.target.value }))} />
+                <Label>Message</Label>
+                <Textarea rows={5} value={emailForm.message} onChange={(e) => setEmailForm((f) => ({ ...f, message: e.target.value }))} />
               </div>
-              <p className="text-xs text-muted-foreground">Sent from the system SMTP account with your name and reply-to. The ZIP is attached.</p>
+              <p className="text-xs text-muted-foreground">This is a preview — edit the subject and message above before sending. The reference details and attached documents are added automatically. Sent from the system account with your name and reply-to.</p>
               <div className="flex flex-wrap items-center gap-3">
                 <Button onClick={sendEmail} disabled={action === 'email'}>
                   {action === 'email' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
