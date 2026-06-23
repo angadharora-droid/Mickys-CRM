@@ -29,7 +29,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
-  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import {
   Loader2, Package, Download, Mail, Trash2, RotateCcw, FileText, CheckCircle2,
@@ -152,6 +152,7 @@ export default function LeadDetail() {
   const [switching, setSwitching] = useState(false);
   const [confirmSwitch, setConfirmSwitch] = useState(null); // pending kitType
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [emailForm, setEmailForm] = useState({ to: '', cc: '', subject: '', message: '' });
   const [deliverNote, setDeliverNote] = useState('');
   const [deliverOpen, setDeliverOpen] = useState(false);
@@ -562,6 +563,12 @@ export default function LeadDetail() {
     <div className="space-y-6">
       <PageHeader title={lead.businessName} description={`Ref ${lead.refNumber}`}>
         <Button variant="outline" onClick={goBack}><ArrowLeft className="h-4 w-4" /> Back</Button>
+        <Button variant="outline" onClick={() => setHistoryOpen(true)}>
+          <History className="h-4 w-4" /> History
+          {crmHistory.length > 0 && (
+            <span className="ml-1 rounded-full bg-muted px-1.5 text-xs font-semibold">{crmHistory.length}</span>
+          )}
+        </Button>
         <Button variant="outline" className="text-destructive" onClick={() => setConfirmDelete(true)}>
           <Trash2 className="h-4 w-4" /> Delete
         </Button>
@@ -1427,46 +1434,6 @@ export default function LeadDetail() {
         </Card>
       )}
 
-      {/* History — closed action points, follow-ups & completed instructions */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base flex items-center gap-2">
-            <History className="h-4 w-4 text-muted-foreground" /> History
-            <span className="text-sm font-normal text-muted-foreground">action points, follow-ups &amp; instructions</span>
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {crmHistory.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No closed items yet. Cleared action points, closed follow-ups and completed instructions will appear here.
-            </p>
-          ) : (
-            <ul className="space-y-3">
-              {crmHistory.map((h) => {
-                const meta = HISTORY_META[h.kind];
-                const Icon = meta.icon;
-                return (
-                  <li key={`${h.kind}-${h.id}`} className="flex items-start gap-3">
-                    <span className={cn('mt-0.5 flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium', meta.cls)}>
-                      <Icon className="h-3 w-3" /> {meta.label}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm whitespace-pre-wrap break-words">
-                        {h.text || <span className="text-muted-foreground">—</span>}
-                      </p>
-                      {h.sub && <p className="mt-0.5 text-xs text-muted-foreground">{h.sub}</p>}
-                      <p className="mt-0.5 text-xs text-muted-foreground">
-                        {h.by ? `${h.by} · ` : ''}{formatDateTime(h.at)}
-                      </p>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
-
       {/* History / audit */}
       <Card>
         <CardHeader className="pb-3"><CardTitle className="text-base flex items-center gap-2"><Sparkles className="h-4 w-4" /> Activity & Audit</CardTitle></CardHeader>
@@ -1523,6 +1490,47 @@ export default function LeadDetail() {
         confirmLabel="Delete lead"
         onConfirm={deleteLead}
       />
+
+      <Dialog open={historyOpen} onOpenChange={setHistoryOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <History className="h-5 w-5" /> History
+            </DialogTitle>
+            <DialogDescription>Closed action points, follow-ups &amp; completed instructions</DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[65vh] overflow-y-auto pr-1">
+            {crmHistory.length === 0 ? (
+              <p className="py-4 text-sm text-muted-foreground">
+                No closed items yet. Cleared action points, closed follow-ups and completed instructions will appear here.
+              </p>
+            ) : (
+              <ul className="space-y-3">
+                {crmHistory.map((h) => {
+                  const meta = HISTORY_META[h.kind];
+                  const Icon = meta.icon;
+                  return (
+                    <li key={`${h.kind}-${h.id}`} className="flex items-start gap-3">
+                      <span className={cn('mt-0.5 flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium', meta.cls)}>
+                        <Icon className="h-3 w-3" /> {meta.label}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm whitespace-pre-wrap break-words">
+                          {h.text || <span className="text-muted-foreground">—</span>}
+                        </p>
+                        {h.sub && <p className="mt-0.5 text-xs text-muted-foreground">{h.sub}</p>}
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                          {h.by ? `${h.by} · ` : ''}{formatDateTime(h.at)}
+                        </p>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <ConfirmDialog
         open={Boolean(confirmAttId)}
