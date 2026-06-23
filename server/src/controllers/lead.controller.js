@@ -102,6 +102,22 @@ function markEditedIfGenerated(lead) {
   if (lead.generatedAt) lead.editedAfterGeneration = true;
 }
 
+/**
+ * Merge an incoming customTerms payload onto the lead, keeping any field the
+ * caller omitted. Shared by rate confirmation and (re)generation so an edited
+ * price-card / agreement term is always persisted before the PDFs are built.
+ */
+function applyCustomTerms(lead, customTerms) {
+  if (!customTerms) return;
+  lead.customTerms = {
+    paymentTerms: customTerms.paymentTerms ?? lead.customTerms.paymentTerms,
+    creditPeriod: customTerms.creditPeriod ?? lead.customTerms.creditPeriod,
+    termsAndConditions: customTerms.termsAndConditions ?? lead.customTerms.termsAndConditions,
+    agreementTermsAndConditions:
+      customTerms.agreementTermsAndConditions ?? lead.customTerms.agreementTermsAndConditions,
+  };
+}
+
 async function resolveExecId(req, providedId) {
   // Everyone (exec, manager, admin) owns the leads they create. A manager/admin
   // may still explicitly assign a different sales exec by passing their id.
@@ -386,15 +402,7 @@ const confirmRates = asyncHandler(async (req, res) => {
   const includedCount = lead.rates.filter((line) => line.included !== false).length;
   if (!includedCount) throw ApiError.badRequest('Include at least one product before confirming rates');
 
-  if (customTerms) {
-    lead.customTerms = {
-      paymentTerms: customTerms.paymentTerms ?? lead.customTerms.paymentTerms,
-      creditPeriod: customTerms.creditPeriod ?? lead.customTerms.creditPeriod,
-      termsAndConditions: customTerms.termsAndConditions ?? lead.customTerms.termsAndConditions,
-      agreementTermsAndConditions:
-        customTerms.agreementTermsAndConditions ?? lead.customTerms.agreementTermsAndConditions,
-    };
-  }
+  applyCustomTerms(lead, customTerms);
   if (edits.length) lead.rateEditLog.push(...edits);
 
   const from = lead.status;
@@ -443,6 +451,10 @@ const generateLeadKit = asyncHandler(async (req, res) => {
   if (!['rates_confirmed', 'generated', 'delivered'].includes(lead.status)) {
     throw ApiError.badRequest('Confirm the rates before generating the kit');
   }
+
+  // Persist any terms edited since the last save so the rebuilt PDFs reflect
+  // them — without this, regenerating rebuilds from the previously-saved terms.
+  applyCustomTerms(lead, req.body?.customTerms);
 
   await buildKitFiles(lead);
   const from = lead.status;

@@ -97,16 +97,22 @@ const rateLineInputSchema = z.object({
   included: z.boolean().optional(),
 });
 
+const customTermsSchema = z.object({
+  paymentTerms: z.string().max(1000).optional().or(z.literal('')),
+  creditPeriod: z.string().max(200).optional().or(z.literal('')),
+  termsAndConditions: z.string().max(8000).optional().or(z.literal('')),
+  agreementTermsAndConditions: z.string().max(12000).optional().or(z.literal('')),
+});
+
 const ratesConfirmSchema = z.object({
   rates: z.array(rateLineInputSchema).min(1, 'At least one rate line is required'),
-  customTerms: z
-    .object({
-      paymentTerms: z.string().max(1000).optional().or(z.literal('')),
-      creditPeriod: z.string().max(200).optional().or(z.literal('')),
-      termsAndConditions: z.string().max(8000).optional().or(z.literal('')),
-      agreementTermsAndConditions: z.string().max(12000).optional().or(z.literal('')),
-    })
-    .optional(),
+  customTerms: customTermsSchema.optional(),
+});
+
+// Regenerating from the Deliver step may carry the latest edited terms so the
+// rebuilt PDFs reflect them (body is optional — a bare regenerate is still valid).
+const generateKitSchema = z.object({
+  customTerms: customTermsSchema.optional(),
 });
 
 const noteSchema = z.object({
@@ -194,6 +200,7 @@ module.exports = {
   updateLeadSchema,
   kitTypeSchema,
   ratesConfirmSchema,
+  generateKitSchema,
   noteSchema,
   actionPointSchema,
   followUpSchema,

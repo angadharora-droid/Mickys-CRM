@@ -287,7 +287,7 @@ export default function LeadDetail() {
     ).then(() => toast.success('Rates confirmed — kit generated')).catch(() => {});
 
   const generate = () =>
-    run('generate', () => api.post(`/leads/${lead._id}/generate`))
+    run('generate', () => api.post(`/leads/${lead._id}/generate`, { customTerms: terms }))
       .then(() => toast.success('Kit generated')).catch(() => {});
 
   const unlock = () =>
