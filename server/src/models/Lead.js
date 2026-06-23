@@ -87,6 +87,20 @@ const instructionSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+/** An append-only log of completed CRM items (a cleared action point or a closed
+ *  follow-up), so the lead keeps a history of them. Done instructions retain
+ *  their own record in `instructions`, so they aren't duplicated here. */
+const crmHistorySchema = new mongoose.Schema(
+  {
+    type: { type: String, enum: ['action_point', 'follow_up'], required: true },
+    summary: { type: String, default: '' }, // action-point value / follow-up reason note
+    note: { type: String, default: '' }, // follow-up closing note
+    date: { type: Date }, // follow-up due date, for context
+    by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // who closed/cleared it
+  },
+  { timestamps: { createdAt: 'at', updatedAt: false } }
+);
+
 /** A manually uploaded file (photo, PDF, spreadsheet, …) stored in GridFS. */
 const attachmentSchema = new mongoose.Schema(
   {
@@ -152,6 +166,10 @@ const leadSchema = new mongoose.Schema(
     // Admin -> exec directives for this lead. The exec marks each done once
     // actioned; open ones appear on their Follow-ups page.
     instructions: { type: [instructionSchema], default: [] },
+
+    // History of cleared action points + closed follow-ups (instructions keep
+    // their own record). Surfaced on the lead's History section.
+    crmHistory: { type: [crmHistorySchema], default: [] },
 
     // Manually uploaded files (photos, PDFs, sheets) kept alongside the lead.
     attachments: { type: [attachmentSchema], default: [] },

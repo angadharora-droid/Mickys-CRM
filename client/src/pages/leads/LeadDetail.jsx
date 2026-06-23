@@ -35,12 +35,19 @@ import {
   Loader2, Package, Download, Mail, Trash2, RotateCcw, FileText, CheckCircle2,
   AlertTriangle, ArrowLeft, Boxes, Building2, Sparkles, Eye, EyeOff, Lock, Pencil, ExternalLink,
   MessageSquare, CalendarCheck, Paperclip, Upload, Image as ImageIcon, Target,
-  ClipboardList, Plus,
+  ClipboardList, Plus, History,
 } from 'lucide-react';
 
 const NO_ACTION = '__none__';
 
 const STEPS = ['Client Data', 'Kit Type', 'Rate Review', 'Generate', 'Deliver'];
+
+// Badge styling for each kind of completed CRM item shown in the History card.
+const HISTORY_META = {
+  action_point: { label: 'Action point', icon: Target, cls: 'bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300' },
+  follow_up: { label: 'Follow-up', icon: CalendarCheck, cls: 'bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-300' },
+  instruction: { label: 'Instruction', icon: ClipboardList, cls: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300' },
+};
 
 const agreementTermsText = (businessName = '{distributor}') =>
   DEFAULT_DISTRIBUTOR_AGREEMENT_TERMS
@@ -272,6 +279,29 @@ export default function LeadDetail() {
     (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
   );
   const openInstructionCount = instructions.filter((i) => i.status === 'open').length;
+
+  // Unified history of completed CRM items: cleared action points + closed
+  // follow-ups (from crmHistory) merged with done instructions, newest first.
+  const crmHistory = [
+    ...(lead.crmHistory || []).map((h) => ({
+      id: h._id,
+      kind: h.type, // 'action_point' | 'follow_up'
+      text: h.type === 'follow_up' ? h.note : h.summary,
+      sub: h.type === 'follow_up'
+        ? [h.summary ? `Reason: ${h.summary}` : null, h.date ? `was due ${formatDate(h.date)}` : null].filter(Boolean).join(' · ')
+        : 'Cleared',
+      by: h.by?.name,
+      at: h.at,
+    })),
+    ...instructions.filter((i) => i.status === 'done').map((i) => ({
+      id: i._id,
+      kind: 'instruction',
+      text: i.text,
+      sub: i.createdBy?.name ? `Instructed by ${i.createdBy.name}` : 'Marked done',
+      by: i.doneBy?.name,
+      at: i.doneAt || i.updatedAt,
+    })),
+  ].sort((a, b) => new Date(b.at) - new Date(a.at));
 
   const run = async (key, fn) => {
     setAction(key);
@@ -1353,6 +1383,46 @@ export default function LeadDetail() {
           </CardContent>
         </Card>
       )}
+
+      {/* History — closed action points, follow-ups & completed instructions */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <History className="h-4 w-4 text-muted-foreground" /> History
+            <span className="text-sm font-normal text-muted-foreground">action points, follow-ups &amp; instructions</span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {crmHistory.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No closed items yet. Cleared action points, closed follow-ups and completed instructions will appear here.
+            </p>
+          ) : (
+            <ul className="space-y-3">
+              {crmHistory.map((h) => {
+                const meta = HISTORY_META[h.kind];
+                const Icon = meta.icon;
+                return (
+                  <li key={`${h.kind}-${h.id}`} className="flex items-start gap-3">
+                    <span className={cn('mt-0.5 flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium', meta.cls)}>
+                      <Icon className="h-3 w-3" /> {meta.label}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm whitespace-pre-wrap break-words">
+                        {h.text || <span className="text-muted-foreground">—</span>}
+                      </p>
+                      {h.sub && <p className="mt-0.5 text-xs text-muted-foreground">{h.sub}</p>}
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        {h.by ? `${h.by} · ` : ''}{formatDateTime(h.at)}
+                      </p>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
 
       {/* History / audit */}
       <Card>

@@ -21,6 +21,7 @@ const POPULATE = [
   { path: 'notes.createdBy', select: 'name role' },
   { path: 'instructions.createdBy', select: 'name role' },
   { path: 'instructions.doneBy', select: 'name role' },
+  { path: 'crmHistory.by', select: 'name role' },
   { path: 'followUp.closedBy', select: 'name role' },
   { path: 'attachments.uploadedBy', select: 'name role' },
 ];
@@ -724,6 +725,12 @@ const setActionPoint = asyncHandler(async (req, res) => {
   assertCanView(lead, req.user);
 
   const actionPoint = String(req.body.actionPoint || '');
+  // Archive the outgoing action point so clearing/changing it leaves a history
+  // trail (the previous value is otherwise lost).
+  const prev = lead.actionPoint;
+  if (prev && prev !== actionPoint) {
+    lead.crmHistory.push({ type: 'action_point', summary: prev, by: req.user._id });
+  }
   lead.actionPoint = actionPoint;
   lead.modifiedBy = req.user._id;
   await lead.save();
@@ -789,6 +796,15 @@ const closeFollowUp = asyncHandler(async (req, res) => {
   lead.followUp.closingNote = closingNote;
   lead.followUp.closedAt = new Date();
   lead.followUp.closedBy = req.user._id;
+  // Archive the closed follow-up so the lead keeps a history of past ones (the
+  // single followUp slot is overwritten when the next one is scheduled).
+  lead.crmHistory.push({
+    type: 'follow_up',
+    summary: lead.followUp.note || '',
+    note: closingNote,
+    date: lead.followUp.date,
+    by: req.user._id,
+  });
   lead.modifiedBy = req.user._id;
   await lead.save();
 
