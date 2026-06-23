@@ -563,16 +563,19 @@ export default function LeadDetail() {
     <div className="space-y-6">
       <PageHeader title={lead.businessName} description={`Ref ${lead.refNumber}`}>
         <Button variant="outline" onClick={goBack}><ArrowLeft className="h-4 w-4" /> Back</Button>
-        <Button variant="outline" onClick={() => setHistoryOpen(true)}>
+        <Button variant="outline" className="text-destructive" onClick={() => setConfirmDelete(true)}>
+          <Trash2 className="h-4 w-4" /> Delete
+        </Button>
+      </PageHeader>
+
+      <div className="-mt-2 flex justify-end">
+        <Button variant="outline" size="sm" onClick={() => setHistoryOpen(true)}>
           <History className="h-4 w-4" /> History
           {crmHistory.length > 0 && (
             <span className="ml-1 rounded-full bg-muted px-1.5 text-xs font-semibold">{crmHistory.length}</span>
           )}
         </Button>
-        <Button variant="outline" className="text-destructive" onClick={() => setConfirmDelete(true)}>
-          <Trash2 className="h-4 w-4" /> Delete
-        </Button>
-      </PageHeader>
+      </div>
 
       <div className="flex flex-wrap items-center gap-3">
         <StatusBadge status={lead.status} />
