@@ -27,6 +27,7 @@ const POPULATE = [
 ];
 
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+const roundTo10 = (n) => Math.round((Number(n) || 0) / 10) * 10;
 
 // Always copied on outgoing kit emails (in addition to any sender-added CCs).
 const FIXED_KIT_CC = 'angadh.arora@cpgh.in';
@@ -47,8 +48,20 @@ async function nextRefNumber(city) {
   return `${key}-${String(seq).padStart(3, '0')}`;
 }
 
-/** Snapshot a priced line from a rate-master item (standard, un-overridden). */
-function snapshotLine(item) {
+/**
+ * Snapshot a priced line from a rate-master item (standard, un-overridden).
+ *
+ * Distributor card: the editable price is the DLP (Delivered Landed Price) =
+ * Basic + GST rounded to the nearest ₹10. `basic` is the master net rate and
+ * `dsp` (Distributor Selling Price) is the product's institutional rate, looked
+ * up by SKU. Institutional card: `netRate` is the editable net rate as before.
+ */
+function snapshotLine(item, kitType, dspBySku) {
+  const isDist = kitType === 'distributor';
+  const basic = item.netRate;
+  const dsp = isDist ? (dspBySku?.get(item.sku) || 0) : 0;
+  // DLP for distributor (rounded landed price); plain net rate for institutional.
+  const netRate = isDist ? roundTo10(basic * (1 + item.gst / 100)) : basic;
   return {
     rateItemId: item._id,
     sku: item.sku,
@@ -57,11 +70,14 @@ function snapshotLine(item) {
     category: item.category || '',
     included: true,
     mrp: item.mrp,
-    standardNetRate: item.netRate,
-    netRate: item.netRate,
+    basic: isDist ? basic : 0,
+    dsp,
+    standardNetRate: netRate,
+    netRate,
     suggestiveMargin: item.suggestiveMargin || 0,
     gst: item.gst,
-    netInclGst: round2(item.netRate * (1 + item.gst / 100)),
+    // DLP already includes GST; institutional net rate is pre-GST.
+    netInclGst: isDist ? netRate : round2(netRate * (1 + item.gst / 100)),
     deviationPct: 0,
   };
 }
@@ -343,10 +359,18 @@ const selectKitType = asyncHandler(async (req, res) => {
   const items = await RateItem.find({ kitType, isActive: true }).sort({ productName: 1 });
   if (!items.length) throw ApiError.badRequest(`No active rate items in the ${kitType} rate master`);
 
+  // The distributor card's DSP column is each product's institutional rate, so
+  // pull the institutional master and map it by SKU for the snapshot.
+  let dspBySku;
+  if (kitType === 'distributor') {
+    const instItems = await RateItem.find({ kitType: 'institutional', isActive: true }).select('sku netRate');
+    dspBySku = new Map(instItems.map((i) => [i.sku, i.netRate]));
+  }
+
   const settings = await Setting.getGlobal();
   const from = lead.status;
   lead.kitType = kitType;
-  lead.rates = items.map(snapshotLine);
+  lead.rates = items.map((item) => snapshotLine(item, kitType, dspBySku));
   lead.rateEditLog = [];
   lead.customTerms = {
     paymentTerms: settings.kit?.defaultPaymentTerms || '',
@@ -394,11 +418,14 @@ const confirmRates = asyncHandler(async (req, res) => {
       line.standardNetRate > 0 && newRate < line.standardNetRate
         ? round2(((line.standardNetRate - newRate) / line.standardNetRate) * 100)
         : 0;
+    // For the distributor card the edited value is the DLP, which already
+    // includes GST; institutional net rates are pre-GST.
+    const isDist = lead.kitType === 'distributor';
     return {
       ...line.toObject(),
       included,
       netRate: newRate,
-      netInclGst: round2(newRate * (1 + line.gst / 100)),
+      netInclGst: isDist ? newRate : round2(newRate * (1 + line.gst / 100)),
       deviationPct,
     };
   });
