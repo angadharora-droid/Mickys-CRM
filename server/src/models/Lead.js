@@ -74,6 +74,19 @@ const noteSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+/** A directive from an admin to the lead's assigned executive. It stays 'open'
+ *  and surfaces on the exec's Follow-ups page until they mark it done. */
+const instructionSchema = new mongoose.Schema(
+  {
+    text: { type: String, required: true, trim: true, maxlength: 4000 },
+    status: { type: String, enum: ['open', 'done'], default: 'open' },
+    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    doneBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    doneAt: { type: Date },
+  },
+  { timestamps: true }
+);
+
 /** A manually uploaded file (photo, PDF, spreadsheet, …) stored in GridFS. */
 const attachmentSchema = new mongoose.Schema(
   {
@@ -135,6 +148,10 @@ const leadSchema = new mongoose.Schema(
     // so older records can be consolidated on their next note save.
     internalNotes: { type: String, trim: true, default: '' },
     notes: { type: [noteSchema], default: [] },
+
+    // Admin -> exec directives for this lead. The exec marks each done once
+    // actioned; open ones appear on their Follow-ups page.
+    instructions: { type: [instructionSchema], default: [] },
 
     // Manually uploaded files (photos, PDFs, sheets) kept alongside the lead.
     attachments: { type: [attachmentSchema], default: [] },
@@ -216,6 +233,7 @@ const leadSchema = new mongoose.Schema(
 
 leadSchema.index({ createdAt: -1 });
 leadSchema.index({ 'followUp.status': 1, 'followUp.date': 1 });
+leadSchema.index({ 'instructions.status': 1 });
 
 leadSchema.statics.canTransition = function (from, to) {
   return (LEAD_TRANSITIONS[from] || []).includes(to);

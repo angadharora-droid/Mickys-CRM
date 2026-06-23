@@ -44,6 +44,7 @@ router.delete('/rate-items/:id', authenticate, authorize(ADMIN), rateItems.delet
 // ---------- Leads + Kit pipeline ----------
 router.get('/follow-ups', authenticate, leads.listFollowUps);
 router.get('/action-points', authenticate, leads.listActionPoints);
+router.get('/instructions', authenticate, leads.listInstructions);
 router.post('/leads', authenticate, authorize(EXEC, ADMIN), validate(v.leadSchema), leads.createLead);
 router.get('/leads', authenticate, leads.listLeads);
 router.get('/leads/:id', authenticate, leads.getLead);
@@ -57,6 +58,9 @@ router.post('/leads/:id/unlock', authenticate, leads.unlockLead);
 router.post('/leads/:id/notes', authenticate, validate(v.noteSchema), leads.addNote);
 router.put('/leads/:id/notes/:noteId', authenticate, validate(v.noteSchema), leads.updateNote);
 router.delete('/leads/:id/notes/:noteId', authenticate, leads.deleteNote);
+router.post('/leads/:id/instructions', authenticate, authorize(ADMIN), validate(v.instructionSchema), leads.addInstruction);
+router.post('/leads/:id/instructions/:instrId/done', authenticate, leads.closeInstruction);
+router.delete('/leads/:id/instructions/:instrId', authenticate, authorize(ADMIN), leads.deleteInstruction);
 router.put('/leads/:id/action-point', authenticate, validate(v.actionPointSchema), leads.setActionPoint);
 router.put('/leads/:id/follow-up', authenticate, validate(v.followUpSchema), leads.updateFollowUp);
 router.post('/leads/:id/follow-up/close', authenticate, validate(v.closeFollowUpSchema), leads.closeFollowUp);

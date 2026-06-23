@@ -35,6 +35,7 @@ import {
   Loader2, Package, Download, Mail, Trash2, RotateCcw, FileText, CheckCircle2,
   AlertTriangle, ArrowLeft, Boxes, Building2, Sparkles, Eye, EyeOff, Lock, Pencil, ExternalLink,
   MessageSquare, CalendarCheck, Paperclip, Upload, Image as ImageIcon, Target,
+  ClipboardList, Plus,
 } from 'lucide-react';
 
 const NO_ACTION = '__none__';
@@ -142,6 +143,7 @@ export default function LeadDetail() {
   const [previewFile, setPreviewFile] = useState(null);
   const [noteDraft, setNoteDraft] = useState('');
   const [editingNote, setEditingNote] = useState(false);
+  const [instructionDraft, setInstructionDraft] = useState('');
   const [editingClient, setEditingClient] = useState(false);
   const [clientForm, setClientForm] = useState(null);
   const [actionPoint, setActionPoint] = useState('');
@@ -263,6 +265,13 @@ export default function LeadDetail() {
     [...(lead.notes || [])]
       .sort((a, b) => new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt))[0]
       ?.text || lead.internalNotes || '';
+
+  // Instructions: admins author them; the assigned exec (or an admin) marks done.
+  const isAdmin = user?.role === 'admin';
+  const instructions = [...(lead.instructions || [])].sort(
+    (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+  );
+  const openInstructionCount = instructions.filter((i) => i.status === 'open').length;
 
   const run = async (key, fn) => {
     setAction(key);
@@ -402,6 +411,22 @@ export default function LeadDetail() {
   const saveInternalNote = () =>
     run('note-add', () => api.post(`/leads/${lead._id}/notes`, { text: noteDraft.trim() }))
       .then(() => { setEditingNote(false); toast.success('Internal note saved'); })
+      .catch(() => {});
+
+  // ---- Instructions (admin -> exec directives) ----
+  const addInstruction = () =>
+    run('instr-add', () => api.post(`/leads/${lead._id}/instructions`, { text: instructionDraft.trim() }))
+      .then(() => { setInstructionDraft(''); toast.success('Instruction added'); })
+      .catch(() => {});
+
+  const markInstructionDone = (instrId) =>
+    run('instr-done', () => api.post(`/leads/${lead._id}/instructions/${instrId}/done`))
+      .then(() => toast.success('Instruction marked done'))
+      .catch(() => {});
+
+  const removeInstruction = (instrId) =>
+    run('instr-del', () => api.delete(`/leads/${lead._id}/instructions/${instrId}`))
+      .then(() => toast.success('Instruction deleted'))
       .catch(() => {});
 
   // ---- Action point + follow-up (one section, saved together) ----
@@ -754,6 +779,90 @@ export default function LeadDetail() {
           )}
         </CardContent>
       </Card>
+
+      {/* Instructions — admin directives to the assigned exec */}
+      {(isAdmin || instructions.length > 0) && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center justify-between gap-2">
+              <span className="flex items-center gap-2">
+                <ClipboardList className="h-4 w-4 text-muted-foreground" /> Instructions
+              </span>
+              {openInstructionCount > 0 && (
+                <Badge className="bg-amber-100 text-amber-800 hover:bg-amber-100">{openInstructionCount} open</Badge>
+              )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {isAdmin && (
+              <div className="space-y-2">
+                <Textarea
+                  rows={3}
+                  placeholder="Write an instruction for the assigned sales executive…"
+                  value={instructionDraft}
+                  onChange={(e) => setInstructionDraft(e.target.value)}
+                />
+                <div className="flex justify-end">
+                  <Button size="sm" onClick={addInstruction} disabled={!instructionDraft.trim() || action === 'instr-add'}>
+                    {action === 'instr-add' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                    Add instruction
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {instructions.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No instructions yet.</p>
+            ) : (
+              <ul className="space-y-2">
+                {instructions.map((instr) => {
+                  const done = instr.status === 'done';
+                  return (
+                    <li key={instr._id} className={cn('rounded-lg border p-3', done && 'bg-muted/30')}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className={cn('text-sm whitespace-pre-wrap break-words', done && 'text-muted-foreground line-through')}>
+                            {instr.text}
+                          </p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {instr.createdBy?.name || 'Admin'} · {formatDateTime(instr.createdAt)}
+                            {done && instr.doneAt && ` · done ${formatDateTime(instr.doneAt)}${instr.doneBy?.name ? ` by ${instr.doneBy.name}` : ''}`}
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1">
+                          {done ? (
+                            <Badge variant="outline" className="text-emerald-700 dark:text-emerald-400">
+                              <CheckCircle2 className="h-3 w-3" /> Done
+                            </Badge>
+                          ) : (
+                            <Button
+                              size="sm" variant="outline"
+                              onClick={() => markInstructionDone(instr._id)}
+                              disabled={action === 'instr-done'}
+                            >
+                              <CheckCircle2 className="h-4 w-4" /> Mark done
+                            </Button>
+                          )}
+                          {isAdmin && (
+                            <Button
+                              size="icon" variant="ghost" className="h-8 w-8 text-destructive"
+                              title="Delete instruction"
+                              onClick={() => removeInstruction(instr._id)}
+                              disabled={action === 'instr-del'}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Internal notes */}
       <Card>

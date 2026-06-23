@@ -124,6 +124,10 @@ const noteSchema = z.object({
   text: z.string().trim().min(1, 'Note text is required').max(4000),
 });
 
+const instructionSchema = z.object({
+  text: z.string().trim().min(1, 'Instruction text is required').max(4000),
+});
+
 const actionPointSchema = z.object({
   actionPoint: z.enum(ACTION_POINTS).optional().or(z.literal('')),
 });
@@ -208,6 +212,7 @@ module.exports = {
   generateKitSchema,
   saveTermsSchema,
   noteSchema,
+  instructionSchema,
   actionPointSchema,
   followUpSchema,
   closeFollowUpSchema,
