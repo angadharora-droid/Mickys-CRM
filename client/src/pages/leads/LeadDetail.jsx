@@ -168,6 +168,10 @@ export default function LeadDetail() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Go back to wherever the user came from so the leads list keeps its filters &
+  // page; fall back to the list when this page was opened directly (no history).
+  const goBack = () => (window.history.state?.idx > 0 ? navigate(-1) : navigate('/leads'));
+
   // Re-seed the editable rate table whenever the server copy changes.
   useEffect(() => {
     if (!lead) return;
@@ -473,7 +477,7 @@ export default function LeadDetail() {
   return (
     <div className="max-w-5xl space-y-6">
       <PageHeader title={lead.businessName} description={`Ref ${lead.refNumber}`}>
-        <Button variant="outline" onClick={() => navigate('/leads')}><ArrowLeft className="h-4 w-4" /> Back</Button>
+        <Button variant="outline" onClick={goBack}><ArrowLeft className="h-4 w-4" /> Back</Button>
         <Button variant="outline" className="text-destructive" onClick={() => setConfirmDelete(true)}>
           <Trash2 className="h-4 w-4" /> Delete
         </Button>

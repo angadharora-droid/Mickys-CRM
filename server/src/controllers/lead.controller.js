@@ -578,6 +578,16 @@ const listFollowUps = asyncHandler(async (req, res) => {
   res.json({ success: true, data: leads });
 });
 
+// GET /api/action-points  (leads with an open action point, most recently set first)
+const listActionPoints = asyncHandler(async (req, res) => {
+  const filter = { ...scopeFilter(req.user), actionPoint: { $in: Lead.ACTION_POINTS } };
+  const leads = await Lead.find(filter)
+    .populate({ path: 'assignedExecId', select: 'name email employeeCode' })
+    .sort({ updatedAt: -1 })
+    .limit(500);
+  res.json({ success: true, data: leads });
+});
+
 // PUT /api/leads/:id/action-point  (set / clear the lead's next action)
 const setActionPoint = asyncHandler(async (req, res) => {
   const lead = await Lead.findById(req.params.id);
@@ -931,6 +941,7 @@ module.exports = {
   updateNote,
   deleteNote,
   listFollowUps,
+  listActionPoints,
   setActionPoint,
   updateFollowUp,
   closeFollowUp,
