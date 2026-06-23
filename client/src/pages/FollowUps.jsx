@@ -15,7 +15,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { CalendarClock, CalendarCheck, Loader2, Target, CheckCircle2 } from 'lucide-react';
+import { CalendarClock, CalendarCheck, Loader2, Target, CheckCircle2, ClipboardList } from 'lucide-react';
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
@@ -44,7 +44,12 @@ export default function FollowUps() {
   const [apTarget, setApTarget] = useState(null); // lead whose action point is being closed
   const [apClosing, setApClosing] = useState(false);
 
-  const [view, setView] = useState('actions'); // 'actions' | 'followups'
+  const [instrLeads, setInstrLeads] = useState([]);
+  const [instrLoading, setInstrLoading] = useState(true);
+  const [instrTarget, setInstrTarget] = useState(null); // { leadId, instrId, text, businessName }
+  const [instrClosing, setInstrClosing] = useState(false);
+
+  const [view, setView] = useState('instructions'); // 'instructions' | 'actions' | 'followups'
 
   const fetchItems = useCallback(async () => {
     setLoading(true);
@@ -70,7 +75,23 @@ export default function FollowUps() {
     }
   }, []);
 
-  useEffect(() => { fetchItems(); fetchActionPoints(); }, [fetchItems, fetchActionPoints]);
+  const fetchInstructions = useCallback(async () => {
+    setInstrLoading(true);
+    try {
+      const { data } = await api.get('/instructions');
+      setInstrLeads(data.data);
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setInstrLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchItems();
+    fetchActionPoints();
+    fetchInstructions();
+  }, [fetchItems, fetchActionPoints, fetchInstructions]);
 
   const submitClose = async () => {
     if (!closeTarget || !closeNote.trim()) return;
@@ -104,13 +125,37 @@ export default function FollowUps() {
     }
   };
 
+  // Mark an admin instruction done (the exec is finished with it).
+  const closeInstruction = async () => {
+    if (!instrTarget) return;
+    setInstrClosing(true);
+    try {
+      await api.post(`/leads/${instrTarget.leadId}/instructions/${instrTarget.instrId}/done`);
+      toast.success('Instruction marked done');
+      setInstrTarget(null);
+      fetchInstructions();
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setInstrClosing(false);
+    }
+  };
+
+  // Flatten to one row per open instruction (a lead may carry several).
+  const openInstructions = instrLeads.flatMap((lead) =>
+    (lead.instructions || [])
+      .filter((i) => i.status === 'open')
+      .map((instr) => ({ lead, instr }))
+  );
+
   return (
     <div>
-      <PageHeader title="Follow-ups" description="Open action points and scheduled follow-ups that need attention" />
+      <PageHeader title="Follow-ups" description="Instructions, action points and scheduled follow-ups that need attention" />
 
       {/* Pill switcher between the two worklists */}
       <div className="mb-4 flex flex-wrap gap-2">
         {[
+          { key: 'instructions', label: 'Instructions', icon: ClipboardList, count: openInstructions.length, isLoading: instrLoading },
           { key: 'actions', label: 'Action points', icon: Target, count: actionItems.length, isLoading: apLoading },
           { key: 'followups', label: 'Follow-ups', icon: CalendarClock, count: items.length, isLoading: loading },
         ].map(({ key, label, icon: Icon, count, isLoading }) => {
@@ -140,6 +185,74 @@ export default function FollowUps() {
           );
         })}
       </div>
+
+      {/* Instructions — admin directives, one row per open instruction */}
+      {view === 'instructions' && (
+      <Card>
+        <CardContent className="p-0">
+          {instrLoading ? (
+            <TableSkeleton />
+          ) : openInstructions.length === 0 ? (
+            <EmptyState
+              icon={ClipboardList}
+              title="No open instructions"
+              description="Instructions from your admin appear here until you mark them done."
+            />
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Client</TableHead>
+                  <TableHead>Instruction</TableHead>
+                  <TableHead className="hidden sm:table-cell">From</TableHead>
+                  {isAdmin && <TableHead className="hidden lg:table-cell">Assigned to</TableHead>}
+                  <TableHead className="text-right">Action</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {openInstructions.map(({ lead, instr }) => (
+                  <TableRow
+                    key={instr._id}
+                    className="cursor-pointer"
+                    onClick={() => navigate(`/leads/${lead._id}`)}
+                  >
+                    <TableCell>
+                      <p className="font-medium leading-tight">{lead.businessName}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        <span className="font-mono font-semibold text-primary">{lead.refNumber}</span> · {lead.contactPerson}
+                      </p>
+                    </TableCell>
+                    <TableCell>
+                      <p className="max-w-md whitespace-pre-wrap break-words text-sm">{instr.text}</p>
+                    </TableCell>
+                    <TableCell className="hidden sm:table-cell whitespace-nowrap text-muted-foreground">
+                      {instr.createdBy?.name || 'Admin'}
+                    </TableCell>
+                    {isAdmin && (
+                      <TableCell className="hidden lg:table-cell text-muted-foreground">
+                        {lead.assignedExecId?.name || '—'}
+                      </TableCell>
+                    )}
+                    <TableCell className="text-right">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setInstrTarget({ leadId: lead._id, instrId: instr._id, text: instr.text, businessName: lead.businessName });
+                        }}
+                      >
+                        <CheckCircle2 className="h-4 w-4" /> Mark done
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+      )}
 
       {/* Action points — leads with a pending next-action, close when handled */}
       {view === 'actions' && (
@@ -291,6 +404,19 @@ export default function FollowUps() {
         variant="default"
         loading={apClosing}
         onConfirm={closeActionPoint}
+      />
+
+      <ConfirmDialog
+        open={Boolean(instrTarget)}
+        onOpenChange={(o) => { if (!o) setInstrTarget(null); }}
+        title="Mark this instruction as done?"
+        description={instrTarget
+          ? `“${instrTarget.text}” on ${instrTarget.businessName} will be marked done and removed from this list.`
+          : ''}
+        confirmLabel="Mark done"
+        variant="default"
+        loading={instrClosing}
+        onConfirm={closeInstruction}
       />
 
       <Dialog open={Boolean(closeTarget)} onOpenChange={(o) => { if (!o) setCloseTarget(null); }}>

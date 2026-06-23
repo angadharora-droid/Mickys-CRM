@@ -19,6 +19,8 @@ const POPULATE = [
   { path: 'createdBy', select: 'name role' },
   { path: 'statusHistory.changedBy', select: 'name role' },
   { path: 'notes.createdBy', select: 'name role' },
+  { path: 'instructions.createdBy', select: 'name role' },
+  { path: 'instructions.doneBy', select: 'name role' },
   { path: 'followUp.closedBy', select: 'name role' },
   { path: 'attachments.uploadedBy', select: 'name role' },
 ];
@@ -614,6 +616,87 @@ const deleteNote = asyncHandler(async (req, res) => {
   res.json({ success: true, data: populated });
 });
 
+// POST /api/leads/:id/instructions  (admin adds a directive for the assigned exec)
+const addInstruction = asyncHandler(async (req, res) => {
+  const lead = await Lead.findById(req.params.id);
+  if (!lead) throw ApiError.notFound('Lead not found');
+  // Instructions flow admin -> exec, so only admins author them (also gated on
+  // the route). Anyone who can view the lead may later mark them done.
+  if (req.user.role !== 'admin') throw ApiError.forbidden('Only admins can add instructions');
+
+  const text = String(req.body.text || '').trim();
+  if (!text) throw ApiError.badRequest('Instruction text is required');
+
+  lead.instructions.push({ text, status: 'open', createdBy: req.user._id });
+  lead.modifiedBy = req.user._id;
+  await lead.save();
+
+  await logActivity({
+    userId: req.user._id, action: 'LEAD_INSTRUCTION_ADDED', entity: 'Lead', entityId: lead._id,
+    details: `Added an instruction to ${lead.refNumber}`, ip: req.ip,
+  });
+
+  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  res.status(201).json({ success: true, data: populated });
+});
+
+// POST /api/leads/:id/instructions/:instrId/done  (assigned exec or admin closes it)
+const closeInstruction = asyncHandler(async (req, res) => {
+  const lead = await Lead.findById(req.params.id);
+  if (!lead) throw ApiError.notFound('Lead not found');
+  assertCanView(lead, req.user); // the lead's owner exec, or an admin
+
+  const instr = lead.instructions.id(req.params.instrId);
+  if (!instr) throw ApiError.notFound('Instruction not found');
+  if (instr.status !== 'open') throw ApiError.badRequest('This instruction is already done');
+
+  instr.status = 'done';
+  instr.doneBy = req.user._id;
+  instr.doneAt = new Date();
+  lead.modifiedBy = req.user._id;
+  await lead.save();
+
+  await logActivity({
+    userId: req.user._id, action: 'LEAD_INSTRUCTION_DONE', entity: 'Lead', entityId: lead._id,
+    details: `Marked an instruction done on ${lead.refNumber}`, ip: req.ip,
+  });
+
+  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  res.json({ success: true, data: populated });
+});
+
+// DELETE /api/leads/:id/instructions/:instrId  (admin removes an instruction)
+const deleteInstruction = asyncHandler(async (req, res) => {
+  const lead = await Lead.findById(req.params.id);
+  if (!lead) throw ApiError.notFound('Lead not found');
+  if (req.user.role !== 'admin') throw ApiError.forbidden('Only admins can delete instructions');
+
+  const instr = lead.instructions.id(req.params.instrId);
+  if (!instr) throw ApiError.notFound('Instruction not found');
+  lead.instructions.pull(instr._id);
+  lead.modifiedBy = req.user._id;
+  await lead.save();
+
+  await logActivity({
+    userId: req.user._id, action: 'LEAD_INSTRUCTION_DELETED', entity: 'Lead', entityId: lead._id,
+    details: `Deleted an instruction from ${lead.refNumber}`, ip: req.ip,
+  });
+
+  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  res.json({ success: true, data: populated });
+});
+
+// GET /api/instructions  (leads with an open instruction, scoped to the user)
+const listInstructions = asyncHandler(async (req, res) => {
+  const filter = { ...scopeFilter(req.user), 'instructions.status': 'open' };
+  const leads = await Lead.find(filter)
+    .populate({ path: 'assignedExecId', select: 'name email employeeCode' })
+    .populate({ path: 'instructions.createdBy', select: 'name role' })
+    .sort({ updatedAt: -1 })
+    .limit(500);
+  res.json({ success: true, data: leads });
+});
+
 // GET /api/follow-ups  (leads with an open follow-up, soonest due first)
 const listFollowUps = asyncHandler(async (req, res) => {
   const filter = { ...scopeFilter(req.user), 'followUp.status': 'open' };
@@ -987,6 +1070,10 @@ module.exports = {
   addNote,
   updateNote,
   deleteNote,
+  addInstruction,
+  closeInstruction,
+  deleteInstruction,
+  listInstructions,
   listFollowUps,
   listActionPoints,
   setActionPoint,
