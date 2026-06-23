@@ -559,7 +559,7 @@ export default function LeadDetail() {
   };
 
   return (
-    <div className="max-w-5xl space-y-6">
+    <div className="space-y-6">
       <PageHeader title={lead.businessName} description={`Ref ${lead.refNumber}`}>
         <Button variant="outline" onClick={goBack}><ArrowLeft className="h-4 w-4" /> Back</Button>
         <Button variant="outline" className="text-destructive" onClick={() => setConfirmDelete(true)}>
