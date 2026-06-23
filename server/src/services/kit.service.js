@@ -234,24 +234,40 @@ function agreementTermsFor(ctx) {
 }
 
 // ---------------- Price Card ----------------
-function priceTable(doc, y, ctx, priceLabel) {
+// Distributor price card. The DLP (Delivered Landed Price) is the editable
+// price; DSP (Distributor Selling Price) is the product's institutional rate.
+// Margins are derived: DLP->DSP = (DSP-DLP)/DSP, DLP->MRP = (MRP-DSP)/MRP.
+function priceTable(doc, y, ctx) {
   const W = contentWidth(doc);
   const right = M + W;
-  // columns laid out from the left margin
-  const cols = [
-    { key: 'sr', label: '#', x: M, w: 24, align: 'left' },
-    { key: 'name', label: 'Product Name', x: M + 24, w: 146, align: 'left' },
-    { key: 'wt', label: 'Weight', x: M + 170, w: 64, align: 'left' },
-    { key: 'mrp', label: 'MRP', x: M + 234, w: 58, align: 'right' },
-    { key: 'basic', label: 'Basic', x: M + 292, w: 58, align: 'right' },
-    { key: 'gst', label: 'GST 5%', x: M + 350, w: 58, align: 'right' },
-    { key: 'price', label: priceLabel, x: M + 408, w: W - 408, align: 'right' },
+  const footerLabel = 'Price Card  ·  Trade Confidential';
+  const pct = (n) => `${n.toFixed(1)}%`;
+
+  // Column widths sum to the content width (last column takes the remainder).
+  const defs = [
+    ['sr', 'Sr', 20, 'left'],
+    ['name', 'Product Name', 134, 'left'],
+    ['wt', 'Wt', 38, 'left'],
+    ['mrp', 'MRP', 40, 'right'],
+    ['basic', 'Basic', 40, 'right'],
+    ['gst', 'GST 5%', 42, 'right'],
+    ['dlp', 'DLP', 42, 'right'],
+    ['mDsp', 'DLP-DSP', 50, 'right'],
+    ['dsp', 'DSP', 42, 'right'],
+    ['mMrp', 'DLP-MRP', W - 448, 'right'],
   ];
+  let cx = M;
+  const cols = defs.map(([key, label, w, align]) => {
+    const c = { key, label, x: cx, w, align };
+    cx += w;
+    return c;
+  });
+
   const drawHead = (yy) => {
-    doc.rect(M, yy, W, 20).fill(MAROON);
-    doc.font('Helvetica-Bold').fontSize(8).fill('#ffffff');
-    cols.forEach((c) => doc.text(c.label, c.x + 4, yy + 6, { width: c.w - 8, align: c.align }));
-    return yy + 20;
+    doc.rect(M, yy, W, 22).fill(MAROON);
+    doc.font('Helvetica-Bold').fontSize(7).fill('#ffffff');
+    cols.forEach((c) => doc.text(c.label, c.x + 3, yy + 7, { width: c.w - 6, align: c.align }));
+    return yy + 22;
   };
   y = drawHead(y);
 
@@ -268,28 +284,35 @@ function priceTable(doc, y, ctx, priceLabel) {
   categoryOrder.forEach((cat) => {
     const rows = groups[cat];
     if (!rows || !rows.length) return;
-    if (y > bottomLimit(doc) - 28) { y = newPage(doc, 'Price Card  ·  Trade Confidential'); y = drawHead(y); }
+    if (y > bottomLimit(doc) - 28) { y = newPage(doc, footerLabel); y = drawHead(y); }
     // category band
     doc.rect(M, y, W, 16).fill(BAND);
     doc.font('Helvetica-Bold').fontSize(8).fill(MAROON).text(cat, M + 6, y + 4);
     y += 16;
     rows.forEach((it, i) => {
-      if (y > bottomLimit(doc)) { y = newPage(doc, 'Price Card  ·  Trade Confidential'); y = drawHead(y); }
+      if (y > bottomLimit(doc)) { y = newPage(doc, footerLabel); y = drawHead(y); }
       if (i % 2 === 1) doc.rect(M, y, W, 16).fill('#faf7f2');
-      const tbd = !it.netRate;
-      const gstAmt = it.netRate * (it.gst / 100);
-      const landed = Math.round(it.netRate * (1 + it.gst / 100));
+      const basic = Number(it.basic) || 0;
+      const dlp = Number(it.netRate) || 0; // editable DLP
+      const dsp = Number(it.dsp) || 0;
+      const tbd = !basic;
+      const gstAmt = basic * (it.gst / 100);
+      const mDsp = dsp > 0 && dlp > 0 ? ((dsp - dlp) / dsp) * 100 : null;
+      const mMrp = it.mrp > 0 && dsp > 0 ? ((it.mrp - dsp) / it.mrp) * 100 : null;
       const vals = {
         sr: String(i + 1),
         name: it.productName,
         wt: it.packSize || '',
         mrp: inr(it.mrp),
-        basic: tbd ? 'TBD' : inr(it.netRate),
-        gst: tbd ? 'TBD' : inr2(gstAmt),
-        price: tbd ? 'TBD' : inr(landed),
+        basic: tbd ? 'TBD' : inr(basic),
+        gst: tbd ? '-' : inr2(gstAmt),
+        dlp: tbd ? '-' : inr(dlp),
+        mDsp: mDsp == null ? '-' : pct(mDsp),
+        dsp: dsp > 0 ? inr(dsp) : '-',
+        mMrp: mMrp == null ? '-' : pct(mMrp),
       };
-      doc.font('Helvetica').fontSize(8).fill(INK);
-      cols.forEach((c) => doc.fill(c.key === 'price' ? MAROON : INK).text(vals[c.key], c.x + 4, y + 4, { width: c.w - 8, align: c.align }));
+      doc.font('Helvetica').fontSize(7.5).fill(INK);
+      cols.forEach((c) => doc.fill(c.key === 'dlp' ? MAROON : INK).text(vals[c.key], c.x + 3, y + 4, { width: c.w - 6, align: c.align }));
       y += 16;
       doc.moveTo(M, y).lineTo(right, y).stroke(BORDER);
     });
@@ -325,23 +348,27 @@ function incentiveBlock(doc, y, label) {
 }
 
 function drawPriceCard(doc, ctx) {
-  const isDist = ctx.lead.kitType === 'distributor';
-  const priceLabel = isDist ? 'DLP' : 'Inst. Price';
-  const termPriceLabel = isDist ? 'DLP' : 'Inst.';
   const footerLabel = 'Price Card  ·  Trade Confidential';
-  let y = brandHeader(doc, isDist ? 'Distributor Price Card' : 'Institutional Price Card', ctx, {
+  const W = contentWidth(doc);
+  let y = brandHeader(doc, 'Distributor Price Card', ctx, {
     subtitle: 'W.E.F. 01/06/2026',
     showRef: false,
   });
   pageFooter(doc, footerLabel);
-  doc.font('Helvetica').fontSize(8).fill(SLATE)
-    .text(`All prices in Rs.  ·  GST @ 5% shown separately  ·  ${priceLabel} = Basic + GST`, M, y, { width: contentWidth(doc) });
-  y += 16;
-  y = priceTable(doc, y, ctx, priceLabel);
-  const priceTerms = content.PRICE_CARD_TERMS.map((t) => t.replace('{priceLabel}', termPriceLabel));
-  // The editable per-lead T&C drives the distributor price card (its main doc);
-  // institutional terms are reviewed on the quotation instead.
-  y = termsBlock(doc, y + 6, 'TERMS & CONDITIONS', isDist ? termsFor(ctx, priceTerms) : priceTerms, footerLabel);
+
+  // "PRODUCT PRICE LIST" band
+  doc.rect(M, y, W, 18).fill(MAROON);
+  doc.font('Helvetica-Bold').fontSize(9).fill('#ffffff')
+    .text('PRODUCT PRICE LIST', M, y + 5, { width: W, align: 'center' });
+  y += 24;
+
+  doc.font('Helvetica').fontSize(7.5).fill(SLATE)
+    .text('All prices in Rs.  ·  DLP = Delivered Landed Price  ·  DSP = Distributor Selling Price  ·  Margins shown as %', M, y, { width: W });
+  y += 14;
+  y = priceTable(doc, y, ctx);
+  const priceTerms = content.PRICE_CARD_TERMS.map((t) => t.replace('{priceLabel}', 'DLP'));
+  // The editable per-lead T&C drives the distributor price card (its main doc).
+  y = termsBlock(doc, y + 6, 'TERMS & CONDITIONS', termsFor(ctx, priceTerms), footerLabel);
   incentiveBlock(doc, y + 4, footerLabel);
 }
 

@@ -88,7 +88,15 @@ function deriveLine(r) {
     ? ((r.standardNetRate - net) / r.standardNetRate) * 100
     : 0;
   const netInclGst = valid ? net * (1 + r.gst / 100) : 0;
-  return { net, valid, aboveMrp, deviation, netInclGst, error: !valid || aboveMrp };
+  // Distributor card: `net` is the editable DLP. Basic & GST are fixed; the DSP
+  // (suggested selling price) drives both margins.
+  const basic = Number(r.basic) || 0;
+  const gstAmt = basic * (r.gst / 100);
+  const dsp = Number(r.dsp) || 0;
+  const dlp = net;
+  const marginDsp = valid && dsp > 0 && dlp > 0 ? ((dsp - dlp) / dsp) * 100 : null;
+  const marginMrp = r.mrp > 0 && dsp > 0 ? ((r.mrp - dsp) / r.mrp) * 100 : null;
+  return { net, valid, aboveMrp, deviation, netInclGst, error: !valid || aboveMrp, basic, gstAmt, dsp, dlp, marginDsp, marginMrp };
 }
 
 function Stepper({ status }) {
@@ -1025,17 +1033,35 @@ export default function LeadDetail() {
 
             <TabsContent value="rates" className="mt-0">
               <CardContent className="space-y-4">
+                {isDistributor && (
+                  <p className="text-xs text-muted-foreground">
+                    Only <span className="font-medium text-foreground">DLP</span> is editable — DSP and both margins are
+                    calculated from it. DLP = Delivered Landed Price · DSP = Distributor Selling Price (the product&rsquo;s institutional rate).
+                  </p>
+                )}
                 <div className="overflow-x-auto">
                   <Table>
                     <TableHeader>
                       <TableRow>
                         <TableHead>Product</TableHead>
                         <TableHead className="text-right">MRP</TableHead>
-                        <TableHead className="text-right hidden sm:table-cell">Std net</TableHead>
-                        <TableHead className="text-right">Net rate</TableHead>
-                        {isDistributor && <TableHead className="text-right hidden md:table-cell">Margin</TableHead>}
-                        <TableHead className="text-right hidden md:table-cell">GST</TableHead>
-                        <TableHead className="text-right">Net+GST</TableHead>
+                        {isDistributor ? (
+                          <>
+                            <TableHead className="text-right hidden sm:table-cell">Basic</TableHead>
+                            <TableHead className="text-right hidden md:table-cell">GST 5%</TableHead>
+                            <TableHead className="text-right">DLP</TableHead>
+                            <TableHead className="text-right hidden lg:table-cell">DLP&rarr;DSP</TableHead>
+                            <TableHead className="text-right hidden sm:table-cell">DSP</TableHead>
+                            <TableHead className="text-right hidden lg:table-cell">DLP&rarr;MRP</TableHead>
+                          </>
+                        ) : (
+                          <>
+                            <TableHead className="text-right hidden sm:table-cell">Std net</TableHead>
+                            <TableHead className="text-right">Net rate</TableHead>
+                            <TableHead className="text-right hidden md:table-cell">GST</TableHead>
+                            <TableHead className="text-right">Net+GST</TableHead>
+                          </>
+                        )}
                         <TableHead className="text-center">Include</TableHead>
                         <TableHead className="w-10" />
                       </TableRow>
@@ -1043,6 +1069,30 @@ export default function LeadDetail() {
                     <TableBody>
                       {rates.map((r, idx) => {
                         const d = deriveLine(r);
+                        // The editable price cell: DLP (distributor) or net rate (institutional).
+                        const priceCell = (
+                          <TableCell className="text-right">
+                            <Input
+                              type="number" step="any" min="0"
+                              value={r.netRate}
+                              readOnly={locked || r.included === false}
+                              onChange={(e) => setRate(idx, e.target.value)}
+                              className={cn(
+                                'h-9 w-24 ml-auto text-right tabular-nums',
+                                (locked || r.included === false) && 'cursor-not-allowed bg-muted/50',
+                                r.included !== false && d.error && 'border-destructive focus-visible:ring-destructive',
+                                r.included !== false && !d.error && d.deviation > 0 && 'border-orange-400 text-orange-600'
+                              )}
+                            />
+                            {r.included !== false && d.aboveMrp && <p className="text-[11px] text-destructive mt-1">Above MRP</p>}
+                            {r.included !== false && !d.error && d.deviation > 10 && (
+                              <p className="text-[11px] text-orange-600 mt-1 flex items-center justify-end gap-1">
+                                <AlertTriangle className="h-3 w-3" /> {d.deviation.toFixed(1)}% off
+                              </p>
+                            )}
+                          </TableCell>
+                        );
+                        const fmtPct = (n) => (n == null ? '—' : `${n.toFixed(1)}%`);
                         return (
                           <TableRow key={r.rateItemId || idx}>
                             <TableCell className={cn(r.included === false && 'opacity-50')}>
@@ -1050,30 +1100,23 @@ export default function LeadDetail() {
                               <p className="text-xs text-muted-foreground">{r.packSize} {r.sku ? `· ${r.sku}` : ''}</p>
                             </TableCell>
                             <TableCell className="text-right tabular-nums">{formatCurrency(r.mrp)}</TableCell>
-                            <TableCell className="text-right tabular-nums hidden sm:table-cell text-muted-foreground">{formatCurrency(r.standardNetRate)}</TableCell>
-                            <TableCell className="text-right">
-                              <Input
-                                type="number" step="any" min="0"
-                                value={r.netRate}
-                                readOnly={locked || r.included === false}
-                                onChange={(e) => setRate(idx, e.target.value)}
-                                className={cn(
-                                  'h-9 w-24 ml-auto text-right tabular-nums',
-                                  (locked || r.included === false) && 'cursor-not-allowed bg-muted/50',
-                                  r.included !== false && d.error && 'border-destructive focus-visible:ring-destructive',
-                                  r.included !== false && !d.error && d.deviation > 0 && 'border-orange-400 text-orange-600'
-                                )}
-                              />
-                              {r.included !== false && d.aboveMrp && <p className="text-[11px] text-destructive mt-1">Above MRP</p>}
-                              {r.included !== false && !d.error && d.deviation > 10 && (
-                                <p className="text-[11px] text-orange-600 mt-1 flex items-center justify-end gap-1">
-                                  <AlertTriangle className="h-3 w-3" /> {d.deviation.toFixed(1)}% off
-                                </p>
-                              )}
-                            </TableCell>
-                            {isDistributor && <TableCell className="text-right tabular-nums hidden md:table-cell">{r.suggestiveMargin || 0}%</TableCell>}
-                            <TableCell className="text-right tabular-nums hidden md:table-cell text-muted-foreground">{r.gst}%</TableCell>
-                            <TableCell className="text-right tabular-nums font-medium">{formatCurrency(d.netInclGst)}</TableCell>
+                            {isDistributor ? (
+                              <>
+                                <TableCell className="text-right tabular-nums hidden sm:table-cell text-muted-foreground">{formatCurrency(d.basic)}</TableCell>
+                                <TableCell className="text-right tabular-nums hidden md:table-cell text-muted-foreground">{formatCurrency(d.gstAmt)}</TableCell>
+                                {priceCell}
+                                <TableCell className="text-right tabular-nums hidden lg:table-cell text-muted-foreground">{fmtPct(d.marginDsp)}</TableCell>
+                                <TableCell className="text-right tabular-nums hidden sm:table-cell">{d.dsp > 0 ? formatCurrency(d.dsp) : '—'}</TableCell>
+                                <TableCell className="text-right tabular-nums hidden lg:table-cell text-muted-foreground">{fmtPct(d.marginMrp)}</TableCell>
+                              </>
+                            ) : (
+                              <>
+                                <TableCell className="text-right tabular-nums hidden sm:table-cell text-muted-foreground">{formatCurrency(r.standardNetRate)}</TableCell>
+                                {priceCell}
+                                <TableCell className="text-right tabular-nums hidden md:table-cell text-muted-foreground">{r.gst}%</TableCell>
+                                <TableCell className="text-right tabular-nums font-medium">{formatCurrency(d.netInclGst)}</TableCell>
+                              </>
+                            )}
                             <TableCell className="text-center">
                               <Button
                                 type="button"

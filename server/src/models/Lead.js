@@ -42,6 +42,12 @@ const rateLineSchema = new mongoose.Schema(
     category: { type: String, default: '' },
     included: { type: Boolean, default: true },
     mrp: { type: Number, required: true },
+    // Distributor card: `basic` = pre-GST base price; `dsp` = the suggested
+    // distributor selling price (the product's institutional rate). For the
+    // distributor card `netRate` holds the editable DLP (Basic + GST, rounded).
+    // Both stay 0 for institutional lines.
+    basic: { type: Number, default: 0 },
+    dsp: { type: Number, default: 0 },
     standardNetRate: { type: Number, required: true }, // master rate at snapshot time
     netRate: { type: Number, required: true }, // exec-confirmed (may be overridden)
     suggestiveMargin: { type: Number, default: 0 },
