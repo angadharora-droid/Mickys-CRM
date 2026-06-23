@@ -10,7 +10,7 @@ import EmptyState from '@/components/shared/EmptyState';
 import TableSkeleton from '@/components/shared/TableSkeleton';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -43,6 +43,8 @@ export default function FollowUps() {
   const [apLoading, setApLoading] = useState(true);
   const [apTarget, setApTarget] = useState(null); // lead whose action point is being closed
   const [apClosing, setApClosing] = useState(false);
+
+  const [view, setView] = useState('actions'); // 'actions' | 'followups'
 
   const fetchItems = useCallback(async () => {
     setLoading(true);
@@ -106,16 +108,42 @@ export default function FollowUps() {
     <div>
       <PageHeader title="Follow-ups" description="Open action points and scheduled follow-ups that need attention" />
 
+      {/* Pill switcher between the two worklists */}
+      <div className="mb-4 flex flex-wrap gap-2">
+        {[
+          { key: 'actions', label: 'Action points', icon: Target, count: actionItems.length, isLoading: apLoading },
+          { key: 'followups', label: 'Follow-ups', icon: CalendarClock, count: items.length, isLoading: loading },
+        ].map(({ key, label, icon: Icon, count, isLoading }) => {
+          const active = view === key;
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setView(key)}
+              aria-pressed={active}
+              className={cn(
+                'inline-flex items-center gap-2 rounded-full px-4 py-1.5 text-sm font-medium transition-colors',
+                active ? 'bg-primary text-primary-foreground shadow-sm' : 'bg-muted text-muted-foreground hover:bg-muted/70'
+              )}
+            >
+              <Icon className="h-4 w-4" />
+              {label}
+              {!isLoading && (
+                <span className={cn(
+                  'rounded-full px-1.5 py-0.5 text-xs font-semibold',
+                  active ? 'bg-primary-foreground/20' : 'bg-foreground/10 text-foreground'
+                )}>
+                  {count}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
       {/* Action points — leads with a pending next-action, close when handled */}
-      <Card className="mb-6">
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base flex items-center gap-2">
-            <Target className="h-4 w-4 text-muted-foreground" /> Action points
-            {!apLoading && actionItems.length > 0 && (
-              <span className="text-sm font-normal text-muted-foreground">· {actionItems.length} open</span>
-            )}
-          </CardTitle>
-        </CardHeader>
+      {view === 'actions' && (
+      <Card>
         <CardContent className="p-0">
           {apLoading ? (
             <TableSkeleton />
@@ -178,17 +206,11 @@ export default function FollowUps() {
           )}
         </CardContent>
       </Card>
+      )}
 
       {/* Follow-ups — scheduled reminders, soonest due first */}
+      {view === 'followups' && (
       <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base flex items-center gap-2">
-            <CalendarClock className="h-4 w-4 text-muted-foreground" /> Follow-ups
-            {!loading && items.length > 0 && (
-              <span className="text-sm font-normal text-muted-foreground">· {items.length} open</span>
-            )}
-          </CardTitle>
-        </CardHeader>
         <CardContent className="p-0">
           {loading ? (
             <TableSkeleton />
@@ -256,6 +278,7 @@ export default function FollowUps() {
           )}
         </CardContent>
       </Card>
+      )}
 
       <ConfirmDialog
         open={Boolean(apTarget)}

@@ -115,6 +115,11 @@ const generateKitSchema = z.object({
   customTerms: customTermsSchema.optional(),
 });
 
+// Standalone save of the editable price-card / agreement terms.
+const saveTermsSchema = z.object({
+  customTerms: customTermsSchema,
+});
+
 const noteSchema = z.object({
   text: z.string().trim().min(1, 'Note text is required').max(4000),
 });
@@ -201,6 +206,7 @@ module.exports = {
   kitTypeSchema,
   ratesConfirmSchema,
   generateKitSchema,
+  saveTermsSchema,
   noteSchema,
   actionPointSchema,
   followUpSchema,

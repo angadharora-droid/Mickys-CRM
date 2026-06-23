@@ -475,6 +475,40 @@ const generateLeadKit = asyncHandler(async (req, res) => {
   res.json({ success: true, data: populated });
 });
 
+// PUT /api/leads/:id/terms  (save edited price-card / agreement terms on their
+// own; rebuild the kit in place when one already exists so the documents reflect
+// the saved terms straight away)
+const saveTerms = asyncHandler(async (req, res) => {
+  const lead = await Lead.findById(req.params.id);
+  if (!lead) throw ApiError.notFound('Lead not found');
+  assertCanView(lead, req.user);
+  assertNotLocked(lead);
+  if (!lead.kitType) throw ApiError.badRequest('Select a kit type before editing its terms');
+
+  applyCustomTerms(lead, req.body.customTerms);
+  lead.modifiedBy = req.user._id;
+
+  // If a kit was already generated, regenerate so the saved terms appear in the
+  // PDFs immediately; otherwise just persist them for the next generation.
+  const hadKit = (lead.generatedFiles || []).length > 0;
+  if (hadKit) {
+    await buildKitFiles(lead);
+    lead.editedAfterGeneration = false;
+  }
+  await lead.save();
+
+  await logActivity({
+    userId: req.user._id, action: 'LEAD_TERMS_SAVED', entity: 'Lead', entityId: lead._id,
+    details: hadKit
+      ? `${lead.refNumber}: saved terms and rebuilt the kit`
+      : `${lead.refNumber}: saved terms`,
+    ip: req.ip,
+  });
+
+  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  res.json({ success: true, data: populated });
+});
+
 // POST /api/leads/:id/unlock  (re-open a generated/locked lead for editing)
 const unlockLead = asyncHandler(async (req, res) => {
   const lead = await Lead.findById(req.params.id);
@@ -948,6 +982,7 @@ module.exports = {
   selectKitType,
   confirmRates,
   generateLeadKit,
+  saveTerms,
   unlockLead,
   addNote,
   updateNote,
