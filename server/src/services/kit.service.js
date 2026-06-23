@@ -301,7 +301,7 @@ function priceTable(doc, y, ctx) {
       const tbd = !basic;
       const gstAmt = basic * (it.gst / 100);
       const mDsp = dsp > 0 && dlp > 0 ? ((dsp - dlp) / dsp) * 100 : null;
-      const mMrp = it.mrp > 0 && dsp > 0 ? ((it.mrp - dsp) / it.mrp) * 100 : null;
+      const mMrp = it.mrp > 0 && dlp > 0 ? ((it.mrp - dlp) / it.mrp) * 100 : null;
       const vals = {
         sr: String(i + 1),
         name: it.productName,
