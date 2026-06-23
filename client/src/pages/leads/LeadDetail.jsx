@@ -1050,9 +1050,9 @@ export default function LeadDetail() {
                             <TableHead className="text-right hidden sm:table-cell">Basic</TableHead>
                             <TableHead className="text-right hidden md:table-cell">GST 5%</TableHead>
                             <TableHead className="text-right">DLP</TableHead>
-                            <TableHead className="text-right hidden lg:table-cell">DLP&rarr;DSP</TableHead>
+                            <TableHead className="text-right hidden lg:table-cell">Margin DLP&rarr;DSP</TableHead>
                             <TableHead className="text-right hidden sm:table-cell">DSP</TableHead>
-                            <TableHead className="text-right hidden lg:table-cell">DLP&rarr;MRP</TableHead>
+                            <TableHead className="text-right hidden lg:table-cell">Margin DLP&rarr;MRP</TableHead>
                           </>
                         ) : (
                           <>

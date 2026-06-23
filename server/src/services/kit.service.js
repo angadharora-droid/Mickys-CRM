@@ -244,17 +244,19 @@ function priceTable(doc, y, ctx) {
   const pct = (n) => `${n.toFixed(1)}%`;
 
   // Column widths sum to the content width (last column takes the remainder).
+  // The two margin columns are spelled out as "Margin …" (wrapping to two lines)
+  // so the reader knows the percentages are margins.
   const defs = [
-    ['sr', 'Sr', 20, 'left'],
-    ['name', 'Product Name', 134, 'left'],
-    ['wt', 'Wt', 38, 'left'],
+    ['sr', 'Sr', 18, 'left'],
+    ['name', 'Product Name', 138, 'left'],
+    ['wt', 'Wt', 48, 'left'],
     ['mrp', 'MRP', 40, 'right'],
     ['basic', 'Basic', 40, 'right'],
     ['gst', 'GST 5%', 42, 'right'],
     ['dlp', 'DLP', 42, 'right'],
-    ['mDsp', 'DLP-DSP', 50, 'right'],
-    ['dsp', 'DSP', 42, 'right'],
-    ['mMrp', 'DLP-MRP', W - 448, 'right'],
+    ['mDsp', 'Margin\nDLP-DSP', 50, 'right'],
+    ['dsp', 'DSP', 40, 'right'],
+    ['mMrp', 'Margin\nDLP-MRP', W - 458, 'right'],
   ];
   let cx = M;
   const cols = defs.map(([key, label, w, align]) => {
@@ -263,11 +265,12 @@ function priceTable(doc, y, ctx) {
     return c;
   });
 
+  const HEAD_H = 26; // taller so the two-line margin headers fit
   const drawHead = (yy) => {
-    doc.rect(M, yy, W, 22).fill(MAROON);
+    doc.rect(M, yy, W, HEAD_H).fill(MAROON);
     doc.font('Helvetica-Bold').fontSize(7).fill('#ffffff');
-    cols.forEach((c) => doc.text(c.label, c.x + 3, yy + 7, { width: c.w - 6, align: c.align }));
-    return yy + 22;
+    cols.forEach((c) => doc.text(c.label, c.x + 3, yy + 4, { width: c.w - 6, align: c.align }));
+    return yy + HEAD_H;
   };
   y = drawHead(y);
 
@@ -312,7 +315,7 @@ function priceTable(doc, y, ctx) {
         mMrp: mMrp == null ? '-' : pct(mMrp),
       };
       doc.font('Helvetica').fontSize(7.5).fill(INK);
-      cols.forEach((c) => doc.fill(c.key === 'dlp' ? MAROON : INK).text(vals[c.key], c.x + 3, y + 4, { width: c.w - 6, align: c.align }));
+      cols.forEach((c) => doc.fill(c.key === 'dlp' ? MAROON : INK).text(vals[c.key], c.x + 3, y + 4, { width: c.w - 6, align: c.align, lineBreak: false }));
       y += 16;
       doc.moveTo(M, y).lineTo(right, y).stroke(BORDER);
     });
