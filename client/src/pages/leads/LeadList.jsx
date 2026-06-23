@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import api, { apiError } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
@@ -27,18 +27,40 @@ export default function LeadList() {
   const navigate = useNavigate();
   const canSeeAll = user.role === ROLES.ADMIN;
 
+  // Filters & page live in the URL so they survive opening a lead and coming back.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const search = searchParams.get('q') || '';
+  const status = searchParams.get('status') || ALL;
+  const kitType = searchParams.get('kit') || ALL;
+  const businessType = searchParams.get('biz') || ALL;
+  const execId = searchParams.get('exec') || ALL;
+  const page = Number(searchParams.get('page')) || 1;
+
   const [leads, setLeads] = useState([]);
   const [meta, setMeta] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [page, setPage] = useState(1);
-
-  const [search, setSearch] = useState('');
-  const [status, setStatus] = useState(ALL);
-  const [kitType, setKitType] = useState(ALL);
-  const [businessType, setBusinessType] = useState(ALL);
-  const [execId, setExecId] = useState(ALL);
   const [expandedRows, setExpandedRows] = useState({});
   const [execs, setExecs] = useState([]);
+
+  // Write a single filter to the URL; changing any filter returns to page 1.
+  const setFilter = useCallback((key, value) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (value && value !== ALL) next.set(key, value);
+      else next.delete(key);
+      next.delete('page');
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
+
+  const setPage = useCallback((p) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (p > 1) next.set('page', String(p));
+      else next.delete('page');
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
 
   useEffect(() => {
     if (canSeeAll) {
@@ -73,8 +95,8 @@ export default function LeadList() {
   }, [fetchLeads, search]);
 
   const clearFilters = () => {
-    setSearch(''); setStatus(ALL); setKitType(ALL); setBusinessType(ALL); setExecId(ALL);
-    setPage(1); setExpandedRows({});
+    setSearchParams({}, { replace: true });
+    setExpandedRows({});
   };
 
   const toggleRow = (id) => setExpandedRows((c) => ({ ...c, [id]: !c[id] }));
@@ -98,11 +120,11 @@ export default function LeadList() {
               placeholder="Search ref no, client, email…"
               className="pl-9"
               value={search}
-              onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+              onChange={(e) => setFilter('q', e.target.value)}
             />
           </div>
 
-          <Select value={status} onValueChange={(v) => { setStatus(v); setPage(1); }}>
+          <Select value={status} onValueChange={(v) => setFilter('status', v)}>
             <SelectTrigger><SelectValue placeholder="Status" /></SelectTrigger>
             <SelectContent>
               <SelectItem value={ALL}>All statuses</SelectItem>
@@ -110,7 +132,7 @@ export default function LeadList() {
             </SelectContent>
           </Select>
 
-          <Select value={kitType} onValueChange={(v) => { setKitType(v); setPage(1); }}>
+          <Select value={kitType} onValueChange={(v) => setFilter('kit', v)}>
             <SelectTrigger><SelectValue placeholder="Kit type" /></SelectTrigger>
             <SelectContent>
               <SelectItem value={ALL}>All kits</SelectItem>
@@ -118,7 +140,7 @@ export default function LeadList() {
             </SelectContent>
           </Select>
 
-          <Select value={businessType} onValueChange={(v) => { setBusinessType(v); setPage(1); }}>
+          <Select value={businessType} onValueChange={(v) => setFilter('biz', v)}>
             <SelectTrigger><SelectValue placeholder="Business type" /></SelectTrigger>
             <SelectContent>
               <SelectItem value={ALL}>All types</SelectItem>
@@ -127,7 +149,7 @@ export default function LeadList() {
           </Select>
 
           {canSeeAll && (
-            <Select value={execId} onValueChange={(v) => { setExecId(v); setPage(1); }}>
+            <Select value={execId} onValueChange={(v) => setFilter('exec', v)}>
               <SelectTrigger><SelectValue placeholder="Exec" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value={ALL}>All execs</SelectItem>
