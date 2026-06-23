@@ -95,7 +95,7 @@ function deriveLine(r) {
   const dsp = Number(r.dsp) || 0;
   const dlp = net;
   const marginDsp = valid && dsp > 0 && dlp > 0 ? ((dsp - dlp) / dsp) * 100 : null;
-  const marginMrp = r.mrp > 0 && dsp > 0 ? ((r.mrp - dsp) / r.mrp) * 100 : null;
+  const marginMrp = valid && r.mrp > 0 && dlp > 0 ? ((r.mrp - dlp) / r.mrp) * 100 : null;
   return { net, valid, aboveMrp, deviation, netInclGst, error: !valid || aboveMrp, basic, gstAmt, dsp, dlp, marginDsp, marginMrp };
 }
 
