@@ -233,6 +233,22 @@ export default function LeadDetail() {
   const anyError = includedRates.length === 0 || includedRates.some((r) => deriveLine(r).error);
   const agreementRows = parseAgreementTerms(terms.agreementTermsAndConditions, lead.businessName);
 
+  // The terms as currently persisted (seeded with the same defaults the editor
+  // uses), so we can show a Save button only when there are unsaved term edits.
+  const savedTerms = {
+    paymentTerms: lead.customTerms?.paymentTerms || '',
+    creditPeriod: lead.customTerms?.creditPeriod || '',
+    termsAndConditions:
+      lead.customTerms?.termsAndConditions || (DEFAULT_KIT_TERMS[lead.kitType] || []).join('\n'),
+    agreementTermsAndConditions:
+      lead.customTerms?.agreementTermsAndConditions || agreementTermsText(lead.businessName),
+  };
+  const termsDirty =
+    terms.paymentTerms !== savedTerms.paymentTerms ||
+    terms.creditPeriod !== savedTerms.creditPeriod ||
+    terms.termsAndConditions !== savedTerms.termsAndConditions ||
+    terms.agreementTermsAndConditions !== savedTerms.agreementTermsAndConditions;
+
   // Follow-up display state (date strings compared in YYYY-MM-DD form).
   const followUp = lead.followUp || {};
   const followUpOpen = followUp.status === 'open';
@@ -289,6 +305,11 @@ export default function LeadDetail() {
   const generate = () =>
     run('generate', () => api.post(`/leads/${lead._id}/generate`, { customTerms: terms }))
       .then(() => toast.success('Kit generated')).catch(() => {});
+
+  const saveTerms = () =>
+    run('save-terms', () => api.put(`/leads/${lead._id}/terms`, { customTerms: terms }))
+      .then(() => toast.success(lead.generatedFiles?.length ? 'Terms saved — kit updated' : 'Terms saved'))
+      .catch(() => {});
 
   const unlock = () =>
     run('unlock', () => api.post(`/leads/${lead._id}/unlock`))
@@ -1040,6 +1061,19 @@ export default function LeadDetail() {
               </TabsContent>
             )}
           </Tabs>
+          {!locked && termsDirty && (
+            <CardContent className="border-t pt-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50/60 px-4 py-3">
+                <p className="text-sm font-medium text-amber-800">
+                  You have unsaved changes to the terms &amp; conditions.
+                </p>
+                <Button onClick={saveTerms} disabled={action === 'save-terms'}>
+                  {action === 'save-terms' ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                  Save{lead.generatedFiles?.length ? ' & update kit' : ''}
+                </Button>
+              </div>
+            </CardContent>
+          )}
         </Card>
       )}
       {/* Step 4 — Generate */}

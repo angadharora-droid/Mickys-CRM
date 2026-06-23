@@ -52,6 +52,7 @@ router.delete('/leads/:id', authenticate, leads.deleteLead);
 router.post('/leads/:id/kit-type', authenticate, validate(v.kitTypeSchema), leads.selectKitType);
 router.put('/leads/:id/rates', authenticate, validate(v.ratesConfirmSchema), leads.confirmRates);
 router.post('/leads/:id/generate', authenticate, generateLimiter, validate(v.generateKitSchema), leads.generateLeadKit);
+router.put('/leads/:id/terms', authenticate, validate(v.saveTermsSchema), leads.saveTerms);
 router.post('/leads/:id/unlock', authenticate, leads.unlockLead);
 router.post('/leads/:id/notes', authenticate, validate(v.noteSchema), leads.addNote);
 router.put('/leads/:id/notes/:noteId', authenticate, validate(v.noteSchema), leads.updateNote);
