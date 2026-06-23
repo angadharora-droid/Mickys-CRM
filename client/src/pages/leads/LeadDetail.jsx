@@ -568,15 +568,6 @@ export default function LeadDetail() {
         </Button>
       </PageHeader>
 
-      <div className="-mt-2 flex justify-end">
-        <Button variant="outline" size="sm" onClick={() => setHistoryOpen(true)}>
-          <History className="h-4 w-4" /> History
-          {crmHistory.length > 0 && (
-            <span className="ml-1 rounded-full bg-muted px-1.5 text-xs font-semibold">{crmHistory.length}</span>
-          )}
-        </Button>
-      </div>
-
       <div className="flex flex-wrap items-center gap-3">
         <StatusBadge status={lead.status} />
         {hasKit && <Badge variant="outline">{KIT_TYPE_LABELS[lead.kitType]}</Badge>}
@@ -592,6 +583,12 @@ export default function LeadDetail() {
           </Badge>
         )}
         <span className="text-sm text-muted-foreground">Exec: {lead.assignedExecId?.name || '—'}</span>
+        <Button variant="outline" size="sm" className="ml-auto" onClick={() => setHistoryOpen(true)}>
+          <History className="h-4 w-4" /> History
+          {crmHistory.length > 0 && (
+            <span className="ml-1 rounded-full bg-muted px-1.5 text-xs font-semibold">{crmHistory.length}</span>
+          )}
+        </Button>
       </div>
 
       {/* Lock banner — kit is generated; editing is frozen until unlocked. */}
