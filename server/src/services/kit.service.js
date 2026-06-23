@@ -512,10 +512,9 @@ function drawQuotation(doc, ctx) {
     { key: 'name', label: 'Product / SKU', x: M + 24, w: 150, align: 'left' },
     { key: 'qty', label: 'Qty', x: M + 174, w: 36, align: 'center' },
     { key: 'unit', label: 'Unit', x: M + 210, w: 40, align: 'center' },
-    { key: 'price', label: 'Unit Price', x: M + 250, w: 70, align: 'right' },
-    { key: 'gst', label: 'GST 5%', x: M + 320, w: 58, align: 'right' },
-    { key: 'amt', label: 'Amount', x: M + 378, w: 70, align: 'right' },
-    { key: 'rem', label: 'Remarks', x: M + 448, w: W - 448, align: 'left' },
+    { key: 'price', label: 'Unit Price', x: M + 250, w: 80, align: 'right' },
+    { key: 'gst', label: 'GST 5%', x: M + 330, w: 64, align: 'right' },
+    { key: 'rem', label: 'Remarks', x: M + 394, w: W - 394, align: 'left' },
   ];
   const drawHead = (yy) => {
     doc.rect(M, yy, W, 18).fill(MAROON);
@@ -557,7 +556,6 @@ function drawQuotation(doc, ctx) {
         unit: 'Pack',
         price: inr(r.netRate),
         gst: inr2(gstAmt),
-        amt: '',
         rem: '',
       };
       doc.font('Helvetica').fontSize(8).fill(INK);
@@ -566,17 +564,10 @@ function drawQuotation(doc, ctx) {
       doc.moveTo(M, y).lineTo(M + W, y).stroke(BORDER);
     });
   });
-  // Totals (qty/amount confirmed on order)
-  const totals = [['Subtotal (Basic — before GST)', ''], ['GST @ 5%', ''], ['GRAND TOTAL  (Incl. GST)', '']];
-  totals.forEach(([k, v], i) => {
-    const bold = i === totals.length - 1;
-    doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(8.5).fill(bold ? MAROON : SLATE)
-      .text(k, M + W - 250, y + 4, { width: 160, align: 'right' });
-    doc.font('Helvetica').fontSize(8.5).fill(INK).text(v || '____________', M + W - 86, y + 4, { width: 86, align: 'right' });
-    y += 16;
-  });
-  doc.font('Helvetica-Oblique').fontSize(7.5).fill(SLATE).text('Quantities and totals to be confirmed at the time of order.', M, y + 2, { width: W });
-  y += 18;
+  // Amounts/totals are intentionally omitted — quantities and final pricing are
+  // confirmed at the time of order.
+  doc.font('Helvetica-Oblique').fontSize(7.5).fill(SLATE).text('Quantities and final pricing to be confirmed at the time of order.', M, y + 6, { width: W });
+  y += 22;
 
   // Delivery + Payment two-column
   if (y > bottomLimit(doc) - 110) y = newPage(doc, footerLabel);
