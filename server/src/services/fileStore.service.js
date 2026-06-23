@@ -20,11 +20,17 @@ function uploadBuffer({ buffer, filename, contentType, metadata = {} }) {
   });
 }
 
+// Best-effort cleanup of superseded files. A missing file (already deleted) is
+// benign, and any other delete error must never break the caller (e.g. a kit
+// regenerate) — orphaned blobs are preferable to a failed regeneration.
 function deleteFiles(ids = []) {
   return Promise.all(
     ids.filter(Boolean).map((id) =>
       bucket().delete(new mongoose.Types.ObjectId(id)).catch((err) => {
-        if (err?.message !== 'FileNotFound') throw err;
+        const msg = String(err?.message || '');
+        // Driver message varies by version: 'FileNotFound' vs 'File not found for id …'.
+        if (err?.code === 'ENOENT' || /file ?not ?found/i.test(msg)) return;
+        console.error('[fileStore] failed to delete file', String(id), '-', msg);
       })
     )
   );
