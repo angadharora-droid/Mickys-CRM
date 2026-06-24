@@ -11,7 +11,7 @@ const { getPagination, buildMeta } = require('../utils/pagination');
 const { searchRegex } = require('../utils/sanitize');
 const { logActivity } = require('../services/activity.service');
 const { sendKitEmail } = require('../services/email.service');
-const { generateKit, KITS_DIR } = require('../services/kit.service');
+const { generateKit, buildZip, getBrochureBuffer, BROCHURE_PATH, KITS_DIR } = require('../services/kit.service');
 const { uploadBuffer, deleteFiles, openDownloadStream, getBuffer } = require('../services/fileStore.service');
 
 const POPULATE = [
@@ -159,34 +159,54 @@ async function buildKitFiles(lead) {
 
   for (let i = 0; i < result.files.length; i += 1) {
     const f = result.files[i];
-    const fileId = await uploadBuffer({
-      buffer: f.buffer,
-      filename: f.fileName,
-      contentType: f.contentType,
-      metadata: { leadId: String(lead._id), refNumber: lead.refNumber, docType: f.docType },
-    });
+    // Only the per-lead generated PDFs are stored in GridFS. Static assets (the
+    // brochure) are served from disk, and the ZIP is assembled on demand at
+    // download time — neither is persisted, keeping the DB footprint to a few KB
+    // per lead instead of ~30 MB.
+    let fileId = '';
+    if (!f.static) {
+      fileId = String(
+        await uploadBuffer({
+          buffer: f.buffer,
+          filename: f.fileName,
+          contentType: f.contentType,
+          metadata: { leadId: String(lead._id), refNumber: lead.refNumber, docType: f.docType },
+        })
+      );
+    }
     generatedFiles.push({
       docType: f.docType,
       label: f.label,
       fileName: f.fileName,
-      fileId: String(fileId),
+      fileId,
       url: `/api/leads/${lead._id}/documents/${i}`,
-      static: f.static,
+      static: !!f.static,
     });
   }
 
-  const zipId = await uploadBuffer({
-    buffer: result.zip.buffer,
-    filename: result.zip.fileName,
-    contentType: result.zip.contentType,
-    metadata: { leadId: String(lead._id), refNumber: lead.refNumber, docType: 'KitZip' },
-  });
-
   lead.generatedFiles = generatedFiles;
-  lead.zipFile = { fileName: result.zip.fileName, fileId: String(zipId), url: `/api/leads/${lead._id}/kit.zip` };
+  lead.zipFile = { fileName: result.zipName, fileId: '', url: `/api/leads/${lead._id}/kit.zip` };
   lead.generatedAt = new Date();
   if (oldFileIds.length) await deleteFiles(oldFileIds);
   return result;
+}
+
+/**
+ * Materialise a lead's kit files as in-memory buffers: the per-lead PDFs come
+ * from GridFS and the static brochure is read from disk. Used to assemble the
+ * ZIP on demand and to attach the documents to the kit email.
+ */
+async function collectKitFiles(lead) {
+  const out = [];
+  for (const f of lead.generatedFiles || []) {
+    if (f.static) {
+      const buffer = getBrochureBuffer();
+      if (buffer) out.push({ fileName: f.fileName, buffer, contentType: 'application/pdf' });
+    } else if (f.fileId) {
+      out.push({ fileName: f.fileName, buffer: await getBuffer(f.fileId), contentType: 'application/pdf' });
+    }
+  }
+  return out;
 }
 
 function setDownloadHeaders(res, filename, contentType) {
@@ -921,31 +941,27 @@ const downloadZip = asyncHandler(async (req, res) => {
   const lead = await Lead.findById(req.params.id);
   if (!lead) throw ApiError.notFound('Lead not found');
   assertCanView(lead, req.user);
-  if (!lead.zipFile?.fileName) throw ApiError.badRequest('Generate the kit before downloading it');
+  if (!lead.generatedFiles?.length) throw ApiError.badRequest('Generate the kit before downloading it');
   await ensureFreshKit(lead);
 
-  if (lead.zipFile.fileId) {
-    await logActivity({
-      userId: req.user._id, action: 'LEAD_KIT_DOWNLOADED', entity: 'Lead', entityId: lead._id,
-      details: `Downloaded kit ZIP for ${lead.refNumber}`, ip: req.ip,
-    });
-    setDownloadHeaders(res, lead.zipFile.fileName, 'application/zip');
-    return openDownloadStream(lead.zipFile.fileId).pipe(res);
-  }
-
-  let zipPath = path.join(KITS_DIR, lead.refNumber, lead.zipFile.fileName);
-  if (!fs.existsSync(zipPath)) {
+  // Rebuild if any per-lead PDF is missing from storage (e.g. a legacy lead) so
+  // every document is available before zipping.
+  if (lead.generatedFiles.some((f) => !f.static && !f.fileId)) {
     await buildKitFiles(lead);
     await lead.save();
-    setDownloadHeaders(res, lead.zipFile.fileName, 'application/zip');
-    return openDownloadStream(lead.zipFile.fileId).pipe(res);
   }
+
+  // The ZIP is assembled on the fly from the stored PDFs + the on-disk brochure,
+  // so no (large, redundant) archive is ever persisted in the database.
+  const entries = await collectKitFiles(lead);
+  const zipBuffer = await buildZip(entries);
 
   await logActivity({
     userId: req.user._id, action: 'LEAD_KIT_DOWNLOADED', entity: 'Lead', entityId: lead._id,
     details: `Downloaded kit ZIP for ${lead.refNumber}`, ip: req.ip,
   });
-  res.download(zipPath, lead.zipFile.fileName);
+  setDownloadHeaders(res, lead.zipFile?.fileName || `MickysSalesKit_${lead.refNumber}.zip`, 'application/zip');
+  res.send(zipBuffer);
 });
 
 // GET /api/leads/:id/documents/:idx
@@ -958,14 +974,26 @@ const downloadDocument = asyncHandler(async (req, res) => {
   const file = lead.generatedFiles[Number(req.params.idx)];
   if (!file) throw ApiError.notFound('Document not found');
 
+  // The brochure is a static asset served straight from disk — never stored in
+  // the database, so it's handled before any GridFS lookup.
+  if (file.static) {
+    if (!fs.existsSync(BROCHURE_PATH)) throw ApiError.notFound('Brochure is not available');
+    setDownloadHeaders(res, file.fileName, 'application/pdf');
+    return fs.createReadStream(BROCHURE_PATH).pipe(res);
+  }
+
   if (file.fileId) {
     setDownloadHeaders(res, file.fileName, 'application/pdf');
     return openDownloadStream(file.fileId).pipe(res);
   }
 
-  const filePath = path.join(KITS_DIR, lead.refNumber, file.fileName);
-  if (!fs.existsSync(filePath)) throw ApiError.badRequest('Regenerate the kit — file is missing');
-  res.download(filePath, file.fileName);
+  // No stored copy (legacy lead) — rebuild the kit, then stream the fresh PDF.
+  await buildKitFiles(lead);
+  await lead.save();
+  const rebuilt = lead.generatedFiles[Number(req.params.idx)];
+  if (!rebuilt?.fileId) throw ApiError.badRequest('Regenerate the kit — file is missing');
+  setDownloadHeaders(res, rebuilt.fileName, 'application/pdf');
+  return openDownloadStream(rebuilt.fileId).pipe(res);
 });
 
 // POST /api/leads/:id/email  (send the kit to the client)
@@ -976,27 +1004,24 @@ const emailKit = asyncHandler(async (req, res) => {
   if (!lead.generatedFiles?.length) throw ApiError.badRequest('Generate the kit before emailing it');
   await ensureFreshKit(lead);
 
-  if (!lead.generatedFiles.every((f) => f.fileId)) {
-    const dir = path.join(KITS_DIR, lead.refNumber);
-    const legacyFiles = lead.generatedFiles.map((f) => path.join(dir, f.fileName));
-    if (!legacyFiles.every((p) => fs.existsSync(p))) {
-      await buildKitFiles(lead);
-      await lead.save();
-    }
-  }
-
-  if (!lead.generatedFiles.every((f) => f.fileId)) {
+  // Rebuild if any per-lead PDF is missing from storage (the static brochure has
+  // no fileId by design — it's attached from disk below).
+  if (lead.generatedFiles.some((f) => !f.static && !f.fileId)) {
     await buildKitFiles(lead);
     await lead.save();
   }
 
-  const generatedFiles = await Promise.all(
-    lead.generatedFiles.map(async (f) => ({
-      filename: f.fileName,
-      content: f.fileId ? await getBuffer(f.fileId) : undefined,
-      path: f.fileId ? undefined : path.join(KITS_DIR, lead.refNumber, f.fileName),
-    }))
-  );
+  // Per-lead PDFs are pulled from GridFS; the brochure rides along from disk.
+  const generatedFiles = (
+    await Promise.all(
+      lead.generatedFiles.map(async (f) => {
+        if (f.static) {
+          return fs.existsSync(BROCHURE_PATH) ? { filename: f.fileName, path: BROCHURE_PATH } : null;
+        }
+        return { filename: f.fileName, content: await getBuffer(f.fileId) };
+      })
+    )
+  ).filter(Boolean);
 
   // Manually uploaded attachments (photos, PDFs, sheets) ride along with the kit.
   const attachmentFiles = await Promise.all(
