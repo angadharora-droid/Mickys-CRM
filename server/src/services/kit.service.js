@@ -613,7 +613,8 @@ const DOC_PLANS = {
   ],
 };
 
-function zipFiles(files) {
+/** Zips an array of { fileName, buffer } entries into a single Buffer. */
+function buildZip(files) {
   return new Promise((resolve, reject) => {
     const output = new PassThrough();
     const archive = archiver('zip', { zlib: { level: 9 } });
@@ -628,11 +629,18 @@ function zipFiles(files) {
   });
 }
 
+/** Reads the shipped brochure from disk, or null if it isn't deployed. */
+function getBrochureBuffer() {
+  return fs.existsSync(BROCHURE_PATH) ? fs.readFileSync(BROCHURE_PATH) : null;
+}
+
 /**
- * Builds the full sales kit for a lead: one PDF per document — all rendered from
- * the live data (client details, confirmed rates, and the data-driven product
- * catalogue) to match the official Micky's reference layouts — bundled into a
- * single ZIP. Returns file + zip metadata to persist on the Lead.
+ * Builds the per-lead sales kit documents: one PDF per generated document,
+ * rendered from the live data (client details, confirmed rates, and the
+ * data-driven product catalogue) to match the official Micky's reference
+ * layouts. Static assets (the brochure) are returned as metadata only — they
+ * are served from disk on demand and never stored in the database. The ZIP is
+ * likewise assembled on demand, so it isn't built here.
  */
 async function generateKit({ lead, exec, settings }) {
   const company = settings.company || {};
@@ -661,38 +669,38 @@ async function generateKit({ lead, exec, settings }) {
   const files = [];
 
   for (const d of plan) {
-    let buffer;
-    let fileName;
     if (d.staticFile) {
-      // Pre-built asset (e.g. the brochure): identical for every client, so it
-      // keeps a generic name. Skip gracefully if the file isn't deployed.
+      // Static asset (the brochure): identical for every client and committed to
+      // the repo, so it's served straight from disk and kept out of the database.
+      // Listed as metadata only (no buffer) so it still appears in the kit, the
+      // ZIP and emails — each sourced from disk when needed.
       if (!fs.existsSync(d.staticFile)) {
         console.warn(`[kit] static document missing, skipping: ${d.staticFile}`);
         continue;
       }
-      buffer = fs.readFileSync(d.staticFile);
-      fileName = `Mickys_${d.docType}.pdf`;
+      files.push({
+        docType: d.docType,
+        label: d.label,
+        fileName: `Mickys_${d.docType}.pdf`,
+        path: d.staticFile,
+        contentType: 'application/pdf',
+        static: true,
+      });
     } else {
-      fileName = `Mickys_${d.docType}_${clientSlug}_${ref}.pdf`;
-      buffer = await renderPdfBuffer((doc) => d.draw(doc, ctx));
+      const fileName = `Mickys_${d.docType}_${clientSlug}_${ref}.pdf`;
+      const buffer = await renderPdfBuffer((doc) => d.draw(doc, ctx));
+      files.push({
+        docType: d.docType,
+        label: d.label,
+        fileName,
+        buffer,
+        contentType: 'application/pdf',
+        static: false,
+      });
     }
-    files.push({
-      docType: d.docType,
-      label: d.label,
-      fileName,
-      buffer,
-      contentType: 'application/pdf',
-      static: !!d.staticFile,
-    });
   }
 
-  const zipName = `MickysSalesKit_${clientSlug}_${ref}.zip`;
-  const zipBuffer = await zipFiles(files);
-
-  return {
-    files,
-    zip: { fileName: zipName, buffer: zipBuffer, contentType: 'application/zip' },
-  };
+  return { files, zipName: `MickysSalesKit_${clientSlug}_${ref}.zip` };
 }
 
-module.exports = { generateKit, KITS_DIR };
+module.exports = { generateKit, buildZip, getBrochureBuffer, BROCHURE_PATH, KITS_DIR };
