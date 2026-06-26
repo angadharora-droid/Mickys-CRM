@@ -1074,6 +1074,21 @@ const emailKit = asyncHandler(async (req, res) => {
     messageId: result.messageId || '',
   };
   lead.modifiedBy = req.user._id;
+  // Keep an exact record of what was emailed (recipients, subject, body and
+  // attachment names) so it can be reviewed in-app without a mailbox copy.
+  lead.emailLog.push({
+    to: result.to || req.body.to || lead.email,
+    cc: result.cc || cc || [],
+    bcc: result.bcc || [],
+    subject: result.subject || req.body.subject || '',
+    message: req.body.message || '',
+    bodyHtml: result.html || '',
+    attachments: result.attachments || [],
+    provider: result.provider || '',
+    status: 'sent',
+    messageId: result.messageId || '',
+    sentBy: req.user._id,
+  });
   if (from !== 'delivered') lead.statusHistory.push({ from, to: 'delivered', changedBy: req.user._id, note: 'Kit emailed' });
   await lead.save();
 
