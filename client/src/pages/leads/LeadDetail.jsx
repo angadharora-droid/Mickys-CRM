@@ -156,6 +156,7 @@ export default function LeadDetail() {
   const [emailForm, setEmailForm] = useState({ to: '', cc: '', subject: '', message: '' });
   const [deliverNote, setDeliverNote] = useState('');
   const [deliverOpen, setDeliverOpen] = useState(false);
+  const [viewEmail, setViewEmail] = useState(null); // an emailLog entry being previewed
   const [previewFile, setPreviewFile] = useState(null);
   const [noteDraft, setNoteDraft] = useState('');
   const [editingNote, setEditingNote] = useState(false);
@@ -1430,6 +1431,34 @@ export default function LeadDetail() {
                 </Button>
               </div>
             </div>
+
+            {lead.emailLog?.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-sm font-medium flex items-center gap-2">
+                  <History className="h-4 w-4" /> Sent emails ({lead.emailLog.length})
+                </p>
+                <ul className="divide-y rounded-lg border">
+                  {[...lead.emailLog].reverse().map((m, i) => (
+                    <li key={i} className="flex items-start justify-between gap-3 p-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium truncate">{m.subject || '(no subject)'}</p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          To {m.to || '—'}{m.cc?.length ? ` · CC ${m.cc.join(', ')}` : ''}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {formatDateTime(m.createdAt)}
+                          {m.attachments?.length ? ` · ${m.attachments.length} attachment${m.attachments.length > 1 ? 's' : ''}` : ''}
+                          {m.reconstructed ? ' · reconstructed' : ''}
+                        </p>
+                      </div>
+                      <Button variant="ghost" size="sm" className="shrink-0" onClick={() => setViewEmail(m)}>
+                        <Eye className="h-3.5 w-3.5" /> View
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
@@ -1597,6 +1626,51 @@ export default function LeadDetail() {
               Mark as delivered
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(viewEmail)} onOpenChange={(o) => { if (!o) setViewEmail(null); }}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="truncate pr-8">{viewEmail?.subject || 'Sent email'}</DialogTitle>
+          </DialogHeader>
+          {viewEmail && (
+            <div className="space-y-3 text-sm">
+              <div className="grid gap-1 text-xs text-muted-foreground">
+                <p><span className="font-medium text-foreground">To:</span> {viewEmail.to || '—'}</p>
+                {viewEmail.cc?.length > 0 && (
+                  <p><span className="font-medium text-foreground">CC:</span> {viewEmail.cc.join(', ')}</p>
+                )}
+                {viewEmail.bcc?.length > 0 && (
+                  <p><span className="font-medium text-foreground">BCC:</span> {viewEmail.bcc.join(', ')}</p>
+                )}
+                <p>
+                  <span className="font-medium text-foreground">Sent:</span> {formatDateTime(viewEmail.createdAt)}
+                  {viewEmail.provider ? ` · via ${viewEmail.provider}` : ''}
+                  {viewEmail.messageId ? ` · ${viewEmail.messageId}` : ''}
+                </p>
+                {viewEmail.attachments?.length > 0 && (
+                  <p><span className="font-medium text-foreground">Attachments:</span> {viewEmail.attachments.join(', ')}</p>
+                )}
+              </div>
+              {viewEmail.reconstructed ? (
+                <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                  This is a reconstructed record from before the email log existed. The recipient, date and
+                  attachments are accurate; the subject shown is the default and the original message body
+                  wasn&rsquo;t captured. The exact mail is in the CC&rsquo;d inbox ({viewEmail.cc?.[0] || 'the CC address'}).
+                </div>
+              ) : viewEmail.bodyHtml ? (
+                <div
+                  className="rounded-lg border bg-white p-4 max-h-[50vh] overflow-auto"
+                  dangerouslySetInnerHTML={{ __html: viewEmail.bodyHtml }}
+                />
+              ) : viewEmail.message ? (
+                <div className="rounded-lg border p-4 whitespace-pre-wrap max-h-[50vh] overflow-auto">{viewEmail.message}</div>
+              ) : (
+                <p className="text-muted-foreground">No message body was recorded for this email.</p>
+              )}
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 

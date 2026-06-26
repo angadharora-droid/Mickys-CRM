@@ -115,7 +115,7 @@ async function sendMail({ to, subject, html, attachments = [], replyTo, fromName
       : await sendViaSmtp(provider, payload);
 
   console.log(`[email] sent "${subject}" to ${to} via ${provider.type} (${messageId})`);
-  return { skipped: false, messageId };
+  return { skipped: false, messageId, provider: provider.type };
 }
 
 // Extracts the bare address from a "Name <addr@host>" or plain "addr@host" string.
@@ -157,20 +157,34 @@ async function sendKitEmail({ lead, exec, to, cc, subject, message, files = [], 
       <p style="margin:12px 0 0;color:#666">The kit documents are attached to this email.</p>
     </div>`;
 
-  return sendMail({
+  const resolvedSubject =
+    subject || `Micky's Sales Kit for ${lead.businessName} — Ref: ${lead.refNumber}`;
+  const attachments = files.map((f) =>
+    typeof f === 'string' ? { filename: path.basename(f), path: f } : f
+  );
+
+  const result = await sendMail({
     to: recipient,
     cc,
     bcc,
-    subject: subject || `Micky's Sales Kit for ${lead.businessName} — Ref: ${lead.refNumber}`,
+    subject: resolvedSubject,
     html,
     fromName: exec?.name ? `${exec.name} via Micky's` : undefined,
     replyTo: exec?.email || undefined,
-    attachments: files.map((f) => (
-      typeof f === 'string'
-        ? { filename: path.basename(f), path: f }
-        : f
-    )),
+    attachments,
   });
+
+  // Surface the rendered email so callers can log exactly what went out (the
+  // body and resolved subject aren't otherwise known outside this function).
+  return {
+    ...result,
+    to: recipient,
+    cc: Array.isArray(cc) ? cc : cc ? [cc] : [],
+    bcc: bcc ? (Array.isArray(bcc) ? bcc : [bcc]) : [],
+    subject: resolvedSubject,
+    html,
+    attachments: attachments.map((a) => a.filename),
+  };
 }
 
 module.exports = { sendMail, sendKitEmail };

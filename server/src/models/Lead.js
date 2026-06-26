@@ -143,6 +143,30 @@ const generatedFileSchema = new mongoose.Schema(
   { _id: false }
 );
 
+/** A record of one kit email actually sent — the exact recipients, subject,
+ *  message, rendered body and attachment names — kept so the team can review
+ *  what went out without digging through a mailbox (SMTP sends, e.g. Hostinger,
+ *  don't land in the sender's Sent folder). `reconstructed` marks entries
+ *  backfilled from the legacy `delivery` summary, whose original subject/body
+ *  weren't captured at send time. */
+const emailLogSchema = new mongoose.Schema(
+  {
+    to: { type: String, default: '' },
+    cc: { type: [String], default: [] },
+    bcc: { type: [String], default: [] },
+    subject: { type: String, default: '' },
+    message: { type: String, default: '' }, // exec's custom message (blank => default body used)
+    bodyHtml: { type: String, default: '' }, // full rendered HTML actually sent
+    attachments: { type: [String], default: [] }, // attached file names
+    provider: { type: String, default: '' }, // 'smtp' | 'resend'
+    status: { type: String, default: 'sent' }, // 'sent' | 'failed'
+    messageId: { type: String, default: '' },
+    sentBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    reconstructed: { type: Boolean, default: false },
+  },
+  { timestamps: true }
+);
+
 const leadSchema = new mongoose.Schema(
   {
     refNumber: { type: String, required: true, unique: true, index: true },
@@ -248,6 +272,11 @@ const leadSchema = new mongoose.Schema(
       // For manual delivery: how/where the kit was handed over (e.g. WhatsApp).
       note: { type: String, default: '' },
     },
+
+    // Append-only log of every kit email sent (exact recipients, subject, body
+    // and attachments), so the team can review what was sent without digging
+    // through a mailbox. Historic sends are backfilled as `reconstructed`.
+    emailLog: { type: [emailLogSchema], default: [] },
 
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     modifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
