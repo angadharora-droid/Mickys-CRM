@@ -13,6 +13,7 @@ const { logActivity } = require('../services/activity.service');
 const { sendKitEmail } = require('../services/email.service');
 const { generateKit, buildZip, getBrochureBuffer, BROCHURE_PATH, KITS_DIR } = require('../services/kit.service');
 const { uploadBuffer, deleteFiles, openDownloadStream, getBuffer } = require('../services/fileStore.service');
+const { stockistDlp, stockistPrice } = require('../config/kitContent');
 
 const POPULATE = [
   { path: 'assignedExecId', select: 'name email employeeCode phone' },
@@ -54,16 +55,22 @@ async function nextRefNumber(city) {
  * Distributor card: the editable price is the DLP (Delivered Landed Price) =
  * Basic + GST rounded to the nearest ₹10. `basic` is the master net rate and
  * `dsp` (Distributor Selling Price) is the product's institutional rate, looked
- * up by SKU. Institutional card: `netRate` is the editable net rate as before.
+ * up by SKU. Stockist card: the editable price is the Stockist Price = exact
+ * DLP (Basic + GST, unrounded) × 0.95; the DLP itself is fixed and re-derived
+ * from `basic` wherever it's displayed. Institutional card: `netRate` is the
+ * editable net rate as before.
  */
 function snapshotLine(item, kitType, dspBySku) {
-  // Stockist kits reuse the distributor pricing model (DLP/DSP); the stockist's
-  // own price (DLP × 0.95) is derived at render time, not snapshotted here.
-  const isDist = kitType === 'distributor' || kitType === 'stockist';
+  const isStockist = kitType === 'stockist';
+  const isDistLike = kitType === 'distributor' || isStockist;
   const basic = item.netRate;
-  const dsp = isDist ? (dspBySku?.get(item.sku) || 0) : 0;
-  // DLP for distributor (rounded landed price); plain net rate for institutional.
-  const netRate = isDist ? roundTo10(basic * (1 + item.gst / 100)) : basic;
+  const dsp = isDistLike ? (dspBySku?.get(item.sku) || 0) : 0;
+  // Distributor: rounded DLP · Stockist: Stockist Price · Institutional: net rate.
+  const netRate = isStockist
+    ? stockistPrice(stockistDlp(basic, item.gst))
+    : isDistLike
+      ? roundTo10(basic * (1 + item.gst / 100))
+      : basic;
   return {
     rateItemId: item._id,
     sku: item.sku,
@@ -72,14 +79,14 @@ function snapshotLine(item, kitType, dspBySku) {
     category: item.category || '',
     included: true,
     mrp: item.mrp,
-    basic: isDist ? basic : 0,
+    basic: isDistLike ? basic : 0,
     dsp,
     standardNetRate: netRate,
     netRate,
     suggestiveMargin: item.suggestiveMargin || 0,
     gst: item.gst,
-    // DLP already includes GST; institutional net rate is pre-GST.
-    netInclGst: isDist ? netRate : round2(netRate * (1 + item.gst / 100)),
+    // DLP / Stockist Price already include GST; institutional net rate is pre-GST.
+    netInclGst: isDistLike ? netRate : round2(netRate * (1 + item.gst / 100)),
     deviationPct: 0,
   };
 }
@@ -443,8 +450,9 @@ const confirmRates = asyncHandler(async (req, res) => {
       line.standardNetRate > 0 && newRate < line.standardNetRate
         ? round2(((line.standardNetRate - newRate) / line.standardNetRate) * 100)
         : 0;
-    // For the distributor/stockist card the edited value is the DLP, which
-    // already includes GST; institutional net rates are pre-GST.
+    // For the distributor card the edited value is the DLP and for the stockist
+    // card it's the Stockist Price — both already include GST; institutional
+    // net rates are pre-GST.
     const isDist = lead.kitType === 'distributor' || lead.kitType === 'stockist';
     return {
       ...line.toObject(),
