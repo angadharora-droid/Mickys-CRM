@@ -40,8 +40,9 @@ const KIT_ROLE = {
   stockist: { label: 'Stockist' },
 };
 
-// The stockist buys 5% below the distributor's landed price (Stockist Price = DLP × 0.95).
-const STOCKIST_FACTOR = 0.95;
+// The stockist buys 5% below the distributor's exact landed price
+// (Stockist Price = DLP × 0.95); helpers live in kitContent so the rate
+// snapshot (lead.controller) and this renderer stay in lockstep.
 
 /** Swaps "Distributor" for the kit's role label in default boilerplate. No-op
  *  for the distributor kit itself (and for any custom, per-lead wording). */
@@ -397,9 +398,10 @@ function drawPriceCard(doc, ctx) {
 }
 
 // ---------------- Stockist Price Card ----------------
-// Mirrors the distributor price table but adds the Stockist Price column
-// (DLP × 0.95 — 5% below the distributor's landed price) plus savings/margin
-// columns benchmarked against DLP, DSP and MRP.
+// Mirrors the reference price card: Sr / Product / Wt / MRP / Basic / GST /
+// DLP (exact Basic + GST, unlike the distributor card's ₹10-rounded DLP) /
+// Stockist Price (the snapshot's editable netRate, standard = DLP × 0.95)
+// plus savings/margin columns benchmarked against DLP, DSP and MRP.
 function stockistPriceTable(doc, y, ctx) {
   const W = contentWidth(doc);
   const right = M + W;
@@ -456,11 +458,11 @@ function stockistPriceTable(doc, y, ctx) {
       if (y > bottomLimit(doc)) { y = newPage(doc, footerLabel); y = drawHead(y); }
       if (i % 2 === 1) doc.rect(M, y, W, 16).fill('#faf7f2');
       const basic = Number(it.basic) || 0;
-      const dlp = Number(it.netRate) || 0; // distributor DLP
       const dsp = Number(it.dsp) || 0;
       const tbd = !basic;
       const gstAmt = basic * (it.gst / 100);
-      const stk = dlp > 0 ? Math.round(dlp * STOCKIST_FACTOR) : 0; // Stockist Price = DLP × 0.95
+      const dlp = tbd ? 0 : content.stockistDlp(basic, it.gst); // exact Basic + GST
+      const stk = tbd ? 0 : Number(it.netRate) || 0; // snapshotted / exec-edited Stockist Price
       const vsDlp = dlp > 0 && stk > 0 ? ((dlp - stk) / dlp) * 100 : null;
       const vsDsp = dsp > 0 && stk > 0 ? ((dsp - stk) / dsp) * 100 : null;
       const vsMrp = it.mrp > 0 && stk > 0 ? ((it.mrp - stk) / it.mrp) * 100 : null;

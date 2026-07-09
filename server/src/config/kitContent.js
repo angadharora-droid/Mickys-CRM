@@ -119,6 +119,16 @@ const QUOTATION_DEFAULTS = {
   validityDays: 15,
 };
 
+// Stockist pricing (Stockist Price Card). Unlike the distributor card, whose
+// DLP is rounded to the nearest ₹10, the stockist card uses the exact landed
+// price (Basic + GST) and prices the stockist 5% below it, rounded to the
+// paisa — e.g. Basic 130 → DLP 136.50 → Stockist Price 129.68.
+const STOCKIST_FACTOR = 0.95;
+const stockistDlp = (basic, gst) => Math.round((Number(basic) || 0) * (1 + (Number(gst) || 0) / 100) * 100) / 100;
+// `dlp * 95` stays exact for paisa-precision DLPs, so half-values round up
+// (136.50 → 129.68) the way the reference price card does.
+const stockistPrice = (dlp) => Math.round((Number(dlp) || 0) * 95) / 100;
+
 module.exports = {
   CATEGORY_ORDER,
   DISTRIBUTOR_AGREEMENT_TERMS,
@@ -128,4 +138,7 @@ module.exports = {
   INCENTIVE_VALIDITY,
   QUOTATION_TERMS,
   QUOTATION_DEFAULTS,
+  STOCKIST_FACTOR,
+  stockistDlp,
+  stockistPrice,
 };

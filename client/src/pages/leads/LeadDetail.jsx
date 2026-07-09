@@ -101,7 +101,14 @@ function deriveLine(r) {
   const dlp = net;
   const marginDsp = valid && dsp > 0 && dlp > 0 ? ((dsp - dlp) / dsp) * 100 : null;
   const marginMrp = valid && r.mrp > 0 && dlp > 0 ? ((r.mrp - dlp) / r.mrp) * 100 : null;
-  return { net, valid, aboveMrp, deviation, netInclGst, error: !valid || aboveMrp, basic, gstAmt, dsp, dlp, marginDsp, marginMrp };
+  // Stockist card: `net` is the editable Stockist Price; its fixed DLP is the
+  // exact Basic + GST (unrounded, unlike the distributor card's ₹10-rounded DLP)
+  // and the saving/margin columns benchmark the price against DLP, DSP and MRP.
+  const dlpExact = Math.round(basic * (1 + r.gst / 100) * 100) / 100;
+  const vsDlp = valid && dlpExact > 0 && net > 0 ? ((dlpExact - net) / dlpExact) * 100 : null;
+  const vsDsp = valid && dsp > 0 && net > 0 ? ((dsp - net) / dsp) * 100 : null;
+  const vsMrp = valid && r.mrp > 0 && net > 0 ? ((r.mrp - net) / r.mrp) * 100 : null;
+  return { net, valid, aboveMrp, deviation, netInclGst, error: !valid || aboveMrp, basic, gstAmt, dsp, dlp, marginDsp, marginMrp, dlpExact, vsDlp, vsDsp, vsMrp };
 }
 
 function Stepper({ status }) {
@@ -244,9 +251,12 @@ export default function LeadDetail() {
     );
   }
 
-  // Distributor & stockist kits share the same DLP/DSP pricing model, documents
-  // and agreement — treated alike in this UI; only the printed role label differs.
-  const isDistributor = lead.kitType === 'distributor' || lead.kitType === 'stockist';
+  // Distributor & stockist kits share the same document set (price card +
+  // agreement) but price differently: the distributor edits the DLP, the
+  // stockist edits the Stockist Price (5% below the exact DLP).
+  const isDistributor = lead.kitType === 'distributor';
+  const isStockist = lead.kitType === 'stockist';
+  const isDistLike = isDistributor || isStockist;
   const hasKit = Boolean(lead.kitType);
   const statusIdx = LEAD_STATUSES.indexOf(lead.status);
   const ratesEdited = statusIdx >= LEAD_STATUSES.indexOf('rates_confirmed');
@@ -980,7 +990,7 @@ export default function LeadDetail() {
           {hasKit && !switching ? (
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-3">
-                {isDistributor ? <Boxes className="h-8 w-8 text-primary" /> : <Building2 className="h-8 w-8 text-primary" />}
+                {isDistributor ? <Boxes className="h-8 w-8 text-primary" /> : isStockist ? <Package className="h-8 w-8 text-primary" /> : <Building2 className="h-8 w-8 text-primary" />}
                 <div>
                   <p className="font-semibold">{KIT_TYPE_LABELS[lead.kitType]} selected</p>
                   <p className="text-xs text-muted-foreground">{(KIT_DOCS[lead.kitType] || []).length} documents · {lead.rates.length} rate lines</p>
@@ -1037,7 +1047,7 @@ export default function LeadDetail() {
             <CardHeader className="pb-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <CardTitle className="text-base">Step 3</CardTitle>
-                {isDistributor ? (
+                {isDistLike ? (
                   <TabsList>
                     <TabsTrigger value="rates">Rate Review</TabsTrigger>
                     <TabsTrigger value="agreement">Agreement Terms</TabsTrigger>
@@ -1056,6 +1066,13 @@ export default function LeadDetail() {
                     calculated from it. DLP = Delivered Landed Price · DSP = Distributor Selling Price (the product&rsquo;s institutional rate).
                   </p>
                 )}
+                {isStockist && (
+                  <p className="text-xs text-muted-foreground">
+                    Only <span className="font-medium text-foreground">Stockist Price</span> is editable — it defaults to 5% below
+                    the DLP and the saving/margin columns are calculated from it. DLP = Distributor Landed Price (Basic + GST) ·
+                    DSP = Distributor Selling Price (the product&rsquo;s institutional rate).
+                  </p>
+                )}
                 <div className="overflow-x-auto">
                   <Table>
                     <TableHeader>
@@ -1070,6 +1087,16 @@ export default function LeadDetail() {
                             <TableHead className="text-right hidden lg:table-cell">Margin DLP&rarr;DSP</TableHead>
                             <TableHead className="text-right hidden sm:table-cell">DSP</TableHead>
                             <TableHead className="text-right hidden lg:table-cell">Margin DLP&rarr;MRP</TableHead>
+                          </>
+                        ) : isStockist ? (
+                          <>
+                            <TableHead className="text-right hidden md:table-cell">Basic</TableHead>
+                            <TableHead className="text-right hidden md:table-cell">GST 5%</TableHead>
+                            <TableHead className="text-right hidden sm:table-cell">DLP</TableHead>
+                            <TableHead className="text-right">Stockist Price</TableHead>
+                            <TableHead className="text-right hidden lg:table-cell">vs DLP (Saving %)</TableHead>
+                            <TableHead className="text-right hidden lg:table-cell">vs DSP (Margin %)</TableHead>
+                            <TableHead className="text-right hidden lg:table-cell">vs MRP (Margin %)</TableHead>
                           </>
                         ) : (
                           <>
@@ -1126,6 +1153,16 @@ export default function LeadDetail() {
                                 <TableCell className="text-right tabular-nums hidden sm:table-cell">{d.dsp > 0 ? formatCurrency(d.dsp) : '—'}</TableCell>
                                 <TableCell className="text-right tabular-nums hidden lg:table-cell text-muted-foreground">{fmtPct(d.marginMrp)}</TableCell>
                               </>
+                            ) : isStockist ? (
+                              <>
+                                <TableCell className="text-right tabular-nums hidden md:table-cell text-muted-foreground">{d.basic > 0 ? formatCurrency(d.basic) : 'TBD'}</TableCell>
+                                <TableCell className="text-right tabular-nums hidden md:table-cell text-muted-foreground">{d.basic > 0 ? formatCurrency(d.gstAmt) : '—'}</TableCell>
+                                <TableCell className="text-right tabular-nums hidden sm:table-cell">{d.dlpExact > 0 ? formatCurrency(d.dlpExact) : '—'}</TableCell>
+                                {priceCell}
+                                <TableCell className="text-right tabular-nums hidden lg:table-cell text-muted-foreground">{fmtPct(d.vsDlp)}</TableCell>
+                                <TableCell className="text-right tabular-nums hidden lg:table-cell text-muted-foreground">{fmtPct(d.vsDsp)}</TableCell>
+                                <TableCell className="text-right tabular-nums hidden lg:table-cell text-muted-foreground">{fmtPct(d.vsMrp)}</TableCell>
+                              </>
                             ) : (
                               <>
                                 <TableCell className="text-right tabular-nums hidden sm:table-cell text-muted-foreground">{formatCurrency(r.standardNetRate)}</TableCell>
@@ -1179,7 +1216,7 @@ export default function LeadDetail() {
                   <Label>
                     Terms &amp; Conditions
                     <span className="ml-1 text-xs font-normal text-muted-foreground">
-                      one clause per line - printed on the {isDistributor ? 'price card' : 'quotation'}
+                      one clause per line - printed on the {isDistLike ? 'price card' : 'quotation'}
                     </span>
                   </Label>
                   <Textarea
@@ -1210,7 +1247,7 @@ export default function LeadDetail() {
               </CardContent>
             </TabsContent>
 
-            {isDistributor && (
+            {isDistLike && (
               <TabsContent value="agreement" className="mt-0">
                 <CardContent className="space-y-4">
                   <div className="overflow-x-auto rounded-md border">
