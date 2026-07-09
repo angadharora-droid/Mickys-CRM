@@ -135,13 +135,16 @@ async function sendKitEmail({ lead, exec, to, cc, subject, message, files = [], 
   const recipient = to || lead.email;
   if (!recipient) return { skipped: true, reason: 'No recipient email' };
 
-  const kitLabel = lead.kitType === 'distributor' ? 'Distributor' : 'Institutional';
+  const kitLabel =
+    lead.kitType === 'stockist' ? 'Stockist' : lead.kitType === 'institutional' ? 'Institutional' : 'Distributor';
+  // Distributor & stockist kits carry a term sheet; institutional carries a quotation.
+  const isTermSheet = lead.kitType === 'distributor' || lead.kitType === 'stockist';
   const intro =
     message && message.trim()
       ? `<p style="margin:0 0 12px">${escapeHtml(message).replace(/\n/g, '<br>')}</p>`
       : `<p style="margin:0 0 12px">Dear ${escapeHtml(lead.contactPerson || lead.businessName)},</p>
          <p style="margin:0 0 12px">Please find attached your Micky&rsquo;s ${kitLabel} sales kit. It includes our rate card,
-         ${lead.kitType === 'distributor' ? 'term sheet' : 'quotation'} and supporting documents.
+         ${isTermSheet ? 'term sheet' : 'quotation'} and supporting documents.
          We look forward to partnering with you.</p>`;
 
   // A plain, personal-looking email (no branded card/header/footer) — just the

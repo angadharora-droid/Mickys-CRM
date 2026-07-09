@@ -57,7 +57,9 @@ async function nextRefNumber(city) {
  * up by SKU. Institutional card: `netRate` is the editable net rate as before.
  */
 function snapshotLine(item, kitType, dspBySku) {
-  const isDist = kitType === 'distributor';
+  // Stockist kits reuse the distributor pricing model (DLP/DSP); the stockist's
+  // own price (DLP × 0.95) is derived at render time, not snapshotted here.
+  const isDist = kitType === 'distributor' || kitType === 'stockist';
   const basic = item.netRate;
   const dsp = isDist ? (dspBySku?.get(item.sku) || 0) : 0;
   // DLP for distributor (rounded landed price); plain net rate for institutional.
@@ -376,13 +378,16 @@ const selectKitType = asyncHandler(async (req, res) => {
   assertNotLocked(lead);
   if (lead.status === 'delivered') throw ApiError.badRequest('This lead has already been delivered');
 
-  const items = await RateItem.find({ kitType, isActive: true }).sort({ productName: 1 });
-  if (!items.length) throw ApiError.badRequest(`No active rate items in the ${kitType} rate master`);
+  // Stockist kits have no rate master of their own — they draw from the
+  // distributor catalogue and derive the stockist price from the DLP.
+  const masterKitType = kitType === 'stockist' ? 'distributor' : kitType;
+  const items = await RateItem.find({ kitType: masterKitType, isActive: true }).sort({ productName: 1 });
+  if (!items.length) throw ApiError.badRequest(`No active rate items in the ${masterKitType} rate master`);
 
-  // The distributor card's DSP column is each product's institutional rate, so
-  // pull the institutional master and map it by SKU for the snapshot.
+  // The distributor/stockist card's DSP column is each product's institutional
+  // rate, so pull the institutional master and map it by SKU for the snapshot.
   let dspBySku;
-  if (kitType === 'distributor') {
+  if (masterKitType === 'distributor') {
     const instItems = await RateItem.find({ kitType: 'institutional', isActive: true }).select('sku netRate');
     dspBySku = new Map(instItems.map((i) => [i.sku, i.netRate]));
   }
@@ -438,9 +443,9 @@ const confirmRates = asyncHandler(async (req, res) => {
       line.standardNetRate > 0 && newRate < line.standardNetRate
         ? round2(((line.standardNetRate - newRate) / line.standardNetRate) * 100)
         : 0;
-    // For the distributor card the edited value is the DLP, which already
-    // includes GST; institutional net rates are pre-GST.
-    const isDist = lead.kitType === 'distributor';
+    // For the distributor/stockist card the edited value is the DLP, which
+    // already includes GST; institutional net rates are pre-GST.
+    const isDist = lead.kitType === 'distributor' || lead.kitType === 'stockist';
     return {
       ...line.toObject(),
       included,

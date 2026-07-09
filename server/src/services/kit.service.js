@@ -33,6 +33,23 @@ const inr2 = (n) => 'Rs. ' + Number(n || 0).toFixed(2);
 const fmtDate = (d) =>
   d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
 
+// The distributor and stockist kits share the same documents; only the role
+// label (and the stockist price card's derived pricing) differ.
+const KIT_ROLE = {
+  distributor: { label: 'Distributor' },
+  stockist: { label: 'Stockist' },
+};
+
+// The stockist buys 5% below the distributor's landed price (Stockist Price = DLP × 0.95).
+const STOCKIST_FACTOR = 0.95;
+
+/** Swaps "Distributor" for the kit's role label in default boilerplate. No-op
+ *  for the distributor kit itself (and for any custom, per-lead wording). */
+const roleText = (s, role) =>
+  role && role.label && role.label !== 'Distributor'
+    ? String(s).replace(/Distributor/g, role.label)
+    : String(s);
+
 /** "Raj Restaurant" -> "RajRestaurant" for safe file names. */
 function sanitizeName(s) {
   return (
@@ -215,9 +232,10 @@ function termsFor(ctx, fallback) {
   return fallback;
 }
 
-function agreementTermsFor(ctx) {
+function agreementTermsFor(ctx, role) {
   const custom = ctx.lead.customTerms?.agreementTermsAndConditions;
-  const source = custom && custom.trim()
+  const usingCustom = custom && custom.trim();
+  const source = usingCustom
     ? custom.split('\n').map((l) => l.trim()).filter(Boolean).map((line, i) => {
       const parts = line.split('|');
       if (parts.length >= 2) return [parts.shift().trim(), parts.join('|').trim()];
@@ -225,10 +243,13 @@ function agreementTermsFor(ctx) {
     })
     : content.DISTRIBUTOR_AGREEMENT_TERMS;
 
+  // Custom rows are authored per lead (already worded for this kit); only the
+  // default boilerplate is relabelled for the stockist role.
+  const relabel = usingCustom ? (s) => s : (s) => roleText(s, role);
   return source
     .map(([particular, term]) => [
-      String(particular || '').replace('{distributor}', ctx.lead.businessName),
-      String(term || '').replace('{distributor}', ctx.lead.businessName),
+      relabel(String(particular || '').replace('{distributor}', ctx.lead.businessName)),
+      relabel(String(term || '').replace('{distributor}', ctx.lead.businessName)),
     ])
     .filter(([particular, term]) => particular || term);
 }
@@ -375,14 +396,130 @@ function drawPriceCard(doc, ctx) {
   incentiveBlock(doc, y + 4, footerLabel);
 }
 
+// ---------------- Stockist Price Card ----------------
+// Mirrors the distributor price table but adds the Stockist Price column
+// (DLP × 0.95 — 5% below the distributor's landed price) plus savings/margin
+// columns benchmarked against DLP, DSP and MRP.
+function stockistPriceTable(doc, y, ctx) {
+  const W = contentWidth(doc);
+  const right = M + W;
+  const footerLabel = 'Stockist Price Card  ·  Trade Confidential';
+  const pct = (n) => `${n.toFixed(1)}%`;
+
+  // Column widths sum to the content width (last column takes the remainder).
+  // The Stockist Price and the three benchmark columns wrap to two lines.
+  const defs = [
+    ['sr', 'Sr', 15, 'left'],
+    ['name', 'Product Name', 116, 'left'],
+    ['wt', 'Wt', 40, 'left'],
+    ['mrp', 'MRP', 38, 'right'],
+    ['basic', 'Basic', 38, 'right'],
+    ['gst', 'GST 5%', 40, 'right'],
+    ['dlp', 'DLP', 40, 'right'],
+    ['stk', 'Stockist\nPrice', 44, 'right'],
+    ['vsDlp', 'vs DLP\nSaving', 47, 'right'],
+    ['vsDsp', 'vs DSP\nMargin', 47, 'right'],
+    ['vsMrp', 'vs MRP\nMargin', W - 465, 'right'],
+  ];
+  let cx = M;
+  const cols = defs.map(([key, label, w, align]) => {
+    const c = { key, label, x: cx, w, align };
+    cx += w;
+    return c;
+  });
+
+  const HEAD_H = 26; // taller so the two-line headers fit
+  const drawHead = (yy) => {
+    doc.rect(M, yy, W, HEAD_H).fill(MAROON);
+    doc.font('Helvetica-Bold').fontSize(6.8).fill('#ffffff');
+    cols.forEach((c) => doc.text(c.label, c.x + 3, yy + 4, { width: c.w - 6, align: c.align }));
+    return yy + HEAD_H;
+  };
+  y = drawHead(y);
+
+  const groups = {};
+  (ctx.catalog || []).forEach((it) => {
+    (groups[it.category] = groups[it.category] || []).push(it);
+  });
+  const categoryOrder = [
+    ...content.CATEGORY_ORDER,
+    ...Object.keys(groups).filter((cat) => !content.CATEGORY_ORDER.includes(cat)),
+  ];
+  categoryOrder.forEach((cat) => {
+    const rows = groups[cat];
+    if (!rows || !rows.length) return;
+    if (y > bottomLimit(doc) - 28) { y = newPage(doc, footerLabel); y = drawHead(y); }
+    doc.rect(M, y, W, 16).fill(BAND);
+    doc.font('Helvetica-Bold').fontSize(8).fill(MAROON).text(cat, M + 6, y + 4);
+    y += 16;
+    rows.forEach((it, i) => {
+      if (y > bottomLimit(doc)) { y = newPage(doc, footerLabel); y = drawHead(y); }
+      if (i % 2 === 1) doc.rect(M, y, W, 16).fill('#faf7f2');
+      const basic = Number(it.basic) || 0;
+      const dlp = Number(it.netRate) || 0; // distributor DLP
+      const dsp = Number(it.dsp) || 0;
+      const tbd = !basic;
+      const gstAmt = basic * (it.gst / 100);
+      const stk = dlp > 0 ? Math.round(dlp * STOCKIST_FACTOR) : 0; // Stockist Price = DLP × 0.95
+      const vsDlp = dlp > 0 && stk > 0 ? ((dlp - stk) / dlp) * 100 : null;
+      const vsDsp = dsp > 0 && stk > 0 ? ((dsp - stk) / dsp) * 100 : null;
+      const vsMrp = it.mrp > 0 && stk > 0 ? ((it.mrp - stk) / it.mrp) * 100 : null;
+      const vals = {
+        sr: String(i + 1),
+        name: it.productName,
+        wt: it.packSize || '',
+        mrp: inr(it.mrp),
+        basic: tbd ? 'TBD' : inr(basic),
+        gst: tbd ? '-' : inr2(gstAmt),
+        dlp: tbd ? '-' : inr(dlp),
+        stk: stk > 0 ? inr(stk) : '-',
+        vsDlp: vsDlp == null ? '-' : pct(vsDlp),
+        vsDsp: vsDsp == null ? '-' : pct(vsDsp),
+        vsMrp: vsMrp == null ? '-' : pct(vsMrp),
+      };
+      doc.font('Helvetica').fontSize(7);
+      cols.forEach((c) => doc.fill(c.key === 'stk' ? MAROON : INK).text(vals[c.key], c.x + 3, y + 4, { width: c.w - 6, align: c.align, lineBreak: false }));
+      y += 16;
+      doc.moveTo(M, y).lineTo(right, y).stroke(BORDER);
+    });
+  });
+  return y + 6;
+}
+
+function drawStockistPriceCard(doc, ctx) {
+  const footerLabel = 'Stockist Price Card  ·  Trade Confidential';
+  const W = contentWidth(doc);
+  let y = brandHeader(doc, 'Stockist Price Card', ctx, {
+    subtitle: 'W.E.F. 01/06/2026',
+    showRef: false,
+  });
+  pageFooter(doc, footerLabel);
+
+  // "PRODUCT PRICE LIST" band
+  doc.rect(M, y, W, 18).fill(MAROON);
+  doc.font('Helvetica-Bold').fontSize(9).fill('#ffffff')
+    .text('PRODUCT PRICE LIST', M, y + 5, { width: W, align: 'center' });
+  y += 24;
+
+  doc.font('Helvetica').fontSize(7.5).fill(SLATE)
+    .text('All prices in Rs.  ·  DLP = Distributor Landed Price (Basic + GST)  ·  Stockist Price = DLP x 0.95 (5% below DLP)  ·  DSP = Distributor Selling Price  ·  Margins shown as %', M, y, { width: W });
+  y += 22;
+  y = stockistPriceTable(doc, y, ctx);
+  // Same T&C as the distributor card, but without the DLP price label prefix.
+  const priceTerms = content.PRICE_CARD_TERMS.map((t) => t.replace('{priceLabel} ', '').replace('{priceLabel}', ''));
+  y = termsBlock(doc, y + 6, 'TERMS & CONDITIONS', termsFor(ctx, priceTerms), footerLabel);
+  incentiveBlock(doc, y + 4, footerLabel);
+}
+
 // ---------------- Distributor Agreement ----------------
-function drawAgreement(doc, ctx) {
+function drawAgreement(doc, ctx, role = KIT_ROLE.distributor) {
   const { lead } = ctx;
-  const footerLabel = 'HORECA Distributor Agreement  ·  Confidential';
-  let y = brandHeader(doc, 'HORECA Distributor Agreement', ctx);
+  const label = role.label;
+  const footerLabel = `HORECA ${label} Agreement  ·  Confidential`;
+  let y = brandHeader(doc, `HORECA ${label} Agreement`, ctx);
   pageFooter(doc, footerLabel);
   doc.font('Helvetica').fontSize(9).fill(INK)
-    .text(`Distributor: `, M, y, { continued: true })
+    .text(`${label}: `, M, y, { continued: true })
     .font('Helvetica-Bold').text(lead.businessName, { continued: true })
     .font('Helvetica').text(`     ·     Effective Date: ___ / ___ / ${new Date().getFullYear()}`);
   y += 22;
@@ -403,7 +540,7 @@ function drawAgreement(doc, ctx) {
   };
   y = drawHead(y);
 
-  agreementTermsFor(ctx).forEach(([particular, text], i) => {
+  agreementTermsFor(ctx, role).forEach(([particular, text], i) => {
     const termH = doc.heightOfString(text, { width: cols[2].w - 8 });
     const partH = doc.heightOfString(particular, { width: cols[1].w - 8 });
     const rowH = Math.max(termH, partH, 11) + 8;
@@ -417,17 +554,18 @@ function drawAgreement(doc, ctx) {
   });
 
   y = signatureBlock(doc, y + 16, ctx, brand.signatory.designation, lead.businessName, 'Authorised Signatory', footerLabel);
-  confidentialNote(doc, y + 6, 'the named distributor');
+  confidentialNote(doc, y + 6, `the named ${label.toLowerCase()}`);
 }
 
 // ---------------- Annexure B — Onboarding Checklist ----------------
-function drawAnnexure(doc, ctx) {
+function drawAnnexure(doc, ctx, role = KIT_ROLE.distributor) {
   const { lead } = ctx;
+  const label = role.label;
   const footerLabel = 'Annexure B – Onboarding Checklist  ·  Confidential';
   let y = brandHeader(doc, 'Annexure B – Onboarding Checklist', ctx);
   pageFooter(doc, footerLabel);
   doc.font('Helvetica').fontSize(9).fill(INK)
-    .text(`Distributor: `, M, y, { continued: true })
+    .text(`${label}: `, M, y, { continued: true })
     .font('Helvetica-Bold').text(lead.businessName, { continued: true })
     .font('Helvetica').text(`     ·     Effective Date: ___ / ___ / ${new Date().getFullYear()}`);
   y += 18;
@@ -455,7 +593,7 @@ function drawAnnexure(doc, ctx) {
 
   if (y > bottomLimit(doc) - 110) y = newPage(doc, footerLabel);
   y = signatureBlock(doc, y + 10, ctx, brand.signatory.designation, lead.businessName, 'Authorised Signatory', footerLabel);
-  confidentialNote(doc, y + 6, 'the named distributor');
+  confidentialNote(doc, y + 6, `the named ${label.toLowerCase()}`);
 }
 
 // ---------------- Quotation ----------------
@@ -605,6 +743,12 @@ const DOC_PLANS = {
     { docType: 'OnboardingChecklist', label: 'Annexure B – Onboarding Checklist', draw: drawAnnexure },
     BROCHURE_DOC,
   ],
+  stockist: [
+    { docType: 'PriceCard', label: 'Stockist Price Card', draw: drawStockistPriceCard },
+    { docType: 'Agreement', label: 'HORECA Stockist Agreement', draw: drawAgreement },
+    { docType: 'OnboardingChecklist', label: 'Annexure B – Onboarding Checklist', draw: drawAnnexure },
+    BROCHURE_DOC,
+  ],
   institutional: [
     // The institutional price card is intentionally omitted — the quotation
     // (with categorised items) is the single pricing document for this kit.
@@ -666,6 +810,10 @@ async function generateKit({ lead, exec, settings }) {
     })
     .sort((a, b) => String(a.sku || '').localeCompare(String(b.sku || '')));
   const ctx = { lead, exec, settings, company, brand, content, catalog };
+  // Distributor & stockist kits share the same draw functions; the role label
+  // is passed through so the stockist documents read "Stockist" where the
+  // distributor ones read "Distributor" (undefined for the institutional kit).
+  const role = KIT_ROLE[lead.kitType];
   const files = [];
 
   for (const d of plan) {
@@ -688,7 +836,7 @@ async function generateKit({ lead, exec, settings }) {
       });
     } else {
       const fileName = `Mickys_${d.docType}_${clientSlug}_${ref}.pdf`;
-      const buffer = await renderPdfBuffer((doc) => d.draw(doc, ctx));
+      const buffer = await renderPdfBuffer((doc) => d.draw(doc, ctx, role));
       files.push({
         docType: d.docType,
         label: d.label,
