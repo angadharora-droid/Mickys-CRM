@@ -49,15 +49,20 @@ const HISTORY_META = {
   instruction: { label: 'Instruction', icon: ClipboardList, cls: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300' },
 };
 
-const agreementTermsText = (businessName = '{distributor}') =>
+// Distributor & stockist kits share one agreement; only the role word differs.
+const relabelRole = (s, kitType) =>
+  kitType === 'stockist' ? String(s).replace(/Distributor/g, 'Stockist') : String(s);
+
+const agreementTermsText = (businessName = '{distributor}', kitType) =>
   DEFAULT_DISTRIBUTOR_AGREEMENT_TERMS
-    .map(([particular, term]) => `${particular} | ${term.replace('{distributor}', businessName)}`)
+    .map(([particular, term]) =>
+      `${relabelRole(particular, kitType)} | ${relabelRole(term.replace('{distributor}', businessName), kitType)}`)
     .join('\n');
 
-function parseAgreementTerms(text, businessName) {
+function parseAgreementTerms(text, businessName, kitType) {
   const fallback = DEFAULT_DISTRIBUTOR_AGREEMENT_TERMS.map(([particular, term]) => ({
-    particular,
-    term: term.replace('{distributor}', businessName),
+    particular: relabelRole(particular, kitType),
+    term: relabelRole(term.replace('{distributor}', businessName), kitType),
   }));
 
   if (!text?.trim()) return fallback;
@@ -202,11 +207,12 @@ export default function LeadDetail() {
       termsAndConditions:
         lead.customTerms?.termsAndConditions || (DEFAULT_KIT_TERMS[lead.kitType] || []).join('\n'),
       agreementTermsAndConditions:
-        lead.customTerms?.agreementTermsAndConditions || agreementTermsText(lead.businessName),
+        lead.customTerms?.agreementTermsAndConditions || agreementTermsText(lead.businessName, lead.kitType),
     });
     // Prefill the email draft so it reads as an editable preview (never blank).
-    const kitLabel = lead.kitType === 'distributor' ? 'Distributor' : 'Institutional';
-    const docNoun = lead.kitType === 'distributor' ? 'term sheet' : 'quotation';
+    const kitLabel =
+      lead.kitType === 'stockist' ? 'Stockist' : lead.kitType === 'institutional' ? 'Institutional' : 'Distributor';
+    const docNoun = lead.kitType === 'institutional' ? 'quotation' : 'term sheet';
     const defaultSubject = `Micky's Sales Kit for ${lead.businessName} — Ref: ${lead.refNumber}`;
     const defaultMessage =
       `Dear ${lead.contactPerson || lead.businessName},\n\n` +
@@ -238,7 +244,9 @@ export default function LeadDetail() {
     );
   }
 
-  const isDistributor = lead.kitType === 'distributor';
+  // Distributor & stockist kits share the same DLP/DSP pricing model, documents
+  // and agreement — treated alike in this UI; only the printed role label differs.
+  const isDistributor = lead.kitType === 'distributor' || lead.kitType === 'stockist';
   const hasKit = Boolean(lead.kitType);
   const statusIdx = LEAD_STATUSES.indexOf(lead.status);
   const ratesEdited = statusIdx >= LEAD_STATUSES.indexOf('rates_confirmed');
@@ -250,7 +258,7 @@ export default function LeadDetail() {
   const canEditClient = !locked && (user?.role === 'admin' || lead.status === 'new');
   const includedRates = rates.filter((r) => r.included !== false);
   const anyError = includedRates.length === 0 || includedRates.some((r) => deriveLine(r).error);
-  const agreementRows = parseAgreementTerms(terms.agreementTermsAndConditions, lead.businessName);
+  const agreementRows = parseAgreementTerms(terms.agreementTermsAndConditions, lead.businessName, lead.kitType);
 
   // The terms as currently persisted (seeded with the same defaults the editor
   // uses), so we can show a Save button only when there are unsaved term edits.
@@ -260,7 +268,7 @@ export default function LeadDetail() {
     termsAndConditions:
       lead.customTerms?.termsAndConditions || (DEFAULT_KIT_TERMS[lead.kitType] || []).join('\n'),
     agreementTermsAndConditions:
-      lead.customTerms?.agreementTermsAndConditions || agreementTermsText(lead.businessName),
+      lead.customTerms?.agreementTermsAndConditions || agreementTermsText(lead.businessName, lead.kitType),
   };
   const termsDirty =
     terms.paymentTerms !== savedTerms.paymentTerms ||
@@ -554,7 +562,7 @@ export default function LeadDetail() {
     setRates((rs) => rs.map((r, i) => (i === idx ? { ...r, included: r.included === false } : r)));
   const setAgreementRow = (idx, key, value) => {
     setTerms((current) => {
-      const rows = parseAgreementTerms(current.agreementTermsAndConditions, lead.businessName);
+      const rows = parseAgreementTerms(current.agreementTermsAndConditions, lead.businessName, lead.kitType);
       rows[idx] = { ...rows[idx], [key]: value };
       return { ...current, agreementTermsAndConditions: serializeAgreementRows(rows) };
     });
@@ -986,6 +994,7 @@ export default function LeadDetail() {
             <div className="grid gap-4 sm:grid-cols-2">
               {[
                 { type: 'distributor', icon: Boxes },
+                { type: 'stockist', icon: Package },
                 { type: 'institutional', icon: Building2 },
               ].map(({ type, icon: Icon }) => (
                 <button
@@ -1242,7 +1251,7 @@ export default function LeadDetail() {
                   <div className="flex justify-end">
                     <Button
                       type="button" variant="ghost" size="sm" disabled={locked}
-                      onClick={() => setTerms((t) => ({ ...t, agreementTermsAndConditions: agreementTermsText(lead.businessName) }))}
+                      onClick={() => setTerms((t) => ({ ...t, agreementTermsAndConditions: agreementTermsText(lead.businessName, lead.kitType) }))}
                     >
                       <RotateCcw className="h-3.5 w-3.5" /> Reset agreement terms
                     </Button>

@@ -11,7 +11,7 @@ const BUSINESS_TYPES = [
   'Other',
 ];
 
-const KIT_TYPES = ['distributor', 'institutional'];
+const KIT_TYPES = ['distributor', 'stockist', 'institutional'];
 
 const LEAD_STATUSES = ['new', 'kit_selected', 'rates_confirmed', 'generated', 'delivered'];
 

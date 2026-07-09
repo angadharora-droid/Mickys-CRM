@@ -88,7 +88,7 @@ const leadSchema = z.object({
 const updateLeadSchema = leadSchema.partial();
 
 const kitTypeSchema = z.object({
-  kitType: z.enum(['distributor', 'institutional']),
+  kitType: z.enum(['distributor', 'stockist', 'institutional']),
 });
 
 const rateLineInputSchema = z.object({

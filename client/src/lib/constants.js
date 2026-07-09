@@ -53,11 +53,13 @@ export const ACTION_POINTS = [
 
 export const KIT_TYPES = [
   { value: 'distributor', label: 'Distributor Kit' },
+  { value: 'stockist', label: 'Stockist Kit' },
   { value: 'institutional', label: 'Institutional Kit' },
 ];
 
 export const KIT_TYPE_LABELS = {
   distributor: 'Distributor Kit',
+  stockist: 'Stockist Kit',
   institutional: 'Institutional Kit',
 };
 
@@ -70,6 +72,12 @@ export const KIT_DOCS = {
   distributor: [
     'Distributor Price Card',
     'HORECA Distributor Agreement',
+    'Annexure B – Onboarding Checklist',
+    "Micky's Brochure",
+  ],
+  stockist: [
+    'Stockist Price Card',
+    'HORECA Stockist Agreement',
     'Annexure B – Onboarding Checklist',
     "Micky's Brochure",
   ],
@@ -87,6 +95,15 @@ export const KIT_DOCS = {
 export const DEFAULT_KIT_TERMS = {
   distributor: [
     'The above DLP prices are inclusive of GST @ 5%.',
+    'Prices can be changed without any prior notice.',
+    'Orders will be billed at prevailing prices at the time of dispatch.',
+    'Orders must meet the MOQ.',
+    'Returns are not accepted unless there are verified quality issues.',
+    'Rates are inclusive of logistics cost to the desired customer address / warehouse.',
+    'All disputes will be subjected to Nagpur jurisdiction.',
+  ],
+  stockist: [
+    'The above prices are inclusive of GST @ 5%.',
     'Prices can be changed without any prior notice.',
     'Orders will be billed at prevailing prices at the time of dispatch.',
     'Orders must meet the MOQ.',
