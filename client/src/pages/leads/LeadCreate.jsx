@@ -44,6 +44,19 @@ const schema = z.object({
 
 const NO_ACTION = '__none__';
 
+// Optional fields worth completing later — used to notify what's left after saving.
+const OPTIONAL_FIELDS = [
+  ['designation', 'Designation'],
+  ['email', 'Email'],
+  ['whatsappNumber', 'WhatsApp number'],
+  ['state', 'State'],
+  ['address', 'Full address'],
+  ['gstin', 'GSTIN'],
+  ['leadSource', 'Lead source'],
+  ['actionPoint', 'Action point'],
+  ['followUpDate', 'Follow-up date'],
+];
+
 function Field({ label, required, error, children }) {
   return (
     <div className="space-y-2">
@@ -184,6 +197,17 @@ export default function LeadCreate() {
       }
 
       toast.success(`Lead ${data.data.refNumber} created`);
+
+      const missing = OPTIONAL_FIELDS
+        .filter(([key]) => !String(values[key] ?? '').trim())
+        .map(([, label]) => label);
+      if (missing.length) {
+        toast.warning('Still left to fill in', {
+          description: missing.join(', '),
+          duration: 10000,
+        });
+      }
+
       navigate(`/leads/${leadId}`);
     } catch (err) {
       toast.error(apiError(err));
