@@ -12,6 +12,7 @@ import {
   DEFAULT_KIT_TERMS,
   DEFAULT_DISTRIBUTOR_AGREEMENT_TERMS,
   FIXED_KIT_CC,
+  LEAD_OPTIONAL_FIELDS,
 } from '@/lib/constants';
 import { useAuth } from '@/context/AuthContext';
 import { cn, formatCurrency, formatDate, formatDateTime, formatBytes } from '@/lib/utils';
@@ -266,6 +267,12 @@ export default function LeadDetail() {
   // Client details: execs may edit only while the lead is brand new; admins
   // anytime — but never while a generated kit has it locked (unlock first).
   const canEditClient = !locked && (user?.role === 'admin' || lead.status === 'new');
+  // Optional client/CRM details still blank — surfaced in a banner so the exec
+  // knows what's left to fill in on this lead.
+  const missingDetails = [
+    ...LEAD_OPTIONAL_FIELDS.filter(([key]) => !String(lead[key] ?? '').trim()).map(([, label]) => label),
+    ...(lead.followUp?.date ? [] : ['Follow-up date']),
+  ];
   const includedRates = rates.filter((r) => r.included !== false);
   const anyError = includedRates.length === 0 || includedRates.some((r) => deriveLine(r).error);
   const agreementRows = parseAgreementTerms(terms.agreementTermsAndConditions, lead.businessName, lead.kitType);
@@ -643,6 +650,19 @@ export default function LeadDetail() {
               This lead has been edited since the last kit was generated. Regenerate to refresh the
               documents the client receives.
             </span>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Incomplete-details banner: optional fields still blank on this lead. */}
+      {missingDetails.length > 0 && (
+        <Card className="border-sky-300 bg-sky-50/60">
+          <CardContent className="flex flex-wrap items-center gap-2 py-3 text-sm">
+            <ClipboardList className="h-4 w-4 shrink-0 text-sky-600" />
+            <span className="font-medium">Still left to fill in:</span>
+            {missingDetails.map((label) => (
+              <Badge key={label} variant="outline" className="bg-background font-normal">{label}</Badge>
+            ))}
           </CardContent>
         </Card>
       )}
