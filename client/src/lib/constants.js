@@ -51,6 +51,21 @@ export const ACTION_POINTS = [
   'Send institutional kit',
 ];
 
+/** Optional lead fields worth completing. Keys match both the create form and
+ *  the lead document; used to notify what's still blank (LeadCreate toast,
+ *  LeadDetail banner). The follow-up date lives at followUp.date on the
+ *  document, so each page checks it separately. */
+export const LEAD_OPTIONAL_FIELDS = [
+  ['designation', 'Designation'],
+  ['email', 'Email'],
+  ['whatsappNumber', 'WhatsApp number'],
+  ['state', 'State'],
+  ['address', 'Full address'],
+  ['gstin', 'GSTIN'],
+  ['leadSource', 'Lead source'],
+  ['actionPoint', 'Action point'],
+];
+
 export const KIT_TYPES = [
   { value: 'distributor', label: 'Distributor Kit' },
   { value: 'stockist', label: 'Stockist Kit' },

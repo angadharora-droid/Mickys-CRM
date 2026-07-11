@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import api, { apiError } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
-import { BUSINESS_TYPES, ACTION_POINTS } from '@/lib/constants';
+import { BUSINESS_TYPES, ACTION_POINTS, LEAD_OPTIONAL_FIELDS } from '@/lib/constants';
 import { formatBytes } from '@/lib/utils';
 import PageHeader from '@/components/shared/PageHeader';
 import FilePreviewDialog from '@/components/shared/FilePreviewDialog';
@@ -44,18 +44,28 @@ const schema = z.object({
 
 const NO_ACTION = '__none__';
 
-// Optional fields worth completing later — used to notify what's left after saving.
-const OPTIONAL_FIELDS = [
-  ['designation', 'Designation'],
-  ['email', 'Email'],
-  ['whatsappNumber', 'WhatsApp number'],
-  ['state', 'State'],
-  ['address', 'Full address'],
-  ['gstin', 'GSTIN'],
-  ['leadSource', 'Lead source'],
-  ['actionPoint', 'Action point'],
-  ['followUpDate', 'Follow-up date'],
-];
+// Friendly names for the toast that lists which fields are blocking a save.
+const FIELD_LABELS = {
+  businessName: 'Business name',
+  contactPerson: 'Contact person',
+  mobileNumber: 'Mobile number',
+  email: 'Email',
+  city: 'City',
+  businessType: 'Business type',
+  leadDate: 'Lead date',
+};
+
+// Which form section each required field lives in, so a failed save can tell
+// the user which section they missed.
+const FIELD_SECTIONS = {
+  businessName: 'Contact Details',
+  contactPerson: 'Contact Details',
+  mobileNumber: 'Contact Details',
+  email: 'Contact Details',
+  city: 'Business Info',
+  businessType: 'Business Info',
+  leadDate: 'CRM Metadata',
+};
 
 function Field({ label, required, error, children }) {
   return (
@@ -177,6 +187,33 @@ export default function LeadCreate() {
     });
   };
 
+  // Validation failures leave the user with no feedback if the errored field is
+  // scrolled off-screen (e.g. Save clicked from the bottom of the form), so
+  // announce them with a toast. Scrolling to the field is handled by RHF's
+  // shouldFocusError — a manual window scrollIntoView fights it and drags the
+  // overflow-hidden app shell around.
+  const onInvalid = (errs) => {
+    const bySection = new Map();
+    Object.keys(errs).forEach((key) => {
+      const section = FIELD_SECTIONS[key] || 'the form';
+      if (!bySection.has(section)) bySection.set(section, []);
+      bySection.get(section).push(FIELD_LABELS[key] || key);
+    });
+    const sections = [...bySection.keys()];
+    toast.error(
+      sections.length === 1
+        ? `You've missed the ${sections[0]} section`
+        : `You've missed the ${sections.join(' and ')} sections`,
+      {
+        description:
+          sections.length === 1
+            ? bySection.get(sections[0]).join(', ')
+            : [...bySection.entries()].map(([s, f]) => `${s}: ${f.join(', ')}`).join(' · '),
+        duration: 8000,
+      }
+    );
+  };
+
   const onSubmit = async (values) => {
     setSubmitting(true);
     try {
@@ -198,9 +235,10 @@ export default function LeadCreate() {
 
       toast.success(`Lead ${data.data.refNumber} created`);
 
-      const missing = OPTIONAL_FIELDS
+      const missing = LEAD_OPTIONAL_FIELDS
         .filter(([key]) => !String(values[key] ?? '').trim())
         .map(([, label]) => label);
+      if (!values.followUpDate) missing.push('Follow-up date');
       if (missing.length) {
         toast.warning('Still left to fill in', {
           description: missing.join(', '),
@@ -220,7 +258,7 @@ export default function LeadCreate() {
     <div className="max-w-4xl">
       <PageHeader title="New Lead" description="Capture client details — you'll pick a kit and generate it next" />
 
-      <form className="space-y-6" onSubmit={handleSubmit(onSubmit)}>
+      <form className="space-y-6" onSubmit={handleSubmit(onSubmit, onInvalid)}>
         <Card>
           <CardHeader><CardTitle className="text-base flex items-center gap-2"><Contact className="h-4 w-4" /> Contact Details</CardTitle></CardHeader>
           <CardContent className="grid gap-4 sm:grid-cols-2">
@@ -291,7 +329,8 @@ export default function LeadCreate() {
                 name="businessType"
                 render={({ field }) => (
                   <Select value={field.value} onValueChange={field.onChange}>
-                    <SelectTrigger><SelectValue placeholder="Select type" /></SelectTrigger>
+                    {/* field.ref lets RHF focus (and scroll to) this select on error */}
+                    <SelectTrigger ref={field.ref}><SelectValue placeholder="Select type" /></SelectTrigger>
                     <SelectContent>
                       {BUSINESS_TYPES.map((b) => <SelectItem key={b} value={b}>{b}</SelectItem>)}
                     </SelectContent>
