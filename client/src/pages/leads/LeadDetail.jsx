@@ -156,6 +156,7 @@ export default function LeadDetail() {
   const [action, setAction] = useState('');
   const [step3Tab, setStep3Tab] = useState('rates');
   const [rates, setRates] = useState([]);
+  const [bulkDiscount, setBulkDiscount] = useState('');
   const [terms, setTerms] = useState({
     paymentTerms: '',
     creditPeriod: '',
@@ -575,6 +576,23 @@ export default function LeadDetail() {
 
   const setRate = (idx, val) => setRates((rs) => rs.map((r, i) => (i === idx ? { ...r, netRate: val } : r)));
   const resetRate = (idx) => setRates((rs) => rs.map((r, i) => (i === idx ? { ...r, netRate: r.standardNetRate } : r)));
+  // Bulk discount: reprice every included line X% below its standard rate.
+  // Always computed from standardNetRate so re-applying never compounds.
+  const applyBulkDiscount = () => {
+    const pct = Number(bulkDiscount);
+    if (bulkDiscount === '' || Number.isNaN(pct) || pct < 0 || pct >= 100) {
+      toast.error('Enter a discount between 0 and 99.9%');
+      return;
+    }
+    setRates((rs) => rs.map((r) =>
+      r.included === false
+        ? r
+        : { ...r, netRate: Math.round(r.standardNetRate * (1 - pct / 100) * 100) / 100 }
+    ));
+    toast.success(pct === 0
+      ? 'All rates reset to standard'
+      : `${pct}% discount applied to all included products`);
+  };
   const toggleProduct = (idx) =>
     setRates((rs) => rs.map((r, i) => (i === idx ? { ...r, included: r.included === false } : r)));
   const setAgreementRow = (idx, key, value) => {
@@ -1093,6 +1111,33 @@ export default function LeadDetail() {
                     DSP = Distributor Selling Price (the product&rsquo;s institutional rate).
                   </p>
                 )}
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/40 px-4 py-3">
+                  <div>
+                    <Label htmlFor="bulk-discount" className="text-sm font-medium">Discount on all products</Label>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Sets the {isDistributor ? 'DLP' : isStockist ? 'Stockist Price' : 'net rate'} of every included
+                      product to the entered % below its standard rate. Enter 0 to reset all.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="relative">
+                      <Input
+                        id="bulk-discount"
+                        type="number" step="any" min="0" max="99.9"
+                        placeholder="e.g. 5"
+                        disabled={locked}
+                        value={bulkDiscount}
+                        onChange={(e) => setBulkDiscount(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && applyBulkDiscount()}
+                        className="h-9 w-28 pr-7 text-right tabular-nums"
+                      />
+                      <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">%</span>
+                    </div>
+                    <Button type="button" size="sm" onClick={applyBulkDiscount} disabled={locked || bulkDiscount === ''}>
+                      Apply to all
+                    </Button>
+                  </div>
+                </div>
                 <div className="overflow-x-auto">
                   <Table>
                     <TableHeader>
