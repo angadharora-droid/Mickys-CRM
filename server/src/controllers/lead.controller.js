@@ -92,7 +92,7 @@ function snapshotLine(item, kitType, dspBySku) {
 }
 
 function scopeFilter(user) {
-  if (user.role === 'sales_exec') return { assignedExecId: user._id };
+  if (user.role !== 'admin') return { assignedExecId: user._id };
   return {}; // admin sees all
 }
 
@@ -147,10 +147,10 @@ function applyCustomTerms(lead, customTerms) {
 }
 
 async function resolveExecId(req, providedId) {
-  // Everyone (exec, manager, admin) owns the leads they create. A manager/admin
+  // Everyone (exec, PR manager, admin) owns the leads they create. An admin
   // may still explicitly assign a different sales exec by passing their id.
   if (!providedId || String(providedId) === String(req.user._id)) return req.user._id;
-  if (req.user.role === 'sales_exec') return req.user._id;
+  if (req.user.role !== 'admin') return req.user._id;
   const exec = await User.findOne({ _id: providedId, role: 'sales_exec', isActive: true });
   if (!exec) throw ApiError.badRequest('Assigned sales executive not found or inactive');
   return exec._id;
@@ -281,8 +281,8 @@ const listLeads = asyncHandler(async (req, res) => {
   if (q.kitType) filter.kitType = q.kitType;
   if (q.businessType) filter.businessType = q.businessType;
   if (q.city) filter.city = searchRegex(q.city);
-  if (q.execId && req.user.role !== 'sales_exec') filter.assignedExecId = q.execId;
-  if (q.createdBy && req.user.role !== 'sales_exec') filter.createdBy = q.createdBy;
+  if (q.execId && req.user.role === 'admin') filter.assignedExecId = q.execId;
+  if (q.createdBy && req.user.role === 'admin') filter.createdBy = q.createdBy;
   if (q.dateFrom || q.dateTo) {
     filter.leadDate = {};
     if (q.dateFrom) filter.leadDate.$gte = new Date(q.dateFrom);
@@ -335,7 +335,7 @@ const updateLead = asyncHandler(async (req, res) => {
   assertEditable(lead, req.user);
 
   const { assignedExecId, ...rest } = req.body;
-  if (assignedExecId && req.user.role !== 'sales_exec') {
+  if (assignedExecId && req.user.role === 'admin') {
     lead.assignedExecId = await resolveExecId(req, assignedExecId);
   }
   Object.assign(lead, rest);

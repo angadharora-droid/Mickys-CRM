@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 
-const ROLES = ['admin', 'sales_exec'];
+const ROLES = ['admin', 'sales_exec', 'pr_manager'];
 
 // bcrypt work factor. 12 is a sensible 2020s default; the cost is embedded in
 // each hash, so raising it doesn't invalidate passwords hashed at a lower cost.

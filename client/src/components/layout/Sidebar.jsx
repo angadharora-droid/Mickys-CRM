@@ -22,7 +22,7 @@ const NAV_SECTIONS = [
       { to: '/', label: 'Dashboard', icon: LayoutDashboard, roles: ['*'] },
       { to: '/leads', label: 'Leads & Kits', icon: Contact, roles: ['*'] },
       { to: '/follow-ups', label: 'Follow-ups', icon: CalendarClock, roles: ['*'] },
-      { to: '/my-records', label: 'My Records', icon: ClipboardList, roles: [ROLES.SALES_EXEC] },
+      { to: '/my-records', label: 'My Records', icon: ClipboardList, roles: [ROLES.SALES_EXEC, ROLES.PR_MANAGER] },
     ],
   },
   {

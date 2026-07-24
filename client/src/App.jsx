@@ -35,7 +35,7 @@ export default function App() {
         <Route
           path="/leads/new"
           element={
-            <ProtectedRoute roles={[ROLES.SALES_EXEC, ROLES.ADMIN]}>
+            <ProtectedRoute roles={[ROLES.SALES_EXEC, ROLES.ADMIN, ROLES.PR_MANAGER]}>
               <LeadCreate />
             </ProtectedRoute>
           }
@@ -45,7 +45,7 @@ export default function App() {
         <Route
           path="/my-records"
           element={
-            <ProtectedRoute roles={[ROLES.SALES_EXEC]}>
+            <ProtectedRoute roles={[ROLES.SALES_EXEC, ROLES.PR_MANAGER]}>
               <MyRecords />
             </ProtectedRoute>
           }
