@@ -67,6 +67,7 @@ router.put('/leads/:id/follow-up', authenticate, validate(v.followUpSchema), lea
 router.post('/leads/:id/follow-up/close', authenticate, validate(v.closeFollowUpSchema), leads.closeFollowUp);
 router.post('/leads/:id/attachments', authenticate, upload.array('files', 10), leads.uploadAttachments);
 router.get('/leads/:id/attachments/:attId', authenticate, leads.downloadAttachment);
+router.patch('/leads/:id/attachments/:attId', authenticate, leads.renameAttachment);
 router.delete('/leads/:id/attachments/:attId', authenticate, leads.deleteAttachment);
 router.get('/leads/:id/kit.zip', authenticate, leads.downloadZip);
 router.get('/leads/:id/documents/:idx', authenticate, leads.downloadDocument);

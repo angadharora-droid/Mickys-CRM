@@ -943,6 +943,36 @@ const downloadAttachment = asyncHandler(async (req, res) => {
   return openDownloadStream(att.fileId).pipe(res);
 });
 
+// PATCH /api/leads/:id/attachments/:attId  (rename the stored file name)
+const renameAttachment = asyncHandler(async (req, res) => {
+  const lead = await Lead.findById(req.params.id);
+  if (!lead) throw ApiError.notFound('Lead not found');
+  assertCanView(lead, req.user);
+
+  const att = lead.attachments.id(req.params.attId);
+  if (!att) throw ApiError.notFound('Attachment not found');
+
+  const fileName = String(req.body?.fileName || '').trim();
+  if (!fileName) throw ApiError.badRequest('File name is required');
+
+  // Keep the original extension when the new name omits one, so previews
+  // and downloads still open with the right type.
+  const oldName = att.fileName;
+  const oldExt = (String(oldName).match(/\.[A-Za-z0-9]+$/) || [''])[0];
+  const hasExt = /\.[A-Za-z0-9]+$/.test(fileName);
+  att.fileName = !hasExt && oldExt ? fileName + oldExt : fileName;
+  lead.modifiedBy = req.user._id;
+  await lead.save();
+
+  await logActivity({
+    userId: req.user._id, action: 'LEAD_ATTACHMENT_RENAMED', entity: 'Lead', entityId: lead._id,
+    details: `Renamed attachment "${oldName}" to "${att.fileName}" on ${lead.refNumber}`, ip: req.ip,
+  });
+
+  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  res.json({ success: true, data: populated });
+});
+
 // DELETE /api/leads/:id/attachments/:attId
 const deleteAttachment = asyncHandler(async (req, res) => {
   const lead = await Lead.findById(req.params.id);
@@ -1193,6 +1223,7 @@ module.exports = {
   closeFollowUp,
   uploadAttachments,
   downloadAttachment,
+  renameAttachment,
   deleteAttachment,
   downloadZip,
   downloadDocument,
