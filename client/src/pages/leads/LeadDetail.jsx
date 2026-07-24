@@ -36,7 +36,7 @@ import {
   Loader2, Package, Download, Mail, Trash2, RotateCcw, FileText, CheckCircle2,
   AlertTriangle, ArrowLeft, Boxes, Building2, Sparkles, Eye, EyeOff, Lock, Pencil, ExternalLink,
   MessageSquare, CalendarCheck, Paperclip, Upload, Image as ImageIcon, Target,
-  ClipboardList, Plus, History,
+  ClipboardList, Plus, History, UserCog,
 } from 'lucide-react';
 
 const NO_ACTION = '__none__';
@@ -184,6 +184,9 @@ export default function LeadDetail() {
   const [attUploading, setAttUploading] = useState(false);
   const [attPreview, setAttPreview] = useState(null); // { url, name, type }
   const [confirmAttId, setConfirmAttId] = useState(null);
+  const [reassignOpen, setReassignOpen] = useState(false);
+  const [reassignTo, setReassignTo] = useState('');
+  const [execs, setExecs] = useState([]);
   const attInputRef = useRef(null);
 
   const load = useCallback(async () => {
@@ -356,6 +359,28 @@ export default function LeadDetail() {
   const selectKit = (kitType) =>
     run('kit', () => api.post(`/leads/${lead._id}/kit-type`, { kitType }))
       .then(() => toast.success(`${KIT_TYPE_LABELS[kitType]} selected`))
+      .catch(() => {});
+
+  // Admin: pass the lead on to a sales executive. The exec list is fetched
+  // lazily the first time the dialog opens.
+  const openReassign = async () => {
+    setReassignTo(lead.assignedExecId?._id || '');
+    setReassignOpen(true);
+    if (execs.length) return;
+    try {
+      const { data } = await api.get('/users', { params: { role: 'sales_exec', isActive: 'true', limit: 100 } });
+      setExecs(data.data);
+    } catch (err) {
+      toast.error(apiError(err));
+    }
+  };
+
+  const reassign = () =>
+    run('reassign', () => api.put(`/leads/${lead._id}`, { assignedExecId: reassignTo }))
+      .then((updated) => {
+        setReassignOpen(false);
+        toast.success(`Lead assigned to ${updated.assignedExecId?.name || 'sales executive'}`);
+      })
       .catch(() => {});
 
   const onPickKit = (kitType) => {
@@ -627,6 +652,11 @@ export default function LeadDetail() {
           </Badge>
         )}
         <span className="text-sm text-muted-foreground">Exec: {lead.assignedExecId?.name || '—'}</span>
+        {isAdmin && (
+          <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={openReassign}>
+            <UserCog className="h-3.5 w-3.5" /> Reassign
+          </Button>
+        )}
         <Button variant="outline" size="sm" className="ml-auto" onClick={() => setHistoryOpen(true)}>
           <History className="h-4 w-4" /> History
           {crmHistory.length > 0 && (
@@ -634,6 +664,39 @@ export default function LeadDetail() {
           )}
         </Button>
       </div>
+
+      {/* Admin: hand the lead to a sales executive */}
+      <Dialog open={reassignOpen} onOpenChange={setReassignOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Reassign lead</DialogTitle>
+            <DialogDescription>
+              Pass {lead.businessName} on to a sales executive. The lead will move to their list.
+            </DialogDescription>
+          </DialogHeader>
+          <Select value={reassignTo} onValueChange={setReassignTo}>
+            <SelectTrigger><SelectValue placeholder="Select sales executive" /></SelectTrigger>
+            <SelectContent>
+              {execs.map((e) => (
+                <SelectItem key={e._id} value={e._id}>
+                  {e.name}{e.employeeCode ? ` (${e.employeeCode})` : ''}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setReassignOpen(false)} disabled={action === 'reassign'}>
+              Cancel
+            </Button>
+            <Button
+              onClick={reassign}
+              disabled={!reassignTo || reassignTo === (lead.assignedExecId?._id || '') || action === 'reassign'}
+            >
+              {action === 'reassign' && <Loader2 className="h-4 w-4 animate-spin" />} Assign
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Lock banner — kit is generated; editing is frozen until unlocked. */}
       {locked && (
