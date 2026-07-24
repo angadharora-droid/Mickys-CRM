@@ -36,7 +36,7 @@ import {
   Loader2, Package, Download, Mail, Trash2, RotateCcw, FileText, CheckCircle2,
   AlertTriangle, ArrowLeft, Boxes, Building2, Sparkles, Eye, EyeOff, Lock, Pencil, ExternalLink,
   MessageSquare, CalendarCheck, Paperclip, Upload, Image as ImageIcon, Target,
-  ClipboardList, Plus, History, UserCog,
+  ClipboardList, Plus, History, UserCog, X,
 } from 'lucide-react';
 
 const NO_ACTION = '__none__';
@@ -184,6 +184,7 @@ export default function LeadDetail() {
   const [attUploading, setAttUploading] = useState(false);
   const [attPreview, setAttPreview] = useState(null); // { url, name, type }
   const [confirmAttId, setConfirmAttId] = useState(null);
+  const [attEdit, setAttEdit] = useState(null); // { id, name }
   const [reassignOpen, setReassignOpen] = useState(false);
   const [reassignTo, setReassignTo] = useState('');
   const [execs, setExecs] = useState([]);
@@ -594,6 +595,14 @@ export default function LeadDetail() {
     });
   };
 
+  const renameAttachment = () => {
+    const name = (attEdit?.name || '').trim();
+    if (!name) { toast.error('Enter a file name'); return; }
+    run('att-rename', () => api.patch(`/leads/${lead._id}/attachments/${attEdit.id}`, { fileName: name }))
+      .then(() => { setAttEdit(null); toast.success('Attachment renamed'); })
+      .catch(() => {});
+  };
+
   const deleteAttachment = (attId) =>
     run('att-del', () => api.delete(`/leads/${lead._id}/attachments/${attId}`))
       .then(() => { setConfirmAttId(null); toast.success('Attachment deleted'); })
@@ -850,6 +859,107 @@ export default function LeadDetail() {
               <InfoRow label="Lead date" value={formatDate(lead.leadDate)} />
               <InfoRow label="Address" value={lead.address} />
             </dl>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Attachments — photos, PDFs, spreadsheets kept with this lead */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center justify-between gap-2">
+            <span className="flex items-center gap-2"><Paperclip className="h-4 w-4 text-muted-foreground" /> Attachments</span>
+            <Button size="sm" variant="outline" onClick={() => attInputRef.current?.click()} disabled={attUploading}>
+              {attUploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+              Upload files
+            </Button>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <input ref={attInputRef} type="file" multiple className="hidden" onChange={onPickAttachments} />
+          {(lead.attachments?.length || 0) === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No files yet. Upload photos, PDFs or spreadsheets to keep them with this lead.
+            </p>
+          ) : (
+            <div className="rounded-lg border divide-y bg-card">
+              {lead.attachments.map((att) => {
+                const isImage = (att.contentType || '').startsWith('image/');
+                const editing = attEdit?.id === att._id;
+                return (
+                  <div key={att._id} className="flex items-center justify-between gap-3 px-3 py-2.5">
+                    <div className="flex min-w-0 flex-1 items-center gap-2">
+                      {isImage
+                        ? <ImageIcon className="h-4 w-4 text-primary shrink-0" />
+                        : <FileText className="h-4 w-4 text-primary shrink-0" />}
+                      {editing ? (
+                        <Input
+                          autoFocus
+                          className="h-8"
+                          value={attEdit.name}
+                          onChange={(e) => setAttEdit((s) => ({ ...s, name: e.target.value }))}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') renameAttachment();
+                            if (e.key === 'Escape') setAttEdit(null);
+                          }}
+                        />
+                      ) : (
+                        <div className="min-w-0">
+                          <p className="text-sm truncate">{att.fileName}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {formatBytes(att.size)}
+                            {att.uploadedBy?.name ? ` · ${att.uploadedBy.name}` : ''}
+                            {att.createdAt ? ` · ${formatDate(att.createdAt)}` : ''}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1">
+                      {editing ? (
+                        <>
+                          <Button size="sm" onClick={renameAttachment} disabled={action === 'att-rename'}>
+                            {action === 'att-rename'
+                              ? <Loader2 className="h-4 w-4 animate-spin" />
+                              : <CheckCircle2 className="h-4 w-4" />}
+                            Save
+                          </Button>
+                          <Button
+                            variant="ghost" size="icon" className="h-8 w-8"
+                            title="Cancel" onClick={() => setAttEdit(null)}
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </>
+                      ) : (
+                        <>
+                          <Button variant="ghost" size="sm" onClick={() => previewAttachment(att)}>
+                            <Eye className="h-4 w-4" /> Preview
+                          </Button>
+                          <Button
+                            variant="ghost" size="sm"
+                            onClick={() => download(`/leads/${lead._id}/attachments/${att._id}`, att.fileName)}
+                          >
+                            <Download className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost" size="icon" className="h-8 w-8"
+                            title="Rename attachment"
+                            onClick={() => setAttEdit({ id: att._id, name: att.fileName })}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost" size="icon" className="h-8 w-8 text-destructive"
+                            title="Delete attachment" onClick={() => setConfirmAttId(att._id)}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           )}
         </CardContent>
       </Card>
@@ -1486,62 +1596,6 @@ export default function LeadDetail() {
               </div>
             )}
 
-            {/* Manual attachments — photos, PDFs, spreadsheets */}
-            <div className="rounded-lg border p-4 space-y-3">
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-sm font-medium flex items-center gap-2"><Paperclip className="h-4 w-4" /> Attachments</p>
-                <input ref={attInputRef} type="file" multiple className="hidden" onChange={onPickAttachments} />
-                <Button size="sm" variant="outline" onClick={() => attInputRef.current?.click()} disabled={attUploading}>
-                  {attUploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-                  Upload files
-                </Button>
-              </div>
-              {(lead.attachments?.length || 0) === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  No files yet. Upload photos, PDFs or spreadsheets to keep them with this lead.
-                </p>
-              ) : (
-                <div className="rounded-lg border divide-y bg-card">
-                  {lead.attachments.map((att) => {
-                    const isImage = (att.contentType || '').startsWith('image/');
-                    return (
-                      <div key={att._id} className="flex items-center justify-between gap-3 px-3 py-2.5">
-                        <div className="flex min-w-0 items-center gap-2">
-                          {isImage
-                            ? <ImageIcon className="h-4 w-4 text-primary shrink-0" />
-                            : <FileText className="h-4 w-4 text-primary shrink-0" />}
-                          <div className="min-w-0">
-                            <p className="text-sm truncate">{att.fileName}</p>
-                            <p className="text-xs text-muted-foreground">
-                              {formatBytes(att.size)}
-                              {att.uploadedBy?.name ? ` · ${att.uploadedBy.name}` : ''}
-                              {att.createdAt ? ` · ${formatDate(att.createdAt)}` : ''}
-                            </p>
-                          </div>
-                        </div>
-                        <div className="flex shrink-0 items-center gap-1">
-                          <Button variant="ghost" size="sm" onClick={() => previewAttachment(att)}>
-                            <Eye className="h-4 w-4" /> Preview
-                          </Button>
-                          <Button
-                            variant="ghost" size="sm"
-                            onClick={() => download(`/leads/${lead._id}/attachments/${att._id}`, att.fileName)}
-                          >
-                            <Download className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost" size="icon" className="h-8 w-8 text-destructive"
-                            title="Delete attachment" onClick={() => setConfirmAttId(att._id)}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
           </CardContent>
         </Card>
       )}
