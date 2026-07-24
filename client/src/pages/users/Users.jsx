@@ -30,7 +30,7 @@ import { ChevronDown, ChevronRight, Plus, Search, Users as UsersIcon, Pencil, Us
 const schema = z.object({
   name: z.string().min(2, 'Required'),
   email: z.string().email('Invalid email'),
-  role: z.enum(['admin', 'sales_exec']),
+  role: z.enum(['admin', 'sales_exec', 'pr_manager']),
   employeeCode: z.string().optional(),
   phone: z.string().optional(),
   // Required on create, optional on edit — enforced in onSubmit since the
@@ -155,7 +155,7 @@ export default function Users() {
 
   return (
     <div>
-      <PageHeader title="Users" description="Manage admins, sales managers and sales executives">
+      <PageHeader title="Users" description="Manage admins, sales executives and PR managers">
         <Button onClick={openCreate}><Plus className="h-4 w-4" /> New User</Button>
       </PageHeader>
 

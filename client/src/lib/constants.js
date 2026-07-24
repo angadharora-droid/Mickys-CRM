@@ -1,16 +1,19 @@
 export const ROLES = {
   ADMIN: 'admin',
   SALES_EXEC: 'sales_exec',
+  PR_MANAGER: 'pr_manager',
 };
 
 export const ROLE_LABELS = {
   admin: 'Admin',
   sales_exec: 'Sales Executive',
+  pr_manager: 'PR Manager',
 };
 
 export const ROLE_OPTIONS = [
   { value: 'admin', label: 'Admin' },
   { value: 'sales_exec', label: 'Sales Executive' },
+  { value: 'pr_manager', label: 'PR Manager' },
 ];
 
 export const LEAD_STATUSES = ['new', 'kit_selected', 'rates_confirmed', 'generated', 'delivered'];

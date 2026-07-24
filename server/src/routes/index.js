@@ -18,6 +18,7 @@ const router = express.Router();
 
 const ADMIN = 'admin';
 const EXEC = 'sales_exec';
+const PR = 'pr_manager';
 
 // ---------- Auth ----------
 router.post('/auth/login', loginLimiter, validate(v.loginSchema), auth.login);
@@ -45,7 +46,7 @@ router.delete('/rate-items/:id', authenticate, authorize(ADMIN), rateItems.delet
 router.get('/follow-ups', authenticate, leads.listFollowUps);
 router.get('/action-points', authenticate, leads.listActionPoints);
 router.get('/instructions', authenticate, leads.listInstructions);
-router.post('/leads', authenticate, authorize(EXEC, ADMIN), validate(v.leadSchema), leads.createLead);
+router.post('/leads', authenticate, authorize(EXEC, ADMIN, PR), validate(v.leadSchema), leads.createLead);
 router.get('/leads', authenticate, leads.listLeads);
 router.get('/leads/:id', authenticate, leads.getLead);
 router.put('/leads/:id', authenticate, validate(v.updateLeadSchema), leads.updateLead);
@@ -75,7 +76,7 @@ router.post('/leads/:id/deliver-manual', authenticate, validate(v.manualDelivery
 // ---------- Dashboards ----------
 router.get('/dashboard/admin', authenticate, authorize(ADMIN), dashboard.adminAnalytics);
 router.get('/dashboard/lead-tracker', authenticate, authorize(ADMIN), dashboard.leadTracker);
-router.get('/dashboard/exec', authenticate, authorize(EXEC), dashboard.execAnalytics);
+router.get('/dashboard/exec', authenticate, authorize(EXEC, PR), dashboard.execAnalytics);
 
 // ---------- Activity Logs ----------
 router.get('/activity-logs', authenticate, authorize(ADMIN), activity.listLogs);
