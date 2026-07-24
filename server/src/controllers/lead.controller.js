@@ -92,15 +92,23 @@ function snapshotLine(item, kitType, dspBySku) {
 }
 
 function scopeFilter(user) {
-  if (user.role !== 'admin') return { assignedExecId: user._id };
-  return {}; // admin sees all
+  if (user.role === 'admin') return {}; // admin sees all
+  // PR managers keep sight of every lead they brought in, even after an admin
+  // hands it to a sales exec; execs see only the leads assigned to them.
+  if (user.role === 'pr_manager') {
+    return { $or: [{ assignedExecId: user._id }, { createdBy: user._id }] };
+  }
+  return { assignedExecId: user._id };
 }
 
 function assertCanView(lead, user) {
   if (user.role === 'admin') return;
   const uid = user._id.toString();
   const exec = lead.assignedExecId?._id?.toString() || lead.assignedExecId?.toString();
-  if (exec !== uid) throw ApiError.forbidden('You can only access your own leads');
+  const creator = lead.createdBy?._id?.toString() || lead.createdBy?.toString();
+  if (exec === uid) return;
+  if (user.role === 'pr_manager' && creator === uid) return;
+  throw ApiError.forbidden('You can only access your own leads');
 }
 
 /** Client details are locked once a kit type is chosen (admin may still edit). */
@@ -303,7 +311,15 @@ const listLeads = asyncHandler(async (req, res) => {
   }
   if (q.search) {
     const rx = searchRegex(q.search);
-    filter.$or = [{ refNumber: rx }, { businessName: rx }, { contactPerson: rx }, { email: rx }, { mobileNumber: rx }];
+    const searchOr = [{ refNumber: rx }, { businessName: rx }, { contactPerson: rx }, { email: rx }, { mobileNumber: rx }];
+    // The PR-manager scope is itself an $or, so combine the two with $and
+    // instead of letting the search clause overwrite the visibility scope.
+    if (filter.$or) {
+      filter.$and = [{ $or: filter.$or }, { $or: searchOr }];
+      delete filter.$or;
+    } else {
+      filter.$or = searchOr;
+    }
   }
 
   const [leads, total] = await Promise.all([

@@ -183,7 +183,11 @@ const leadTracker = asyncHandler(async (req, res) => {
 // GET /api/dashboard/exec  (own leads only)
 const execAnalytics = asyncHandler(async (req, res) => {
   const execId = req.user._id;
-  const match = { assignedExecId: execId };
+  // PR managers count every lead they brought in, even ones an admin has since
+  // handed to a sales exec; execs count only leads assigned to them.
+  const match = req.user.role === 'pr_manager'
+    ? { $or: [{ assignedExecId: execId }, { createdBy: execId }] }
+    : { assignedExecId: execId };
 
   const [todayCount, monthCount, openCount, generatedCount, deliveredCount, monthly, status] =
     await Promise.all([
