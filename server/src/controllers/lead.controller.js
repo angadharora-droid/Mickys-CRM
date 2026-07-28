@@ -13,7 +13,7 @@ const { logActivity } = require('../services/activity.service');
 const { sendKitEmail } = require('../services/email.service');
 const { generateKit, buildZip, getBrochureBuffer, BROCHURE_PATH, KITS_DIR } = require('../services/kit.service');
 const { uploadBuffer, deleteFiles, openDownloadStream, getBuffer } = require('../services/fileStore.service');
-const { stockistDlp, stockistPrice } = require('../config/kitContent');
+const { dlp, stockistPrice } = require('../config/kitContent');
 
 const POPULATE = [
   { path: 'assignedExecId', select: 'name email employeeCode phone' },
@@ -28,7 +28,6 @@ const POPULATE = [
 ];
 
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
-const roundTo10 = (n) => Math.round((Number(n) || 0) / 10) * 10;
 
 // Always copied on outgoing kit emails (in addition to any sender-added CCs).
 const FIXED_KIT_CC = 'angadh.arora@cpgh.in';
@@ -53,23 +52,22 @@ async function nextRefNumber(city) {
  * Snapshot a priced line from a rate-master item (standard, un-overridden).
  *
  * Distributor card: the editable price is the DLP (Delivered Landed Price) =
- * Basic + GST rounded to the nearest ₹10. `basic` is the master net rate and
- * `dsp` (Distributor Selling Price) is the product's institutional rate, looked
- * up by SKU. Stockist card: the editable price is the Stockist Price = exact
- * DLP (Basic + GST, unrounded) × 0.95; the DLP itself is fixed and re-derived
- * from `basic` wherever it's displayed. Institutional card: `netRate` is the
- * editable net rate as before.
+ * Basic + GST, to the paisa. `basic` is the master net rate and `dsp`
+ * (Distributor Selling Price) is the product's institutional rate, looked up by
+ * SKU. Stockist card: the editable price is the Stockist Price = that same DLP
+ * × 0.95; the DLP itself is fixed and re-derived from `basic` wherever it's
+ * displayed. Institutional card: `netRate` is the editable net rate as before.
  */
 function snapshotLine(item, kitType, dspBySku) {
   const isStockist = kitType === 'stockist';
   const isDistLike = kitType === 'distributor' || isStockist;
   const basic = item.netRate;
   const dsp = isDistLike ? (dspBySku?.get(item.sku) || 0) : 0;
-  // Distributor: rounded DLP · Stockist: Stockist Price · Institutional: net rate.
+  // Distributor: DLP · Stockist: Stockist Price · Institutional: net rate.
   const netRate = isStockist
-    ? stockistPrice(stockistDlp(basic, item.gst))
+    ? stockistPrice(dlp(basic, item.gst))
     : isDistLike
-      ? roundTo10(basic * (1 + item.gst / 100))
+      ? dlp(basic, item.gst)
       : basic;
   return {
     rateItemId: item._id,

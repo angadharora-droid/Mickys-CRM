@@ -102,9 +102,9 @@ function deriveLine(r) {
   const dlp = net;
   const marginDsp = valid && dsp > 0 && dlp > 0 ? ((dsp - dlp) / dsp) * 100 : null;
   const marginMrp = valid && r.mrp > 0 && dlp > 0 ? ((r.mrp - dlp) / r.mrp) * 100 : null;
-  // Stockist card: `net` is the editable Stockist Price; its fixed DLP is the
-  // exact Basic + GST (unrounded, unlike the distributor card's ₹10-rounded DLP)
-  // and the saving/margin columns benchmark the price against DLP, DSP and MRP.
+  // Stockist card: `net` is the editable Stockist Price; its fixed DLP is
+  // Basic + GST and the saving/margin columns benchmark the price against
+  // DLP, DSP and MRP.
   const dlpExact = Math.round(basic * (1 + r.gst / 100) * 100) / 100;
   const vsDlp = valid && dlpExact > 0 && net > 0 ? ((dlpExact - net) / dlpExact) * 100 : null;
   const vsDsp = valid && dsp > 0 && net > 0 ? ((dsp - net) / dsp) * 100 : null;
