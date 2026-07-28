@@ -281,7 +281,7 @@ const leadSchema = new mongoose.Schema(
     // Meta (Facebook/Instagram) lead-form id for leads pulled in by the Meta Ads
     // sheet sync. Blank for leads captured by hand. The sync keys off this so
     // re-running it never re-imports a row it has already seen.
-    metaLeadId: { type: String, trim: true, default: '', index: true },
+    metaLeadId: { type: String, trim: true, default: '' },
 
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     modifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
@@ -290,6 +290,13 @@ const leadSchema = new mongoose.Schema(
 );
 
 leadSchema.index({ createdAt: -1 });
+// One lead per Meta lead-form submission. Partial, so the many hand-entered
+// leads with no Meta id aren't all treated as duplicates of each other. This is
+// what makes the sheet sync safe to run concurrently with itself.
+leadSchema.index(
+  { metaLeadId: 1 },
+  { unique: true, partialFilterExpression: { metaLeadId: { $type: 'string', $gt: '' } } }
+);
 leadSchema.index({ 'followUp.status': 1, 'followUp.date': 1 });
 leadSchema.index({ 'instructions.status': 1 });
 
