@@ -278,6 +278,11 @@ const leadSchema = new mongoose.Schema(
     // through a mailbox. Historic sends are backfilled as `reconstructed`.
     emailLog: { type: [emailLogSchema], default: [] },
 
+    // Meta (Facebook/Instagram) lead-form id for leads pulled in by the Meta Ads
+    // sheet sync. Blank for leads captured by hand. The sync keys off this so
+    // re-running it never re-imports a row it has already seen.
+    metaLeadId: { type: String, trim: true, default: '', index: true },
+
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     modifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   },
