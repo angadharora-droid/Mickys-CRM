@@ -20,7 +20,7 @@
 const mongoose = require('mongoose');
 const env = require('../config/env');
 const Lead = require('../models/Lead');
-const { stockistDlp, stockistPrice } = require('../config/kitContent');
+const { dlp, stockistPrice } = require('../config/kitContent');
 
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 const roundTo10 = (n) => Math.round((Number(n) || 0) / 10) * 10;
@@ -39,7 +39,7 @@ async function run() {
     for (const line of lead.rates || []) {
       const basic = Number(line.basic) || 0;
       if (!basic) continue; // 0-priced line (e.g. Tamarind Chutney) — stays TBD
-      const newStandard = stockistPrice(stockistDlp(basic, line.gst));
+      const newStandard = stockistPrice(dlp(basic, line.gst));
       if (line.standardNetRate === newStandard) continue; // already migrated
       const legacyStandard = roundTo10(basic * (1 + line.gst / 100));
       // An unmodified line held the standard DLP; an overridden one held the

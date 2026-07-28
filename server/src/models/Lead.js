@@ -44,7 +44,7 @@ const rateLineSchema = new mongoose.Schema(
     mrp: { type: Number, required: true },
     // Distributor card: `basic` = pre-GST base price; `dsp` = the suggested
     // distributor selling price (the product's institutional rate). For the
-    // distributor card `netRate` holds the editable DLP (Basic + GST, rounded).
+    // distributor card `netRate` holds the editable DLP (Basic + GST).
     // Both stay 0 for institutional lines.
     basic: { type: Number, default: 0 },
     dsp: { type: Number, default: 0 },
