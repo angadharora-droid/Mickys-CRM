@@ -82,10 +82,11 @@ const ONBOARDING_CHECKLIST = [
   },
 ];
 
-// Price-card terms & conditions (shared by both price cards). {priceLabel} is
-// "DLP" (distributor) or "Inst." (institutional).
+// Price-card terms & conditions (shared by the distributor and stockist cards;
+// the institutional kit has no price card, only the quotation). {priceLabel} is
+// "DLP" on the distributor card and dropped entirely on the stockist one.
 const PRICE_CARD_TERMS = [
-  'The above {priceLabel} prices are inclusive of GST @ 5%.',
+  'The above {priceLabel} prices are exclusive of GST @ 5%.',
   'Prices can be changed without any prior notice.',
   'Orders will be billed at prevailing prices at the time of dispatch.',
   'Orders must meet the MOQ.',
@@ -102,9 +103,10 @@ const INCENTIVE_SLABS = [
 ];
 const INCENTIVE_VALIDITY = 'W.E.F. 01/06/2025 TO 30/09/2026';
 
-// Quotation terms & conditions.
+// Quotation terms & conditions. The quotation lists a pre-GST unit price with
+// GST broken out in its own column, so its prices are quoted exclusive of tax.
 const QUOTATION_TERMS = [
-  'Prices are inclusive of GST @ 5%.',
+  'Prices are exclusive of GST @ 5%.',
   'Prices are valid for the period mentioned above only.',
   'Orders billed at prevailing prices at time of dispatch.',
   'Orders must meet the MOQ.',

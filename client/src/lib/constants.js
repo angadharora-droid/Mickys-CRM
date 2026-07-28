@@ -112,7 +112,7 @@ export const KIT_DOCS = {
  */
 export const DEFAULT_KIT_TERMS = {
   distributor: [
-    'The above DLP prices are inclusive of GST @ 5%.',
+    'The above DLP prices are exclusive of GST @ 5%.',
     'Prices can be changed without any prior notice.',
     'Orders will be billed at prevailing prices at the time of dispatch.',
     'Orders must meet the MOQ.',
@@ -121,7 +121,7 @@ export const DEFAULT_KIT_TERMS = {
     'All disputes will be subjected to Nagpur jurisdiction.',
   ],
   stockist: [
-    'The above prices are inclusive of GST @ 5%.',
+    'The above prices are exclusive of GST @ 5%.',
     'Prices can be changed without any prior notice.',
     'Orders will be billed at prevailing prices at the time of dispatch.',
     'Orders must meet the MOQ.',
@@ -130,7 +130,7 @@ export const DEFAULT_KIT_TERMS = {
     'All disputes will be subjected to Nagpur jurisdiction.',
   ],
   institutional: [
-    'Prices are inclusive of GST @ 5%.',
+    'Prices are exclusive of GST @ 5%.',
     'Prices are valid for the period mentioned above only.',
     'Orders billed at prevailing prices at time of dispatch.',
     'Orders must meet the MOQ.',
