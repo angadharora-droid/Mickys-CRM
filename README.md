@@ -132,6 +132,8 @@ New Lead → Kit Selected → Rates Confirmed → Kit Generated → Delivered
 - **JWT + refresh rotation** — refresh tokens are hashed in DB; reuse detection revokes all sessions.
 - **Dashboards** — admin (leads by status/city/business-type/exec, kit split, kits generated),
   exec (own funnel + activity feed).
+- **Meta Ads lead sync** — leads from the Facebook/Instagram lead form are pulled off their Google
+  Sheet automatically, created under a "Meta Ads" account for an admin to assign.
 - **Audit trail** — every login, lead step, rate override, generation and delivery is logged.
 - **Dark mode** + responsive layout.
 
@@ -161,26 +163,45 @@ not imported.
 The sheet is read through Google's CSV export endpoint, so it must be readable without a login —
 **Share → General access → "Anyone with the link" (Viewer)**. No API key or service account needed.
 
+### It runs itself
+
+The API polls the sheet in-process ([`services/metaSync.service.js`](server/src/services/metaSync.service.js)),
+starting ~10 seconds after boot and then every 15 minutes. There is nothing else to deploy, schedule
+or keep alive: if the API is up, leads are flowing. New leads reach the CRM within one interval of
+Meta writing them to the sheet — this is polling, not instant.
+
+| Variable | Default | |
+|---|---|---|
+| `META_SYNC_ENABLED` | `true` | set to `false` to switch the poller off |
+| `META_SYNC_INTERVAL_MIN` | `15` | minutes between checks |
+| `META_SHEET_ID` / `META_SHEET_GID` | the campaign sheet / `0` | point at a different sheet or tab |
+| `META_SHEET_CSV_URL` | — | an explicit CSV url, overriding the two above |
+
+A pass only logs when it actually imports something, so a healthy idle poller stays quiet. Failures
+(an unshared sheet, no network) log one line and are retried on the next tick — the sync can't take
+the API down with it.
+
+### Running it by hand
+
+For a first import, a catch-up, or to preview a sheet before trusting it:
+
 ```bash
 cd server
 npm run sync:meta                          # dry run — prints what it would import, writes nothing
-npm run sync:meta -- --apply               # import new rows once
-npm run sync:meta -- --apply --interval=15 # stay running, re-check the sheet every 15 minutes
+npm run sync:meta -- --apply               # import new rows now
 npm run sync:meta -- --apply --file=leads.csv   # import a downloaded CSV instead of fetching
 ```
 
-The sync is idempotent — it keys on the Meta lead id, so re-running it only ever adds rows it hasn't
-imported before. Meta's `<test lead: …>` rows are ignored, and a row whose phone number already
-belongs to another lead is reported and skipped (override with `--allow-duplicate-phone`).
+Also accepts `--interval=<min>` to watch from the CLI, `--sheet=` / `--gid=` / `--url=` to point
+elsewhere, and `--allow-duplicate-phone`.
 
-Point it at a different sheet or tab with `--sheet=<id>` / `--gid=<id>`, or the `META_SHEET_ID`,
-`META_SHEET_GID` and `META_SHEET_CSV_URL` environment variables.
+### Why it's safe to re-run
 
-**Keeping it up to date.** `--interval` is the simplest option — run it under pm2
-(`pm2 start npm --name meta-sync -- run sync:meta -- --apply --interval=15`) so it restarts with the
-server. Alternatively drop the one-shot form into cron (`*/15 * * * * cd /path/server && npm run
-sync:meta -- --apply`) or Windows Task Scheduler. Note this is polling: new leads appear in the CRM
-within one interval of Meta writing them to the sheet, not instantly.
+The sync keys on the Meta lead id, kept in the lead's `metaLeadId` field, and only adds rows it
+hasn't imported before — so the scheduled poller and a manual run can't tread on each other. A
+unique partial index on that field is the backstop: even two runs racing produce one lead, not two.
+Meta's `<test lead: …>` rows are ignored, and a row whose phone number already belongs to another
+lead is reported and skipped (override with `--allow-duplicate-phone`).
 
 ## API
 
