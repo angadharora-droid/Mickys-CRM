@@ -135,6 +135,53 @@ New Lead → Kit Selected → Rates Confirmed → Kit Generated → Delivered
 - **Audit trail** — every login, lead step, rate override, generation and delivery is logged.
 - **Dark mode** + responsive layout.
 
+## Meta Ads lead sync
+
+Leads captured by the Meta (Facebook/Instagram) lead form land in a Google Sheet, which
+`server/src/scripts/sync-meta-leads.js` pulls into the CRM. Each row becomes a normal `new` lead
+created by — and parked on — a dedicated **Meta Ads** account, so an admin can hand it to a sales
+exec with the usual reassign action. The account is created inactive: nobody signs in as it, and it
+never appears as a reassignment target.
+
+| Sheet column | Lead field |
+|---|---|
+| `company_name` (falls back to `full_name`) | Business name |
+| `full_name` (falls back to `company_name`) | Contact person |
+| `phone_number` (the `p:` tag stripped) | Mobile number |
+| `email` · `city` | Email · City |
+| `business_type_` | Business type, mapped onto the CRM enum |
+| `created_time` | Lead date |
+| `id` | `metaLeadId` — the dedupe key |
+| `platform`, `campaign_name`, `ad_name`, `form_name`, "how much gravy/paste…" | Internal note |
+
+Lead source is set to `Meta Ads` on every imported lead. The remaining columns (`ad_id`, `adset_id`,
+`campaign_id`, `form_id`, `lead_status`) are Meta-side identifiers with no CRM equivalent and are
+not imported.
+
+The sheet is read through Google's CSV export endpoint, so it must be readable without a login —
+**Share → General access → "Anyone with the link" (Viewer)**. No API key or service account needed.
+
+```bash
+cd server
+npm run sync:meta                          # dry run — prints what it would import, writes nothing
+npm run sync:meta -- --apply               # import new rows once
+npm run sync:meta -- --apply --interval=15 # stay running, re-check the sheet every 15 minutes
+npm run sync:meta -- --apply --file=leads.csv   # import a downloaded CSV instead of fetching
+```
+
+The sync is idempotent — it keys on the Meta lead id, so re-running it only ever adds rows it hasn't
+imported before. Meta's `<test lead: …>` rows are ignored, and a row whose phone number already
+belongs to another lead is reported and skipped (override with `--allow-duplicate-phone`).
+
+Point it at a different sheet or tab with `--sheet=<id>` / `--gid=<id>`, or the `META_SHEET_ID`,
+`META_SHEET_GID` and `META_SHEET_CSV_URL` environment variables.
+
+**Keeping it up to date.** `--interval` is the simplest option — run it under pm2
+(`pm2 start npm --name meta-sync -- run sync:meta -- --apply --interval=15`) so it restarts with the
+server. Alternatively drop the one-shot form into cron (`*/15 * * * * cd /path/server && npm run
+sync:meta -- --apply`) or Windows Task Scheduler. Note this is polling: new leads appear in the CRM
+within one interval of Meta writing them to the sheet, not instantly.
+
 ## API
 
 Endpoint documentation lives in [docs/API.md](docs/API.md).
