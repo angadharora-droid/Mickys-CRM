@@ -6,6 +6,7 @@ import {
   LayoutDashboard,
   Contact,
   Tags,
+  Ship,
   Users,
   ScrollText,
   ClipboardList,
@@ -29,6 +30,7 @@ const NAV_SECTIONS = [
     label: 'Catalogue',
     items: [
       { to: '/rate-master', label: 'Rate Master', icon: Tags, roles: [ROLES.ADMIN] },
+      { to: '/export', label: 'Export Settings', icon: Ship, roles: [ROLES.ADMIN] },
     ],
   },
   {

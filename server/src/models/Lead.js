@@ -11,7 +11,7 @@ const BUSINESS_TYPES = [
   'Other',
 ];
 
-const KIT_TYPES = ['distributor', 'stockist', 'institutional'];
+const KIT_TYPES = ['distributor', 'stockist', 'institutional', 'export'];
 
 const LEAD_STATUSES = ['new', 'kit_selected', 'rates_confirmed', 'generated', 'delivered'];
 
@@ -21,6 +21,7 @@ const ACTION_POINTS = [
   'Send Sample',
   'Send distributor kit',
   'Send institutional kit',
+  'Send export kit',
 ];
 
 /** Allowed forward transitions of the kit pipeline (later steps may be re-run). */
@@ -54,6 +55,31 @@ const rateLineSchema = new mongoose.Schema(
     gst: { type: Number, required: true },
     netInclGst: { type: Number, required: true }, // netRate * (1 + gst/100)
     deviationPct: { type: Number, default: 0 }, // % below standard (0 if at/above)
+    // Export kits only: shipment quantity (packs) and the weight of one pack in
+    // kg — both feed the freight apportionment. Zero for domestic kit lines.
+    qty: { type: Number, default: 0 },
+    unitWeightKg: { type: Number, default: 0 },
+  },
+  { _id: false }
+);
+
+/**
+ * Export-kit shipment configuration, snapshotted when the shipment is
+ * confirmed. Country commercials (CIR / part-load freight) are frozen here so
+ * later edits to the destination master don't silently reprice an old lead;
+ * only the currency conversion uses the live daily rate at generation time.
+ */
+const exportConfigSchema = new mongoose.Schema(
+  {
+    rateType: { type: String, enum: ['distributor', 'institution'], default: 'distributor' },
+    loadingType: { type: String, enum: ['full', 'part'], default: 'full' },
+    containerSize: { type: String, enum: ['', 'ft20', 'ft40'], default: 'ft20' },
+    currency: { type: String, enum: ['USD', 'EUR', 'GBP', 'INR'], default: 'USD' },
+    countryId: { type: mongoose.Schema.Types.ObjectId, ref: 'ExportCountry' },
+    countryName: { type: String, default: '' },
+    countryCode: { type: String, default: '' },
+    cirPercent: { type: Number, default: 0 },
+    partLoadFreightPerKg: { type: Number, default: 0 },
   },
   { _id: false }
 );
@@ -224,6 +250,8 @@ const leadSchema = new mongoose.Schema(
     // ---- Kit ----
     kitType: { type: String, enum: KIT_TYPES },
     rates: { type: [rateLineSchema], default: [] },
+    // Export kits only: the shipment configuration behind the rate card.
+    exportConfig: { type: exportConfigSchema, default: undefined },
     customTerms: {
       paymentTerms: { type: String, default: '' },
       creditPeriod: { type: String, default: '' },

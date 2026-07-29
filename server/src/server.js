@@ -2,6 +2,7 @@ const app = require('./app');
 const env = require('./config/env');
 const connectDB = require('./config/db');
 const { startMetaSync } = require('./services/metaSync.service');
+const { startFxSync } = require('./services/fx.service');
 
 async function main() {
   try {
@@ -11,6 +12,8 @@ async function main() {
     });
     // Poll the Meta Ads lead sheet in-process, so new leads arrive on their own.
     startMetaSync();
+    // Refresh the export-kit exchange rates daily, so cards never use stale FX.
+    startFxSync();
   } catch (err) {
     console.error('[server] failed to start:', err.message);
     process.exit(1);
