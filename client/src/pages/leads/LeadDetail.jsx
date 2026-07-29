@@ -34,10 +34,11 @@ import {
 } from '@/components/ui/dialog';
 import {
   Loader2, Package, Download, Mail, Trash2, RotateCcw, FileText, CheckCircle2,
-  AlertTriangle, ArrowLeft, Boxes, Building2, Sparkles, Eye, EyeOff, Lock, Pencil, ExternalLink,
+  AlertTriangle, ArrowLeft, Boxes, Building2, Ship, Sparkles, Eye, EyeOff, Lock, Pencil, ExternalLink,
   MessageSquare, CalendarCheck, Paperclip, Upload, Image as ImageIcon, Target,
   ClipboardList, Plus, History, UserCog, X,
 } from 'lucide-react';
+import ExportKitStep from './ExportKitStep';
 
 const NO_ACTION = '__none__';
 
@@ -224,13 +225,19 @@ export default function LeadDetail() {
     });
     // Prefill the email draft so it reads as an editable preview (never blank).
     const kitLabel =
-      lead.kitType === 'stockist' ? 'Stockist' : lead.kitType === 'institutional' ? 'Institutional' : 'Distributor';
+      lead.kitType === 'stockist' ? 'Stockist' : lead.kitType === 'institutional' ? 'Institutional'
+        : lead.kitType === 'export' ? 'Export' : 'Distributor';
     const docNoun = lead.kitType === 'institutional' ? 'quotation' : 'term sheet';
-    const defaultSubject = `Micky's Sales Kit for ${lead.businessName} — Ref: ${lead.refNumber}`;
-    const defaultMessage =
-      `Dear ${lead.contactPerson || lead.businessName},\n\n` +
-      `Please find attached your Micky's ${kitLabel} sales kit. It includes our rate card, ` +
-      `${docNoun} and supporting documents. We look forward to partnering with you.`;
+    const defaultSubject = lead.kitType === 'export'
+      ? `Micky's Export Kit for ${lead.businessName} — Ref: ${lead.refNumber}`
+      : `Micky's Sales Kit for ${lead.businessName} — Ref: ${lead.refNumber}`;
+    const defaultMessage = lead.kitType === 'export'
+      ? `Dear ${lead.contactPerson || lead.businessName},\n\n` +
+        `Please find attached your Micky's Export kit. It includes our export rate card and product brochure. ` +
+        `We look forward to partnering with you.`
+      : `Dear ${lead.contactPerson || lead.businessName},\n\n` +
+        `Please find attached your Micky's ${kitLabel} sales kit. It includes our rate card, ` +
+        `${docNoun} and supporting documents. We look forward to partnering with you.`;
     setEmailForm((f) => ({
       ...f,
       to: f.to || lead.email || '',
@@ -263,6 +270,7 @@ export default function LeadDetail() {
   const isDistributor = lead.kitType === 'distributor';
   const isStockist = lead.kitType === 'stockist';
   const isDistLike = isDistributor || isStockist;
+  const isExport = lead.kitType === 'export';
   const hasKit = Boolean(lead.kitType);
   const statusIdx = LEAD_STATUSES.indexOf(lead.status);
   const ratesEdited = statusIdx >= LEAD_STATUSES.indexOf('rates_confirmed');
@@ -402,6 +410,22 @@ export default function LeadDetail() {
         customTerms: terms,
       })
     ).then(() => toast.success('Rates confirmed — kit generated')).catch(() => {});
+
+  // Export leads: confirm the shipment configuration (destination, load type,
+  // products with qty/weight) — the server snapshots it and generates the kit.
+  // Only the terms relevant to the rate card travel along; the agreement
+  // boilerplate is a domestic-kit concern.
+  const confirmExport = (payload) =>
+    run('export-config', () =>
+      api.put(`/leads/${lead._id}/export-config`, {
+        ...payload,
+        customTerms: {
+          paymentTerms: terms.paymentTerms,
+          creditPeriod: terms.creditPeriod,
+          termsAndConditions: terms.termsAndConditions,
+        },
+      })
+    ).then(() => toast.success('Shipment confirmed — export kit generated')).catch(() => {});
 
   const generate = () =>
     run('generate', () => api.post(`/leads/${lead._id}/generate`, { customTerms: terms }))
@@ -1201,10 +1225,14 @@ export default function LeadDetail() {
           {hasKit && !switching ? (
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-3">
-                {isDistributor ? <Boxes className="h-8 w-8 text-primary" /> : isStockist ? <Package className="h-8 w-8 text-primary" /> : <Building2 className="h-8 w-8 text-primary" />}
+                {isDistributor ? <Boxes className="h-8 w-8 text-primary" /> : isStockist ? <Package className="h-8 w-8 text-primary" /> : isExport ? <Ship className="h-8 w-8 text-primary" /> : <Building2 className="h-8 w-8 text-primary" />}
                 <div>
                   <p className="font-semibold">{KIT_TYPE_LABELS[lead.kitType]} selected</p>
-                  <p className="text-xs text-muted-foreground">{(KIT_DOCS[lead.kitType] || []).length} documents · {lead.rates.length} rate lines</p>
+                  <p className="text-xs text-muted-foreground">
+                    {(KIT_DOCS[lead.kitType] || []).length} documents · {isExport
+                      ? `${lead.rates.length ? `${lead.rates.length} products in shipment` : 'shipment not configured yet'}`
+                      : `${lead.rates.length} rate lines`}
+                  </p>
                 </div>
               </div>
               <Button variant="outline" size="sm" onClick={() => setSwitching(true)} disabled={locked || action === 'kit'}>
@@ -1217,6 +1245,7 @@ export default function LeadDetail() {
                 { type: 'distributor', icon: Boxes },
                 { type: 'stockist', icon: Package },
                 { type: 'institutional', icon: Building2 },
+                { type: 'export', icon: Ship },
               ].map(({ type, icon: Icon }) => (
                 <button
                   key={type}
@@ -1251,8 +1280,20 @@ export default function LeadDetail() {
         </CardContent>
       </Card>
 
+      {/* Step 3 — Export shipment (export kits configure everything here) */}
+      {hasKit && isExport && (
+        <ExportKitStep
+          lead={lead}
+          locked={locked}
+          busy={action === 'export-config'}
+          terms={terms.termsAndConditions}
+          onTermsChange={(v) => setTerms((t) => ({ ...t, termsAndConditions: v }))}
+          onConfirm={confirmExport}
+        />
+      )}
+
       {/* Step 3 - Rate review */}
-      {hasKit && (
+      {hasKit && !isExport && (
         <Card>
           <Tabs value={step3Tab} onValueChange={setStep3Tab}>
             <CardHeader className="pb-3">

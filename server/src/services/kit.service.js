@@ -795,6 +795,36 @@ async function generateKit({ lead, exec, settings }) {
   const clientSlug = sanitizeName(lead.businessName);
   const ref = lead.refNumber;
 
+  // The export kit renders from the lead's frozen shipment snapshot via the
+  // export engine (different inputs from the domestic docs), plus the brochure.
+  if (lead.kitType === 'export') {
+    const exportKit = require('./exportKit.service');
+    const card = await exportKit.computeRateCardFromLead(lead, settings);
+    const files = [
+      {
+        docType: 'ExportRateCard',
+        label: `Export Rate Card — ${card.config.country.name} (${card.config.currency})`,
+        fileName: `Mickys_ExportRateCard_${clientSlug}_${ref}.pdf`,
+        buffer: await exportKit.renderRateCardPdf(card, { lead, exec }),
+        contentType: 'application/pdf',
+        static: false,
+      },
+    ];
+    if (fs.existsSync(BROCHURE_PATH)) {
+      files.push({
+        docType: BROCHURE_DOC.docType,
+        label: BROCHURE_DOC.label,
+        fileName: `Mickys_${BROCHURE_DOC.docType}.pdf`,
+        path: BROCHURE_PATH,
+        contentType: 'application/pdf',
+        static: true,
+      });
+    } else {
+      console.warn(`[kit] static document missing, skipping: ${BROCHURE_PATH}`);
+    }
+    return { files, zipName: `MickysExportKit_${clientSlug}_${ref}.zip` };
+  }
+
   const plan = DOC_PLANS[lead.kitType];
   if (!plan) throw new Error(`Unknown kit type: ${lead.kitType}`);
 

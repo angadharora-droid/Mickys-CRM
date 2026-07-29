@@ -12,6 +12,8 @@ const { searchRegex } = require('../utils/sanitize');
 const { logActivity } = require('../services/activity.service');
 const { sendKitEmail } = require('../services/email.service');
 const { generateKit, buildZip, getBrochureBuffer, BROCHURE_PATH, KITS_DIR } = require('../services/kit.service');
+const ExportCountry = require('../models/ExportCountry');
+const exportKitService = require('../services/exportKit.service');
 const { uploadBuffer, deleteFiles, openDownloadStream, getBuffer } = require('../services/fileStore.service');
 const { dlp, stockistPrice } = require('../config/kitContent');
 
@@ -399,6 +401,34 @@ const selectKitType = asyncHandler(async (req, res) => {
   assertNotLocked(lead);
   if (lead.status === 'delivered') throw ApiError.badRequest('This lead has already been delivered');
 
+  // The export kit has no upfront rate snapshot — its products, quantities and
+  // shipment configuration are all chosen in the export step and snapshotted
+  // when the shipment is confirmed. Selecting it just opens that step.
+  if (kitType === 'export') {
+    const from = lead.status;
+    const settings = await Setting.getGlobal();
+    lead.kitType = 'export';
+    lead.rates = [];
+    lead.rateEditLog = [];
+    lead.exportConfig = lead.exportConfig?.countryId ? lead.exportConfig : undefined;
+    lead.customTerms = {
+      paymentTerms: settings.kit?.defaultPaymentTerms || '',
+      creditPeriod: settings.kit?.defaultCreditPeriod || '',
+    };
+    lead.status = 'kit_selected';
+    markEditedIfGenerated(lead);
+    lead.modifiedBy = req.user._id;
+    lead.statusHistory.push({ from, to: 'kit_selected', changedBy: req.user._id, note: 'Kit: export' });
+    await lead.save();
+
+    await logActivity({
+      userId: req.user._id, action: 'LEAD_KIT_SELECTED', entity: 'Lead', entityId: lead._id,
+      details: `${lead.refNumber}: selected export kit`, ip: req.ip,
+    });
+    const populated = await Lead.findById(lead._id).populate(POPULATE);
+    return res.json({ success: true, data: populated });
+  }
+
   // Stockist kits have no rate master of their own — they draw from the
   // distributor catalogue and derive the stockist price from the DLP.
   const masterKitType = kitType === 'stockist' ? 'distributor' : kitType;
@@ -418,6 +448,7 @@ const selectKitType = asyncHandler(async (req, res) => {
   lead.kitType = kitType;
   lead.rates = items.map((item) => snapshotLine(item, kitType, dspBySku));
   lead.rateEditLog = [];
+  lead.exportConfig = undefined; // switching to a domestic kit drops any export snapshot
   lead.customTerms = {
     paymentTerms: settings.kit?.defaultPaymentTerms || '',
     creditPeriod: settings.kit?.defaultCreditPeriod || '',
@@ -444,6 +475,7 @@ const confirmRates = asyncHandler(async (req, res) => {
   if (!lead) throw ApiError.notFound('Lead not found');
   assertCanView(lead, req.user);
   assertNotLocked(lead);
+  if (lead.kitType === 'export') throw ApiError.badRequest('Export leads are confirmed from the export shipment step');
   if (!lead.kitType || !lead.rates.length) throw ApiError.badRequest('Select a kit type before confirming rates');
 
   const overrideById = new Map(rates.map((r) => [String(r.rateItemId), r]));
@@ -513,6 +545,119 @@ const confirmRates = asyncHandler(async (req, res) => {
   await logActivity({
     userId: req.user._id, action: 'LEAD_KIT_GENERATED', entity: 'Lead', entityId: lead._id,
     details: `${lead.refNumber}: generated ${lead.generatedFiles.length}-document ${lead.kitType} kit`, ip: req.ip,
+  });
+
+  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  res.json({ success: true, data: populated });
+});
+
+// PUT /api/leads/:id/export-config  (confirm the export shipment: snapshot the
+// selected products + the destination's commercials onto the lead, then
+// auto-generate the kit — the export counterpart of confirmRates)
+const confirmExportConfig = asyncHandler(async (req, res) => {
+  const { rateType, loadingType, containerSize, countryId, currency, lines, customTerms } = req.body;
+  const lead = await Lead.findById(req.params.id);
+  if (!lead) throw ApiError.notFound('Lead not found');
+  assertCanView(lead, req.user);
+  assertNotLocked(lead);
+  if (lead.kitType !== 'export') throw ApiError.badRequest('Select the export kit before configuring a shipment');
+
+  const country = await ExportCountry.findById(countryId);
+  if (!country || !country.isActive) throw ApiError.badRequest('Unknown or inactive destination country');
+
+  // Resolve + validate every line against the backing master. Weights default
+  // to the parsed pack size; a rate override is bounded by MRP like the
+  // domestic kits and logged the same way.
+  const resolved = await exportKitService.resolveLines(rateType, lines);
+  const edits = [];
+  lead.rates = resolved.map((l) => {
+    const item = l.item;
+    const netRate = round2(l.baseRateInr);
+    if (netRate > item.mrp) {
+      throw ApiError.badRequest(`"${item.productName}": rate ${netRate} exceeds MRP ${item.mrp}`);
+    }
+    if (netRate !== item.netRate) {
+      edits.push({ productName: item.productName, field: 'netRate', from: item.netRate, to: netRate, by: req.user._id });
+    }
+    const deviationPct =
+      item.netRate > 0 && netRate < item.netRate
+        ? round2(((item.netRate - netRate) / item.netRate) * 100)
+        : 0;
+    return {
+      rateItemId: item._id,
+      sku: item.sku,
+      productName: item.productName,
+      packSize: item.packSize,
+      category: item.category || '',
+      included: true,
+      mrp: item.mrp,
+      basic: 0,
+      dsp: 0,
+      standardNetRate: item.netRate,
+      netRate,
+      suggestiveMargin: item.suggestiveMargin || 0,
+      gst: item.gst,
+      // Exports are zero-rated under GST, so the line carries the base rate.
+      netInclGst: netRate,
+      deviationPct,
+      qty: l.qty,
+      unitWeightKg: l.unitWeightKg || 0,
+    };
+  });
+
+  lead.exportConfig = {
+    rateType,
+    loadingType,
+    containerSize: loadingType === 'full' ? containerSize : '',
+    currency,
+    countryId: country._id,
+    countryName: country.name,
+    countryCode: country.code,
+    cirPercent: country.cirPercent,
+    partLoadFreightPerKg: country.partLoadFreightPerKg,
+  };
+  applyCustomTerms(lead, customTerms);
+  if (edits.length) lead.rateEditLog.push(...edits);
+
+  // Validate the whole shipment (part-load weights, container, FX) by computing
+  // the card once before anything is persisted.
+  const card = await exportKitService.computeRateCardFromLead(lead);
+
+  const from = lead.status;
+  lead.status = 'rates_confirmed';
+  markEditedIfGenerated(lead);
+  lead.modifiedBy = req.user._id;
+  lead.statusHistory.push({
+    from, to: 'rates_confirmed', changedBy: req.user._id,
+    note:
+      `Export shipment: ${country.name} · ` +
+      `${loadingType === 'full' ? `full load (${card.config.container?.label || containerSize})` : 'part load'} · ` +
+      `${lead.rates.length} product(s) · ${currency}`,
+  });
+  await lead.save();
+
+  await logActivity({
+    userId: req.user._id, action: 'LEAD_RATES_CONFIRMED', entity: 'Lead', entityId: lead._id,
+    details:
+      `${lead.refNumber}: confirmed export shipment to ${country.name} ` +
+      `(${lead.rates.length} product(s), ${currency}${edits.length ? `, ${edits.length} rate override(s)` : ''})`,
+    ip: req.ip,
+  });
+
+  // Finalizing the shipment auto-(re)generates the kit, mirroring confirmRates.
+  await buildKitFiles(lead);
+  lead.status = from === 'delivered' ? 'delivered' : 'generated';
+  lead.locked = true;
+  lead.editedAfterGeneration = false;
+  lead.modifiedBy = req.user._id;
+  lead.statusHistory.push({
+    from: 'rates_confirmed', to: lead.status, changedBy: req.user._id, note: 'Kit generated · locked',
+  });
+  await lead.save();
+
+  await logActivity({
+    userId: req.user._id, action: 'LEAD_KIT_GENERATED', entity: 'Lead', entityId: lead._id,
+    details: `${lead.refNumber}: generated ${lead.generatedFiles.length}-document export kit`, ip: req.ip,
   });
 
   const populated = await Lead.findById(lead._id).populate(POPULATE);
@@ -1204,6 +1349,7 @@ module.exports = {
   deleteLead,
   selectKitType,
   confirmRates,
+  confirmExportConfig,
   generateLeadKit,
   saveTerms,
   unlockLead,

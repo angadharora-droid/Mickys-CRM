@@ -80,6 +80,13 @@ const env = {
     gid: process.env.META_SHEET_GID || '',
     csvUrl: process.env.META_SHEET_CSV_URL || '',
   },
+  // Export-kit exchange-rate refresher. On by default (daily); set
+  // FX_SYNC_ENABLED=false to turn it off, or FX_API_URL to change the feed.
+  fxSync: {
+    enabled: process.env.FX_SYNC_ENABLED !== 'false',
+    intervalHours: parseInt(process.env.FX_SYNC_INTERVAL_HOURS || '24', 10),
+    apiUrl: process.env.FX_API_URL || 'https://open.er-api.com/v6/latest/INR',
+  },
 };
 
 module.exports = env;
