@@ -32,6 +32,7 @@ const Lead = require('../models/Lead');
 const User = require('../models/User');
 const Counter = require('../models/Counter');
 const { logActivity } = require('./activity.service');
+const { canonicalCity } = require('../config/indianCities');
 
 // The Meta Ads lead-form sheet this sync was built against. Override with
 // META_SHEET_ID / META_SHEET_GID, or point elsewhere with META_SHEET_CSV_URL.
@@ -236,7 +237,9 @@ function toLead(rec) {
     contactPerson: person,
     mobileNumber,
     email: String(pick(rec, 'email', /email/)).toLowerCase(),
-    city: city || 'Unknown',
+    // Snapped to the canonical Indian-city spelling so form typos ("mumbay")
+    // land on the same value as hand-entered leads.
+    city: canonicalCity(city) || 'Unknown',
     businessType: mapBusinessType(pick(rec, 'business_type', /business_type/)),
     leadSource: 'Meta Ads',
     leadDate,

@@ -10,6 +10,7 @@ import { BUSINESS_TYPES, ACTION_POINTS, LEAD_OPTIONAL_FIELDS } from '@/lib/const
 import { formatBytes } from '@/lib/utils';
 import PageHeader from '@/components/shared/PageHeader';
 import FilePreviewDialog from '@/components/shared/FilePreviewDialog';
+import CityCombobox from '@/components/shared/CityCombobox';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -318,7 +319,13 @@ export default function LeadCreate() {
           <CardHeader><CardTitle className="text-base flex items-center gap-2"><MapPin className="h-4 w-4" /> Business Info</CardTitle></CardHeader>
           <CardContent className="grid gap-4 sm:grid-cols-2">
             <Field label="City" required error={errors.city}>
-              <Input {...register('city')} />
+              <Controller
+                name="city"
+                control={control}
+                render={({ field }) => (
+                  <CityCombobox value={field.value} onChange={field.onChange} />
+                )}
+              />
             </Field>
             <Field label="State" error={errors.state}>
               <Input {...register('state')} />

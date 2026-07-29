@@ -34,6 +34,7 @@ export default function LeadList() {
   const kitType = searchParams.get('kit') || ALL;
   const businessType = searchParams.get('biz') || ALL;
   const execId = searchParams.get('exec') || ALL;
+  const city = searchParams.get('city') || ALL;
   const page = Number(searchParams.get('page')) || 1;
 
   const [leads, setLeads] = useState([]);
@@ -41,6 +42,7 @@ export default function LeadList() {
   const [loading, setLoading] = useState(true);
   const [expandedRows, setExpandedRows] = useState({});
   const [execs, setExecs] = useState([]);
+  const [cities, setCities] = useState([]);
 
   // Write a single filter to the URL; changing any filter returns to page 1.
   const setFilter = useCallback((key, value) => {
@@ -68,6 +70,10 @@ export default function LeadList() {
         .then((res) => setExecs(res.data.data))
         .catch(() => {});
     }
+    // Only cities that actually have a visible lead — the filter's option set.
+    api.get('/cities', { params: { inUse: true } })
+      .then((res) => setCities(res.data.data))
+      .catch(() => {});
   }, [canSeeAll]);
 
   const fetchLeads = useCallback(async () => {
@@ -79,6 +85,7 @@ export default function LeadList() {
       if (kitType !== ALL) params.kitType = kitType;
       if (businessType !== ALL) params.businessType = businessType;
       if (execId !== ALL) params.execId = execId;
+      if (city !== ALL) params.city = city;
       const { data } = await api.get('/leads', { params });
       setLeads(data.data);
       setMeta(data.meta);
@@ -87,7 +94,7 @@ export default function LeadList() {
     } finally {
       setLoading(false);
     }
-  }, [page, search, status, kitType, businessType, execId]);
+  }, [page, search, status, kitType, businessType, execId, city]);
 
   useEffect(() => {
     const t = setTimeout(fetchLeads, search ? 350 : 0);
@@ -100,7 +107,8 @@ export default function LeadList() {
   };
 
   const toggleRow = (id) => setExpandedRows((c) => ({ ...c, [id]: !c[id] }));
-  const hasFilters = search || status !== ALL || kitType !== ALL || businessType !== ALL || execId !== ALL;
+  const hasFilters =
+    search || status !== ALL || kitType !== ALL || businessType !== ALL || execId !== ALL || city !== ALL;
 
   return (
     <div>
@@ -145,6 +153,14 @@ export default function LeadList() {
             <SelectContent>
               <SelectItem value={ALL}>All types</SelectItem>
               {BUSINESS_TYPES.map((b) => <SelectItem key={b} value={b}>{b}</SelectItem>)}
+            </SelectContent>
+          </Select>
+
+          <Select value={city} onValueChange={(v) => setFilter('city', v)}>
+            <SelectTrigger><SelectValue placeholder="City" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL}>All cities</SelectItem>
+              {cities.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
             </SelectContent>
           </Select>
 

@@ -39,6 +39,7 @@ import {
   ClipboardList, Plus, History, UserCog, X,
 } from 'lucide-react';
 import ExportKitStep from './ExportKitStep';
+import CityCombobox from '@/components/shared/CityCombobox';
 
 const NO_ACTION = '__none__';
 
@@ -838,7 +839,7 @@ export default function LeadDetail() {
                 </div>
                 <div className="space-y-1.5">
                   <Label>City *</Label>
-                  <Input value={clientForm.city} onChange={(e) => setClientField('city', e.target.value)} />
+                  <CityCombobox value={clientForm.city} onChange={(v) => setClientField('city', v)} />
                 </div>
                 <div className="space-y-1.5">
                   <Label>State</Label>
