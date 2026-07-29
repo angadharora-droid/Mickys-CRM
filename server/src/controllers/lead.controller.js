@@ -14,6 +14,7 @@ const { sendKitEmail } = require('../services/email.service');
 const { generateKit, buildZip, getBrochureBuffer, BROCHURE_PATH, KITS_DIR } = require('../services/kit.service');
 const ExportCountry = require('../models/ExportCountry');
 const exportKitService = require('../services/exportKit.service');
+const { INDIAN_CITIES, canonicalCity } = require('../config/indianCities');
 const { uploadBuffer, deleteFiles, openDownloadStream, getBuffer } = require('../services/fileStore.service');
 const { dlp, stockistPrice } = require('../config/kitContent');
 
@@ -247,6 +248,9 @@ async function ensureFreshKit(lead) {
 // POST /api/leads
 const createLead = asyncHandler(async (req, res) => {
   const { assignedExecId, internalNotes, followUpDate, followUpNote, ...rest } = req.body;
+  // Every stored city goes through the canonical Indian-city list, so one city
+  // is always spelled one way ("mumbay" and "Bombay" both land as "Mumbai").
+  rest.city = canonicalCity(rest.city);
   const execId = await resolveExecId(req, assignedExecId);
   const refNumber = await nextRefNumber(rest.city);
 
@@ -280,6 +284,23 @@ const createLead = asyncHandler(async (req, res) => {
   res.status(201).json({ success: true, data: populated });
 });
 
+// GET /api/cities — the city dropdown's options: the canonical Indian list
+// plus any distinct city already stored on a lead (legacy or foreign values
+// survive normalisation and stay selectable). With ?inUse=true it instead
+// returns only the cities on leads the caller can see — the option set for the
+// lead-list filter.
+const listCities = asyncHandler(async (req, res) => {
+  if (req.query.inUse === 'true') {
+    const inUse = await Lead.distinct('city', scopeFilter(req.user));
+    return res.json({ success: true, data: inUse.filter(Boolean).sort((a, b) => a.localeCompare(b)) });
+  }
+  const dbCities = await Lead.distinct('city');
+  const all = [...new Set([...INDIAN_CITIES, ...dbCities.filter(Boolean)])].sort((a, b) =>
+    a.localeCompare(b)
+  );
+  res.json({ success: true, data: all });
+});
+
 // GET /api/leads
 const listLeads = asyncHandler(async (req, res) => {
   const { page, limit, skip } = getPagination(req.query);
@@ -288,7 +309,9 @@ const listLeads = asyncHandler(async (req, res) => {
   if (q.status) filter.status = q.status;
   if (q.kitType) filter.kitType = q.kitType;
   if (q.businessType) filter.businessType = q.businessType;
-  if (q.city) filter.city = searchRegex(q.city);
+  // Cities are stored canonically, so the filter is an exact value from the
+  // dropdown — "Delhi" must not also match "New Delhi".
+  if (q.city) filter.city = q.city;
   if (q.execId && req.user.role === 'admin') filter.assignedExecId = q.execId;
   if (q.createdBy && req.user.role === 'admin') filter.createdBy = q.createdBy;
   if (q.dateFrom || q.dateTo) {
@@ -354,6 +377,7 @@ const updateLead = asyncHandler(async (req, res) => {
   if (assignedExecId && req.user.role === 'admin') {
     lead.assignedExecId = await resolveExecId(req, assignedExecId);
   }
+  if (rest.city !== undefined) rest.city = canonicalCity(rest.city);
   Object.assign(lead, rest);
   markEditedIfGenerated(lead);
   lead.modifiedBy = req.user._id;
@@ -1342,6 +1366,7 @@ const markDelivered = asyncHandler(async (req, res) => {
 });
 
 module.exports = {
+  listCities,
   createLead,
   listLeads,
   getLead,
