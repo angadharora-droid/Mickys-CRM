@@ -111,14 +111,6 @@ function assertCanView(lead, user) {
   throw ApiError.forbidden('You can only access your own leads');
 }
 
-/** Client details are locked once a kit type is chosen (admin may still edit). */
-function assertEditable(lead, user) {
-  if (user.role === 'admin') return;
-  if (lead.status !== 'new') {
-    throw ApiError.badRequest('Client details are locked once a kit type is selected');
-  }
-}
-
 /**
  * Once a kit is generated the lead is frozen until someone clicks "Edit" to
  * unlock it. This applies to everyone (incl. admin) — the unlock is the explicit
@@ -375,13 +367,12 @@ const getLead = asyncHandler(async (req, res) => {
   res.json({ success: true, data: lead });
 });
 
-// PUT /api/leads/:id  (client details — only before a kit type is locked in)
+// PUT /api/leads/:id  (client details — editable at any stage until the kit is generated/locked)
 const updateLead = asyncHandler(async (req, res) => {
   const lead = await Lead.findById(req.params.id);
   if (!lead) throw ApiError.notFound('Lead not found');
   assertCanView(lead, req.user);
   assertNotLocked(lead);
-  assertEditable(lead, req.user);
 
   const { assignedExecId, ...rest } = req.body;
   if (assignedExecId && req.user.role === 'admin') {
