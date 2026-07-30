@@ -66,8 +66,12 @@ export default function LeadList() {
 
   useEffect(() => {
     if (canSeeAll) {
-      api.get('/users', { params: { role: 'sales_exec', limit: 100 } })
-        .then((res) => setExecs(res.data.data))
+      // Leads can be owned by an admin too, so the owner filter lists both.
+      Promise.all([
+        api.get('/users', { params: { role: 'admin', limit: 100 } }),
+        api.get('/users', { params: { role: 'sales_exec', limit: 100 } }),
+      ])
+        .then(([adminRes, execRes]) => setExecs([...adminRes.data.data, ...execRes.data.data]))
         .catch(() => {});
     }
     // Only cities that actually have a visible lead — the filter's option set.
@@ -166,10 +170,14 @@ export default function LeadList() {
 
           {canSeeAll && (
             <Select value={execId} onValueChange={(v) => setFilter('exec', v)}>
-              <SelectTrigger><SelectValue placeholder="Exec" /></SelectTrigger>
+              <SelectTrigger><SelectValue placeholder="Assigned to" /></SelectTrigger>
               <SelectContent>
-                <SelectItem value={ALL}>All execs</SelectItem>
-                {execs.map((e) => <SelectItem key={e._id} value={e._id}>{e.name}</SelectItem>)}
+                <SelectItem value={ALL}>All owners</SelectItem>
+                {execs.map((e) => (
+                  <SelectItem key={e._id} value={e._id}>
+                    {e.name}{e.role === 'admin' ? ' — Admin' : ''}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           )}

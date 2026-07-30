@@ -94,11 +94,9 @@ function snapshotLine(item, kitType, dspBySku) {
 
 function scopeFilter(user) {
   if (user.role === 'admin') return {}; // admin sees all
-  // PR managers keep sight of every lead they brought in, even after an admin
-  // hands it to a sales exec; execs see only the leads assigned to them.
-  if (user.role === 'pr_manager') {
-    return { $or: [{ assignedExecId: user._id }, { createdBy: user._id }] };
-  }
+  // Visibility follows the current owner, not the creator: reassigning a lead
+  // (e.g. to an admin) moves it entirely off the previous owner's lists, even
+  // if they created it.
   return { assignedExecId: user._id };
 }
 
@@ -106,9 +104,7 @@ function assertCanView(lead, user) {
   if (user.role === 'admin') return;
   const uid = user._id.toString();
   const exec = lead.assignedExecId?._id?.toString() || lead.assignedExecId?.toString();
-  const creator = lead.createdBy?._id?.toString() || lead.createdBy?.toString();
   if (exec === uid) return;
-  if (user.role === 'pr_manager' && creator === uid) return;
   throw ApiError.forbidden('You can only access your own leads');
 }
 
@@ -157,12 +153,17 @@ function applyCustomTerms(lead, customTerms) {
 
 async function resolveExecId(req, providedId) {
   // Everyone (exec, PR manager, admin) owns the leads they create. An admin
-  // may still explicitly assign a different sales exec by passing their id.
+  // may still explicitly hand the lead to a sales exec — or to an admin, which
+  // takes it out of the execs' sight entirely (visibility follows the owner).
   if (!providedId || String(providedId) === String(req.user._id)) return req.user._id;
   if (req.user.role !== 'admin') return req.user._id;
-  const exec = await User.findOne({ _id: providedId, role: 'sales_exec', isActive: true });
-  if (!exec) throw ApiError.badRequest('Assigned sales executive not found or inactive');
-  return exec._id;
+  const owner = await User.findOne({
+    _id: providedId,
+    role: { $in: ['sales_exec', 'admin'] },
+    isActive: true,
+  });
+  if (!owner) throw ApiError.badRequest('Assigned user not found or inactive');
+  return owner._id;
 }
 
 async function buildKitFiles(lead) {
@@ -334,15 +335,7 @@ const listLeads = asyncHandler(async (req, res) => {
   }
   if (q.search) {
     const rx = searchRegex(q.search);
-    const searchOr = [{ refNumber: rx }, { businessName: rx }, { contactPerson: rx }, { email: rx }, { mobileNumber: rx }];
-    // The PR-manager scope is itself an $or, so combine the two with $and
-    // instead of letting the search clause overwrite the visibility scope.
-    if (filter.$or) {
-      filter.$and = [{ $or: filter.$or }, { $or: searchOr }];
-      delete filter.$or;
-    } else {
-      filter.$or = searchOr;
-    }
+    filter.$or = [{ refNumber: rx }, { businessName: rx }, { contactPerson: rx }, { email: rx }, { mobileNumber: rx }];
   }
 
   const [leads, total] = await Promise.all([
