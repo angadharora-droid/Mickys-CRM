@@ -303,6 +303,17 @@ const listCities = asyncHandler(async (req, res) => {
   res.json({ success: true, data: all });
 });
 
+// GET /api/leads/creators — the "Created by" filter's option set: only the
+// creators that actually appear on leads the caller can see, so an exec's
+// dropdown never lists people who created none of their leads.
+const listCreators = asyncHandler(async (req, res) => {
+  const ids = (await Lead.distinct('createdBy', scopeFilter(req.user))).filter(Boolean);
+  const creators = await User.find({ _id: { $in: ids } })
+    .select('name role')
+    .sort({ name: 1 });
+  res.json({ success: true, data: creators });
+});
+
 // GET /api/leads
 const listLeads = asyncHandler(async (req, res) => {
   const { page, limit, skip } = getPagination(req.query);
@@ -315,7 +326,9 @@ const listLeads = asyncHandler(async (req, res) => {
   // dropdown — "Delhi" must not also match "New Delhi".
   if (q.city) filter.city = q.city;
   if (q.execId && req.user.role === 'admin') filter.assignedExecId = q.execId;
-  if (q.createdBy && req.user.role === 'admin') filter.createdBy = q.createdBy;
+  // Anyone may narrow their list by creator — the visibility scope above still
+  // applies, so a non-admin only ever sees their own leads filtered further.
+  if (q.createdBy) filter.createdBy = q.createdBy;
   if (q.dateFrom || q.dateTo) {
     filter.leadDate = {};
     if (q.dateFrom) filter.leadDate.$gte = new Date(q.dateFrom);
@@ -1361,6 +1374,7 @@ const markDelivered = asyncHandler(async (req, res) => {
 
 module.exports = {
   listCities,
+  listCreators,
   createLead,
   listLeads,
   getLead,
