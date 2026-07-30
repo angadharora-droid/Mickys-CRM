@@ -371,15 +371,19 @@ export default function LeadDetail() {
       .then(() => toast.success(`${KIT_TYPE_LABELS[kitType]} selected`))
       .catch(() => {});
 
-  // Admin: pass the lead on to a sales executive. The exec list is fetched
-  // lazily the first time the dialog opens.
+  // Admin: pass the lead on to a sales executive or an admin. Handing it to an
+  // admin takes it off every exec's list — only admins will see it. The list is
+  // fetched lazily the first time the dialog opens.
   const openReassign = async () => {
     setReassignTo(lead.assignedExecId?._id || '');
     setReassignOpen(true);
     if (execs.length) return;
     try {
-      const { data } = await api.get('/users', { params: { role: 'sales_exec', isActive: 'true', limit: 100 } });
-      setExecs(data.data);
+      const [adminRes, execRes] = await Promise.all([
+        api.get('/users', { params: { role: 'admin', isActive: 'true', limit: 100 } }),
+        api.get('/users', { params: { role: 'sales_exec', isActive: 'true', limit: 100 } }),
+      ]);
+      setExecs([...adminRes.data.data, ...execRes.data.data]);
     } catch (err) {
       toast.error(apiError(err));
     }
@@ -699,21 +703,23 @@ export default function LeadDetail() {
         </Button>
       </div>
 
-      {/* Admin: hand the lead to a sales executive */}
+      {/* Admin: hand the lead to a sales executive or an admin */}
       <Dialog open={reassignOpen} onOpenChange={setReassignOpen}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle>Reassign lead</DialogTitle>
             <DialogDescription>
-              Pass {lead.businessName} on to a sales executive. The lead will move to their list.
+              Pass {lead.businessName} on to a sales executive or an admin. The lead moves to the
+              new owner's list; assigning it to an admin hides it from all sales executives.
             </DialogDescription>
           </DialogHeader>
           <Select value={reassignTo} onValueChange={setReassignTo}>
-            <SelectTrigger><SelectValue placeholder="Select sales executive" /></SelectTrigger>
+            <SelectTrigger><SelectValue placeholder="Select new owner" /></SelectTrigger>
             <SelectContent>
               {execs.map((e) => (
                 <SelectItem key={e._id} value={e._id}>
-                  {e.name}{e.employeeCode ? ` (${e.employeeCode})` : ''}
+                  {e.name}
+                  {e.role === 'admin' ? ' — Admin' : e.employeeCode ? ` (${e.employeeCode})` : ''}
                 </SelectItem>
               ))}
             </SelectContent>

@@ -2,8 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import api, { apiError } from '@/lib/api';
-import { useAuth } from '@/context/AuthContext';
-import { LEAD_STATUSES, STATUS_LABELS, ROLES } from '@/lib/constants';
+import { LEAD_STATUSES, STATUS_LABELS } from '@/lib/constants';
 import { formatDate } from '@/lib/utils';
 import PageHeader from '@/components/shared/PageHeader';
 import StatusBadge from '@/components/shared/StatusBadge';
@@ -97,10 +96,6 @@ const downloadExcel = (filename, content) => {
 
 export default function MyRecords() {
   const navigate = useNavigate();
-  const { user } = useAuth();
-  // PR managers keep records of leads they created even after an admin hands
-  // them to a sales exec, so show them who each lead currently belongs to.
-  const isPrManager = user?.role === ROLES.PR_MANAGER;
   const [records, setRecords] = useState([]);
   const [meta, setMeta] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -172,9 +167,7 @@ export default function MyRecords() {
     <div>
       <PageHeader
         title="My Records"
-        description={isPrManager
-          ? 'All leads you created, including ones handed to a sales executive'
-          : 'View and manage all leads assigned to you'}
+        description="View and manage all leads assigned to you"
       >
         <Button variant="outline" onClick={downloadReport} disabled={reportLoading}>
           {reportLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
@@ -247,7 +240,6 @@ export default function MyRecords() {
                   <TableHead className="hidden sm:table-cell">Reference</TableHead>
                   <TableHead>Client</TableHead>
                   <TableHead className="hidden md:table-cell">City</TableHead>
-                  {isPrManager && <TableHead>Assigned To</TableHead>}
                   <TableHead className="hidden lg:table-cell">Lead Date</TableHead>
                   <TableHead>Status</TableHead>
                 </TableRow>
@@ -270,13 +262,6 @@ export default function MyRecords() {
                       </p>
                     </TableCell>
                     <TableCell className="hidden md:table-cell">{record.city}</TableCell>
-                    {isPrManager && (
-                      <TableCell className="whitespace-nowrap">
-                        {record.assignedExecId?._id === user._id
-                          ? <span className="text-muted-foreground">You</span>
-                          : record.assignedExecId?.name || '—'}
-                      </TableCell>
-                    )}
                     <TableCell className="hidden whitespace-nowrap text-muted-foreground lg:table-cell">
                       {formatDate(record.leadDate)}
                     </TableCell>
