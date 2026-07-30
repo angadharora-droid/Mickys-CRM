@@ -691,6 +691,9 @@ export default function LeadDetail() {
           </Badge>
         )}
         <span className="text-sm text-muted-foreground">Owner: {lead.assignedExecId?.name || '—'}</span>
+        {lead.createdBy?.name && lead.createdBy?._id !== (lead.assignedExecId?._id || '') && (
+          <span className="text-sm text-muted-foreground">· Created by: {lead.createdBy.name}</span>
+        )}
         {isAdmin && (
           <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={openReassign}>
             <UserCog className="h-3.5 w-3.5" /> Reassign

@@ -213,6 +213,7 @@ export default function LeadList() {
                   <TableHead className="hidden sm:table-cell">City</TableHead>
                   <TableHead className="hidden md:table-cell">Kit</TableHead>
                   <TableHead className="hidden lg:table-cell">Owner</TableHead>
+                  <TableHead className="hidden lg:table-cell">Created by</TableHead>
                   <TableHead>Status</TableHead>
                 </TableRow>
               </TableHeader>
@@ -243,6 +244,7 @@ export default function LeadList() {
                           {lead.kitType ? <Badge variant="outline">{KIT_TYPE_LABELS[lead.kitType]}</Badge> : <span className="text-muted-foreground">—</span>}
                         </TableCell>
                         <TableCell className="hidden lg:table-cell">{lead.assignedExecId?.name || '—'}</TableCell>
+                        <TableCell className="hidden lg:table-cell text-muted-foreground">{lead.createdBy?.name || '—'}</TableCell>
                         <TableCell>
                           <div className="flex flex-col items-start gap-1">
                             <div className="flex items-center gap-1.5">
@@ -259,7 +261,7 @@ export default function LeadList() {
                       </TableRow>
                       {isExpanded && (
                         <TableRow className="bg-muted/25 hover:bg-muted/25 lg:hidden">
-                          <TableCell colSpan={7} className="px-4 py-3">
+                          <TableCell colSpan={8} className="px-4 py-3">
                             <dl className="grid gap-3 text-sm sm:grid-cols-3">
                               <div>
                                 <dt className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">City</dt>
@@ -272,6 +274,14 @@ export default function LeadList() {
                               <div>
                                 <dt className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Lead date</dt>
                                 <dd className="mt-1 font-medium">{formatDate(lead.leadDate)}</dd>
+                              </div>
+                              <div>
+                                <dt className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Owner</dt>
+                                <dd className="mt-1 font-medium">{lead.assignedExecId?.name || '—'}</dd>
+                              </div>
+                              <div>
+                                <dt className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Created by</dt>
+                                <dd className="mt-1 font-medium">{lead.createdBy?.name || '—'}</dd>
                               </div>
                             </dl>
                           </TableCell>
