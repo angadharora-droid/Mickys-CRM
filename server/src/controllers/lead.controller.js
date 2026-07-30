@@ -55,11 +55,12 @@ async function nextRefNumber(city) {
  * Snapshot a priced line from a rate-master item (standard, un-overridden).
  *
  * Distributor card: the editable price is the DLP (Delivered Landed Price) =
- * Basic + GST, to the paisa. `basic` is the master net rate and `dsp`
+ * the Basic rate, exclusive of GST. `basic` is the master net rate and `dsp`
  * (Distributor Selling Price) is the product's institutional rate, looked up by
  * SKU. Stockist card: the editable price is the Stockist Price = that same DLP
  * × 0.95; the DLP itself is fixed and re-derived from `basic` wherever it's
  * displayed. Institutional card: `netRate` is the editable net rate as before.
+ * All rate-card prices are stated exclusive of GST — no GST is added anywhere.
  */
 function snapshotLine(item, kitType, dspBySku) {
   const isStockist = kitType === 'stockist';
@@ -68,9 +69,9 @@ function snapshotLine(item, kitType, dspBySku) {
   const dsp = isDistLike ? (dspBySku?.get(item.sku) || 0) : 0;
   // Distributor: DLP · Stockist: Stockist Price · Institutional: net rate.
   const netRate = isStockist
-    ? stockistPrice(dlp(basic, item.gst))
+    ? stockistPrice(dlp(basic))
     : isDistLike
-      ? dlp(basic, item.gst)
+      ? dlp(basic)
       : basic;
   return {
     rateItemId: item._id,
@@ -86,7 +87,9 @@ function snapshotLine(item, kitType, dspBySku) {
     netRate,
     suggestiveMargin: item.suggestiveMargin || 0,
     gst: item.gst,
-    // DLP / Stockist Price already include GST; institutional net rate is pre-GST.
+    // Rate-card prices are exclusive of GST, so the dist-like cards carry the
+    // editable price as-is (the field name is legacy); the institutional
+    // quotation still derives its Net+GST display value.
     netInclGst: isDistLike ? netRate : round2(netRate * (1 + item.gst / 100)),
     deviationPct: 0,
   };
@@ -528,8 +531,8 @@ const confirmRates = asyncHandler(async (req, res) => {
         ? round2(((line.standardNetRate - newRate) / line.standardNetRate) * 100)
         : 0;
     // For the distributor card the edited value is the DLP and for the stockist
-    // card it's the Stockist Price — both already include GST; institutional
-    // net rates are pre-GST.
+    // card it's the Stockist Price — both stated exclusive of GST, like the
+    // institutional net rates.
     const isDist = lead.kitType === 'distributor' || lead.kitType === 'stockist';
     return {
       ...line.toObject(),

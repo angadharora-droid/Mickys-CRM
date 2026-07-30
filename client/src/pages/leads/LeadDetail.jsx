@@ -96,22 +96,21 @@ function deriveLine(r) {
     ? ((r.standardNetRate - net) / r.standardNetRate) * 100
     : 0;
   const netInclGst = valid ? net * (1 + r.gst / 100) : 0;
-  // Distributor card: `net` is the editable DLP. Basic & GST are fixed; the DSP
-  // (suggested selling price) drives both margins.
+  // Distributor card: `net` is the editable DLP (the Basic rate, exclusive of
+  // GST). Basic is fixed; the DSP (suggested selling price) drives both margins.
   const basic = Number(r.basic) || 0;
-  const gstAmt = basic * (r.gst / 100);
   const dsp = Number(r.dsp) || 0;
   const dlp = net;
   const marginDsp = valid && dsp > 0 && dlp > 0 ? ((dsp - dlp) / dsp) * 100 : null;
   const marginMrp = valid && r.mrp > 0 && dlp > 0 ? ((r.mrp - dlp) / r.mrp) * 100 : null;
-  // Stockist card: `net` is the editable Stockist Price; its fixed DLP is
-  // Basic + GST and the saving/margin columns benchmark the price against
-  // DLP, DSP and MRP.
-  const dlpExact = Math.round(basic * (1 + r.gst / 100) * 100) / 100;
+  // Stockist card: `net` is the editable Stockist Price; its fixed DLP is the
+  // Basic rate (exclusive of GST) and the saving/margin columns benchmark the
+  // price against DLP, DSP and MRP.
+  const dlpExact = Math.round(basic * 100) / 100;
   const vsDlp = valid && dlpExact > 0 && net > 0 ? ((dlpExact - net) / dlpExact) * 100 : null;
   const vsDsp = valid && dsp > 0 && net > 0 ? ((dsp - net) / dsp) * 100 : null;
   const vsMrp = valid && r.mrp > 0 && net > 0 ? ((r.mrp - net) / r.mrp) * 100 : null;
-  return { net, valid, aboveMrp, deviation, netInclGst, error: !valid || aboveMrp, basic, gstAmt, dsp, dlp, marginDsp, marginMrp, dlpExact, vsDlp, vsDsp, vsMrp };
+  return { net, valid, aboveMrp, deviation, netInclGst, error: !valid || aboveMrp, basic, dsp, dlp, marginDsp, marginMrp, dlpExact, vsDlp, vsDsp, vsMrp };
 }
 
 function Stepper({ status }) {
@@ -1334,7 +1333,7 @@ export default function LeadDetail() {
                 {isStockist && (
                   <p className="text-xs text-muted-foreground">
                     Only <span className="font-medium text-foreground">Stockist Price</span> is editable — it defaults to 5% below
-                    the DLP and the saving/margin columns are calculated from it. DLP = Distributor Landed Price (Basic + GST) ·
+                    the DLP and the saving/margin columns are calculated from it. DLP = Distributor Landed Price (exclusive of GST) ·
                     DSP = Distributor Selling Price (the product&rsquo;s institutional rate).
                   </p>
                 )}
@@ -1374,7 +1373,6 @@ export default function LeadDetail() {
                         {isDistributor ? (
                           <>
                             <TableHead className="text-right hidden sm:table-cell">Basic</TableHead>
-                            <TableHead className="text-right hidden md:table-cell">GST 5%</TableHead>
                             <TableHead className="text-right">DLP</TableHead>
                             <TableHead className="text-right hidden lg:table-cell">Margin DLP&rarr;DSP</TableHead>
                             <TableHead className="text-right hidden sm:table-cell">DSP</TableHead>
@@ -1383,7 +1381,6 @@ export default function LeadDetail() {
                         ) : isStockist ? (
                           <>
                             <TableHead className="text-right hidden md:table-cell">Basic</TableHead>
-                            <TableHead className="text-right hidden md:table-cell">GST 5%</TableHead>
                             <TableHead className="text-right hidden sm:table-cell">DLP</TableHead>
                             <TableHead className="text-right">Stockist Price</TableHead>
                             <TableHead className="text-right hidden lg:table-cell">vs DLP (Saving %)</TableHead>
@@ -1439,7 +1436,6 @@ export default function LeadDetail() {
                             {isDistributor ? (
                               <>
                                 <TableCell className="text-right tabular-nums hidden sm:table-cell text-muted-foreground">{formatCurrency(d.basic)}</TableCell>
-                                <TableCell className="text-right tabular-nums hidden md:table-cell text-muted-foreground">{formatCurrency(d.gstAmt)}</TableCell>
                                 {priceCell}
                                 <TableCell className="text-right tabular-nums hidden lg:table-cell text-muted-foreground">{fmtPct(d.marginDsp)}</TableCell>
                                 <TableCell className="text-right tabular-nums hidden sm:table-cell">{d.dsp > 0 ? formatCurrency(d.dsp) : '—'}</TableCell>
@@ -1448,7 +1444,6 @@ export default function LeadDetail() {
                             ) : isStockist ? (
                               <>
                                 <TableCell className="text-right tabular-nums hidden md:table-cell text-muted-foreground">{d.basic > 0 ? formatCurrency(d.basic) : 'TBD'}</TableCell>
-                                <TableCell className="text-right tabular-nums hidden md:table-cell text-muted-foreground">{d.basic > 0 ? formatCurrency(d.gstAmt) : '—'}</TableCell>
                                 <TableCell className="text-right tabular-nums hidden sm:table-cell">{d.dlpExact > 0 ? formatCurrency(d.dlpExact) : '—'}</TableCell>
                                 {priceCell}
                                 <TableCell className="text-right tabular-nums hidden lg:table-cell text-muted-foreground">{fmtPct(d.vsDlp)}</TableCell>

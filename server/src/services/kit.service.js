@@ -268,9 +268,9 @@ function priceTable(doc, y, ctx) {
   // Column widths sum to the content width (last column takes the remainder).
   // The two margin columns are spelled out as "Margin …" (wrapping to two lines)
   // so the reader knows the percentages are margins.
-  // No GST column: the DLP already includes it, and the card quotes the
-  // distributor a landed price, not a tax breakdown. The width it used goes to
-  // the product name, so the remaining columns keep their positions.
+  // No GST column: every price on the card is stated exclusive of GST, so
+  // there is no tax breakdown to show. The width it used goes to the product
+  // name, so the remaining columns keep their positions.
   const defs = [
     ['sr', 'Sr', 18, 'left'],
     ['name', 'Product Name', 180, 'left'],
@@ -331,7 +331,7 @@ function priceTable(doc, y, ctx) {
         wt: it.packSize || '',
         mrp: inr(it.mrp),
         basic: tbd ? 'TBD' : inr(basic),
-        // Basic + GST lands on the paisa, so the DLP is quoted to two decimals.
+        // Discount overrides can land on the paisa, so the DLP keeps two decimals.
         dlp: tbd ? '-' : inr2(dlp),
         mDsp: mDsp == null ? '-' : pct(mDsp),
         dsp: dsp > 0 ? inr(dsp) : '-',
@@ -389,7 +389,7 @@ function drawPriceCard(doc, ctx) {
   y += 24;
 
   doc.font('Helvetica').fontSize(7.5).fill(SLATE)
-    .text('All prices in Rs.  ·  DLP = Delivered Landed Price (Basic + GST)  ·  DSP = Distributor Selling Price  ·  Margins shown as %', M, y, { width: W });
+    .text('All prices in Rs., exclusive of GST  ·  DLP = Delivered Landed Price  ·  DSP = Distributor Selling Price  ·  Margins shown as %', M, y, { width: W });
   y += 14;
   y = priceTable(doc, y, ctx);
   const priceTerms = content.PRICE_CARD_TERMS.map((t) => t.replace('{priceLabel}', 'DLP'));
@@ -399,11 +399,11 @@ function drawPriceCard(doc, ctx) {
 }
 
 // ---------------- Stockist Price Card ----------------
-// Mirrors the reference price card: Sr / Product / Wt / MRP / Basic / GST /
-// DLP (Basic + GST) / Stockist Price (the snapshot's editable netRate,
-// standard = DLP × 0.95) plus savings/margin columns benchmarked against
-// DLP, DSP and MRP. Unlike the distributor card this one keeps its GST column,
-// since the stockist price is quoted against a broken-out landed price.
+// Mirrors the reference price card: Sr / Product / Wt / MRP / Basic /
+// DLP (the Basic rate, exclusive of GST) / Stockist Price (the snapshot's
+// editable netRate, standard = DLP × 0.95) plus savings/margin columns
+// benchmarked against DLP, DSP and MRP. No GST column — every price on the
+// card is stated exclusive of GST.
 function stockistPriceTable(doc, y, ctx) {
   const W = contentWidth(doc);
   const right = M + W;
@@ -414,11 +414,10 @@ function stockistPriceTable(doc, y, ctx) {
   // The Stockist Price and the three benchmark columns wrap to two lines.
   const defs = [
     ['sr', 'Sr', 15, 'left'],
-    ['name', 'Product Name', 116, 'left'],
+    ['name', 'Product Name', 156, 'left'],
     ['wt', 'Wt', 40, 'left'],
     ['mrp', 'MRP', 38, 'right'],
     ['basic', 'Basic', 38, 'right'],
-    ['gst', 'GST 5%', 40, 'right'],
     ['dlp', 'DLP', 40, 'right'],
     ['stk', 'Stockist\nPrice', 44, 'right'],
     ['vsDlp', 'vs DLP\nSaving', 47, 'right'],
@@ -462,8 +461,7 @@ function stockistPriceTable(doc, y, ctx) {
       const basic = Number(it.basic) || 0;
       const dsp = Number(it.dsp) || 0;
       const tbd = !basic;
-      const gstAmt = basic * (it.gst / 100);
-      const dlp = tbd ? 0 : content.dlp(basic, it.gst); // Basic + GST
+      const dlp = tbd ? 0 : content.dlp(basic); // the Basic rate, exclusive of GST
       const stk = tbd ? 0 : Number(it.netRate) || 0; // snapshotted / exec-edited Stockist Price
       const vsDlp = dlp > 0 && stk > 0 ? ((dlp - stk) / dlp) * 100 : null;
       const vsDsp = dsp > 0 && stk > 0 ? ((dsp - stk) / dsp) * 100 : null;
@@ -474,7 +472,6 @@ function stockistPriceTable(doc, y, ctx) {
         wt: it.packSize || '',
         mrp: inr(it.mrp),
         basic: tbd ? 'TBD' : inr(basic),
-        gst: tbd ? '-' : inr2(gstAmt),
         dlp: tbd ? '-' : inr(dlp),
         stk: stk > 0 ? inr(stk) : '-',
         vsDlp: vsDlp == null ? '-' : pct(vsDlp),
@@ -506,7 +503,7 @@ function drawStockistPriceCard(doc, ctx) {
   y += 24;
 
   doc.font('Helvetica').fontSize(7.5).fill(SLATE)
-    .text('All prices in Rs.  ·  DLP = Distributor Landed Price (Basic + GST)  ·  Stockist Price = DLP x 0.95 (5% below DLP)  ·  DSP = Distributor Selling Price  ·  Margins shown as %', M, y, { width: W });
+    .text('All prices in Rs., exclusive of GST  ·  DLP = Distributor Landed Price  ·  Stockist Price = DLP x 0.95 (5% below DLP)  ·  DSP = Distributor Selling Price  ·  Margins shown as %', M, y, { width: W });
   y += 22;
   y = stockistPriceTable(doc, y, ctx);
   // Same T&C as the distributor card, but without the DLP price label prefix.
