@@ -125,19 +125,19 @@ function createdAtMatch({ from, to }) {
   return { createdAt: range };
 }
 
-// GET /api/dashboard/lead-tracker  (admin) — leads grouped by who created them,
-// with a per-status breakdown, plus a per-day creation breakdown. Both scoped by
-// an optional ?from / ?to creation-date range.
+// GET /api/dashboard/lead-tracker  (admin) — leads grouped by their current
+// owner (assignee), with a per-status breakdown, plus a per-day creation
+// breakdown. Both scoped by an optional ?from / ?to creation-date range.
 const leadTracker = asyncHandler(async (req, res) => {
   const match = createdAtMatch(req.query);
   const statusSum = (s) => ({ $sum: { $cond: [{ $eq: ['$status', s] }, 1, 0] } });
 
-  const [creators, daily] = await Promise.all([
+  const [owners, daily] = await Promise.all([
     Lead.aggregate([
       { $match: match },
       {
         $group: {
-          _id: '$createdBy',
+          _id: '$assignedExecId',
           total: { $sum: 1 },
           new: statusSum('new'),
           kit_selected: statusSum('kit_selected'),
@@ -149,14 +149,14 @@ const leadTracker = asyncHandler(async (req, res) => {
         },
       },
       { $sort: { total: -1 } },
-      { $lookup: { from: 'users', localField: '_id', foreignField: '_id', as: 'creator' } },
-      { $unwind: { path: '$creator', preserveNullAndEmptyArrays: true } },
+      { $lookup: { from: 'users', localField: '_id', foreignField: '_id', as: 'owner' } },
+      { $unwind: { path: '$owner', preserveNullAndEmptyArrays: true } },
       {
         $project: {
           _id: 0,
-          creatorId: '$_id',
-          name: { $ifNull: ['$creator.name', 'Unknown'] },
-          role: '$creator.role',
+          ownerId: '$_id',
+          name: { $ifNull: ['$owner.name', 'Unknown'] },
+          role: '$owner.role',
           total: 1, new: 1, kit_selected: 1, rates_confirmed: 1, generated: 1, delivered: 1,
           firstAt: 1, lastAt: 1,
         },
@@ -176,7 +176,7 @@ const leadTracker = asyncHandler(async (req, res) => {
     ]),
   ]);
 
-  res.json({ success: true, data: { creators, daily } });
+  res.json({ success: true, data: { owners, daily } });
 });
 
 
