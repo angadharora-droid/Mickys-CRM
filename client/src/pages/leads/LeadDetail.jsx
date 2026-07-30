@@ -371,19 +371,20 @@ export default function LeadDetail() {
       .then(() => toast.success(`${KIT_TYPE_LABELS[kitType]} selected`))
       .catch(() => {});
 
-  // Admin: pass the lead on to a sales executive or an admin. Handing it to an
-  // admin takes it off every exec's list — only admins will see it. The list is
-  // fetched lazily the first time the dialog opens.
+  // Admin: pass the lead on to any team member — admin, sales executive or PR
+  // manager. Handing it to an admin takes it off everyone else's list. The list
+  // is fetched lazily the first time the dialog opens.
   const openReassign = async () => {
     setReassignTo(lead.assignedExecId?._id || '');
     setReassignOpen(true);
     if (execs.length) return;
     try {
-      const [adminRes, execRes] = await Promise.all([
+      const [adminRes, execRes, prRes] = await Promise.all([
         api.get('/users', { params: { role: 'admin', isActive: 'true', limit: 100 } }),
         api.get('/users', { params: { role: 'sales_exec', isActive: 'true', limit: 100 } }),
+        api.get('/users', { params: { role: 'pr_manager', isActive: 'true', limit: 100 } }),
       ]);
-      setExecs([...adminRes.data.data, ...execRes.data.data]);
+      setExecs([...adminRes.data.data, ...execRes.data.data, ...prRes.data.data]);
     } catch (err) {
       toast.error(apiError(err));
     }
@@ -689,7 +690,7 @@ export default function LeadDetail() {
             <AlertTriangle className="h-3 w-3" /> Edited after generation
           </Badge>
         )}
-        <span className="text-sm text-muted-foreground">Exec: {lead.assignedExecId?.name || '—'}</span>
+        <span className="text-sm text-muted-foreground">Owner: {lead.assignedExecId?.name || '—'}</span>
         {isAdmin && (
           <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={openReassign}>
             <UserCog className="h-3.5 w-3.5" /> Reassign
@@ -703,14 +704,14 @@ export default function LeadDetail() {
         </Button>
       </div>
 
-      {/* Admin: hand the lead to a sales executive or an admin */}
+      {/* Admin: hand the lead to any team member (admin / exec / PR manager) */}
       <Dialog open={reassignOpen} onOpenChange={setReassignOpen}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle>Reassign lead</DialogTitle>
             <DialogDescription>
-              Pass {lead.businessName} on to a sales executive or an admin. The lead moves to the
-              new owner's list; assigning it to an admin hides it from all sales executives.
+              Pass {lead.businessName} on to a new owner — an admin, sales executive or PR manager.
+              Only the new owner (and admins) will see this lead afterwards.
             </DialogDescription>
           </DialogHeader>
           <Select value={reassignTo} onValueChange={setReassignTo}>
@@ -719,7 +720,9 @@ export default function LeadDetail() {
               {execs.map((e) => (
                 <SelectItem key={e._id} value={e._id}>
                   {e.name}
-                  {e.role === 'admin' ? ' — Admin' : e.employeeCode ? ` (${e.employeeCode})` : ''}
+                  {e.role === 'admin' ? ' — Admin'
+                    : e.role === 'pr_manager' ? ' — PR Manager'
+                      : e.employeeCode ? ` (${e.employeeCode})` : ''}
                 </SelectItem>
               ))}
             </SelectContent>
