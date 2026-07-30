@@ -34,6 +34,7 @@ export default function LeadList() {
   const kitType = searchParams.get('kit') || ALL;
   const businessType = searchParams.get('biz') || ALL;
   const execId = searchParams.get('exec') || ALL;
+  const creatorId = searchParams.get('creator') || ALL;
   const city = searchParams.get('city') || ALL;
   const page = Number(searchParams.get('page')) || 1;
 
@@ -42,6 +43,7 @@ export default function LeadList() {
   const [loading, setLoading] = useState(true);
   const [expandedRows, setExpandedRows] = useState({});
   const [execs, setExecs] = useState([]);
+  const [creators, setCreators] = useState([]);
   const [cities, setCities] = useState([]);
 
   // Write a single filter to the URL; changing any filter returns to page 1.
@@ -81,6 +83,11 @@ export default function LeadList() {
     api.get('/cities', { params: { inUse: true } })
       .then((res) => setCities(res.data.data))
       .catch(() => {});
+    // Only creators that appear on leads the caller can see — so the dropdown
+    // never lists someone who created none of their visible leads.
+    api.get('/leads/creators')
+      .then((res) => setCreators(res.data.data))
+      .catch(() => {});
   }, [canSeeAll]);
 
   const fetchLeads = useCallback(async () => {
@@ -92,6 +99,7 @@ export default function LeadList() {
       if (kitType !== ALL) params.kitType = kitType;
       if (businessType !== ALL) params.businessType = businessType;
       if (execId !== ALL) params.execId = execId;
+      if (creatorId !== ALL) params.createdBy = creatorId;
       if (city !== ALL) params.city = city;
       const { data } = await api.get('/leads', { params });
       setLeads(data.data);
@@ -101,7 +109,7 @@ export default function LeadList() {
     } finally {
       setLoading(false);
     }
-  }, [page, search, status, kitType, businessType, execId, city]);
+  }, [page, search, status, kitType, businessType, execId, creatorId, city]);
 
   useEffect(() => {
     const t = setTimeout(fetchLeads, search ? 350 : 0);
@@ -115,7 +123,8 @@ export default function LeadList() {
 
   const toggleRow = (id) => setExpandedRows((c) => ({ ...c, [id]: !c[id] }));
   const hasFilters =
-    search || status !== ALL || kitType !== ALL || businessType !== ALL || execId !== ALL || city !== ALL;
+    search || status !== ALL || kitType !== ALL || businessType !== ALL ||
+    execId !== ALL || creatorId !== ALL || city !== ALL;
 
   return (
     <div>
@@ -168,6 +177,19 @@ export default function LeadList() {
             <SelectContent>
               <SelectItem value={ALL}>All cities</SelectItem>
               {cities.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+            </SelectContent>
+          </Select>
+
+          <Select value={creatorId} onValueChange={(v) => setFilter('creator', v)}>
+            <SelectTrigger><SelectValue placeholder="Created by" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL}>All creators</SelectItem>
+              {creators.map((c) => (
+                <SelectItem key={c._id} value={c._id}>
+                  {c.name}
+                  {c.role === 'admin' ? ' — Admin' : c.role === 'pr_manager' ? ' — PR Manager' : ''}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
 
