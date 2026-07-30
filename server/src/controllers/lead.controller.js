@@ -152,14 +152,15 @@ function applyCustomTerms(lead, customTerms) {
 }
 
 async function resolveExecId(req, providedId) {
-  // Everyone (exec, PR manager, admin) owns the leads they create. An admin
-  // may still explicitly hand the lead to a sales exec — or to an admin, which
-  // takes it out of the execs' sight entirely (visibility follows the owner).
+  // Everyone (exec, PR manager, admin) owns the leads they create and stays
+  // owner until an admin reassigns. An admin may hand the lead to anyone —
+  // a sales exec, a PR manager, or an admin (which hides it from everyone
+  // else, since visibility follows the owner).
   if (!providedId || String(providedId) === String(req.user._id)) return req.user._id;
   if (req.user.role !== 'admin') return req.user._id;
   const owner = await User.findOne({
     _id: providedId,
-    role: { $in: ['sales_exec', 'admin'] },
+    role: { $in: ['sales_exec', 'pr_manager', 'admin'] },
     isActive: true,
   });
   if (!owner) throw ApiError.badRequest('Assigned user not found or inactive');

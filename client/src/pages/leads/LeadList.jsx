@@ -66,12 +66,15 @@ export default function LeadList() {
 
   useEffect(() => {
     if (canSeeAll) {
-      // Leads can be owned by an admin too, so the owner filter lists both.
+      // A lead's owner can be an admin, a sales exec or a PR manager, so the
+      // owner filter lists all three.
       Promise.all([
         api.get('/users', { params: { role: 'admin', limit: 100 } }),
         api.get('/users', { params: { role: 'sales_exec', limit: 100 } }),
+        api.get('/users', { params: { role: 'pr_manager', limit: 100 } }),
       ])
-        .then(([adminRes, execRes]) => setExecs([...adminRes.data.data, ...execRes.data.data]))
+        .then(([adminRes, execRes, prRes]) =>
+          setExecs([...adminRes.data.data, ...execRes.data.data, ...prRes.data.data]))
         .catch(() => {});
     }
     // Only cities that actually have a visible lead — the filter's option set.
@@ -175,7 +178,8 @@ export default function LeadList() {
                 <SelectItem value={ALL}>All owners</SelectItem>
                 {execs.map((e) => (
                   <SelectItem key={e._id} value={e._id}>
-                    {e.name}{e.role === 'admin' ? ' — Admin' : ''}
+                    {e.name}
+                    {e.role === 'admin' ? ' — Admin' : e.role === 'pr_manager' ? ' — PR Manager' : ''}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -208,7 +212,7 @@ export default function LeadList() {
                   <TableHead>Client</TableHead>
                   <TableHead className="hidden sm:table-cell">City</TableHead>
                   <TableHead className="hidden md:table-cell">Kit</TableHead>
-                  <TableHead className="hidden lg:table-cell">Exec</TableHead>
+                  <TableHead className="hidden lg:table-cell">Owner</TableHead>
                   <TableHead>Status</TableHead>
                 </TableRow>
               </TableHeader>
