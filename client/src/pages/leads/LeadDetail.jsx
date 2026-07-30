@@ -277,9 +277,9 @@ export default function LeadDetail() {
   // A generated kit freezes the lead until the user clicks Edit (unlock).
   const locked = Boolean(lead.locked);
   const editedAfterGen = Boolean(lead.editedAfterGeneration);
-  // Client details: execs may edit only while the lead is brand new; admins
-  // anytime — but never while a generated kit has it locked (unlock first).
-  const canEditClient = !locked && (user?.role === 'admin' || lead.status === 'new');
+  // Client details are editable at any stage (incl. after kit selection) —
+  // but never while a generated kit has the lead locked (unlock first).
+  const canEditClient = !locked;
   // Optional client/CRM details still blank — surfaced in a banner so the exec
   // knows what's left to fill in on this lead.
   const missingDetails = [
@@ -806,7 +806,7 @@ export default function LeadDetail() {
               </Button>
             ) : (
               <span className="text-xs font-normal text-muted-foreground">
-                {locked ? '🔒 Unlock the kit to edit' : '🔒 Locked (kit selected)'}
+                🔒 Unlock the kit to edit
               </span>
             )}
           </CardTitle>
