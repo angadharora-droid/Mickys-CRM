@@ -18,6 +18,7 @@ const ACTION_POINTS = [
   'Send Sample',
   'Send distributor kit',
   'Send institutional kit',
+  'Send export kit',
 ];
 
 // ---------- Auth ----------
@@ -95,7 +96,7 @@ const bulkReassignSchema = z.object({
 });
 
 const kitTypeSchema = z.object({
-  kitType: z.enum(['distributor', 'stockist', 'institutional']),
+  kitType: z.enum(['distributor', 'stockist', 'institutional', 'export']),
 });
 
 const rateLineInputSchema = z.object({
@@ -172,7 +173,72 @@ const emailKitSchema = z.object({
   message: z.string().max(8000).optional().or(z.literal('')),
 });
 
+// ---------- Export kit ----------
+const exportCountrySchema = z.object({
+  name: z.string().min(2, 'Country name is required'),
+  code: z.string().max(3).optional().or(z.literal('')),
+  cirPercent: z.coerce.number().min(0).max(100),
+  partLoadFreightPerKg: z.coerce.number().min(0),
+  isActive: z.boolean().optional(),
+});
+
+// Manual override of the stored daily rates (INR per 1 unit of currency).
+const exchangeRatesSchema = z.object({
+  inrPer: z
+    .object({
+      USD: z.coerce.number().positive(),
+      EUR: z.coerce.number().positive(),
+      GBP: z.coerce.number().positive(),
+    })
+    .partial()
+    .refine((v) => Object.keys(v).length > 0, { message: 'Provide at least one rate' }),
+});
+
+// One shipment product. Weight is optional (defaults to the pack size parsed
+// off the master); '' / null mean "not provided".
+const exportLineSchema = z.object({
+  rateItemId: objectId,
+  qty: z.coerce.number().int().min(1),
+  unitWeightKg: z.preprocess(
+    (v) => (v === null || v === '' ? undefined : v),
+    z.coerce.number().positive().optional()
+  ),
+  netRate: z.preprocess(
+    (v) => (v === null || v === '' ? undefined : v),
+    z.coerce.number().min(0).optional()
+  ),
+});
+
+const requireContainerOnFullLoad = [
+  (v) => v.loadingType !== 'full' || Boolean(v.containerSize),
+  { message: 'Container size is required for a full-load shipment', path: ['containerSize'] },
+];
+
+const exportShipmentBase = z.object({
+  rateType: z.enum(['distributor', 'institution']),
+  loadingType: z.enum(['full', 'part']),
+  containerSize: z.enum(['ft20', 'ft40']).optional(),
+  countryId: objectId,
+  currency: z.enum(['USD', 'EUR', 'GBP', 'INR']),
+  lines: z.array(exportLineSchema).min(1, 'Select at least one product'),
+});
+
+// Standalone computation (the live preview shown in the export step).
+const exportRateCardSchema = exportShipmentBase.refine(...requireContainerOnFullLoad);
+
+// Confirming an export lead's shipment (may carry edited T&C for the card).
+const exportConfirmSchema = exportShipmentBase
+  .extend({ customTerms: customTermsSchema.optional() })
+  .refine(...requireContainerOnFullLoad);
+
 // ---------- Settings ----------
+const exportContainerSchema = z.object({
+  label: z.string().max(60).optional(),
+  capacityTonsMin: z.coerce.number().min(0).optional(),
+  capacityTonsMax: z.coerce.number().min(0).optional(),
+  portTransportInr: z.coerce.number().min(0).optional(),
+});
+
 const settingsSchema = z.object({
   email: z
     .object({
@@ -202,6 +268,17 @@ const settingsSchema = z.object({
       termsAndConditions: z.string().max(8000).optional(),
     })
     .optional(),
+  export: z
+    .object({
+      containers: z
+        .object({
+          ft20: exportContainerSchema.optional(),
+          ft40: exportContainerSchema.optional(),
+        })
+        .optional(),
+      rateCardTerms: z.string().max(8000).optional(),
+    })
+    .optional(),
 });
 
 module.exports = {
@@ -227,4 +304,8 @@ module.exports = {
   manualDeliverySchema,
   emailKitSchema,
   settingsSchema,
+  exportCountrySchema,
+  exchangeRatesSchema,
+  exportRateCardSchema,
+  exportConfirmSchema,
 };

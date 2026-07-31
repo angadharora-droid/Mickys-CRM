@@ -70,6 +70,23 @@ const env = {
     from: process.env.EMAIL_FROM || "Micky's Sales <no-reply@mickys.com>",
   },
   maxFileSizeMb: parseInt(process.env.MAX_FILE_SIZE_MB || '10', 10),
+  // Meta Ads lead-form sheet poller. On by default so a fresh deploy keeps
+  // pulling leads without any external scheduler; set META_SYNC_ENABLED=false
+  // to turn it off, or run it by hand with `npm run sync:meta`.
+  metaSync: {
+    enabled: process.env.META_SYNC_ENABLED !== 'false',
+    intervalMin: parseInt(process.env.META_SYNC_INTERVAL_MIN || '15', 10),
+    sheetId: process.env.META_SHEET_ID || '',
+    gid: process.env.META_SHEET_GID || '',
+    csvUrl: process.env.META_SHEET_CSV_URL || '',
+  },
+  // Export-kit exchange-rate refresher. On by default (daily); set
+  // FX_SYNC_ENABLED=false to turn it off, or FX_API_URL to change the feed.
+  fxSync: {
+    enabled: process.env.FX_SYNC_ENABLED !== 'false',
+    intervalHours: parseInt(process.env.FX_SYNC_INTERVAL_HOURS || '24', 10),
+    apiUrl: process.env.FX_API_URL || 'https://open.er-api.com/v6/latest/INR',
+  },
 };
 
 module.exports = env;

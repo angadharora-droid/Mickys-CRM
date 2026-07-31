@@ -98,7 +98,7 @@ const DETAIL_COLUMNS = [
   ['Mobile', (l) => l.mobileNumber],
   ['Business type', (l) => l.businessType],
   ['City', (l) => l.city],
-  ['Created by', (l) => l.createdBy?.name || ''],
+  ['Owner', (l) => l.assignedExecId?.name || ''],
   ['Action point', (l) => l.actionPoint],
   ['Internal note', (l) => internalNoteText(l)],
   ['Follow-up note', (l) => l.followUp?.note],
@@ -108,7 +108,7 @@ const DETAIL_COLUMNS = [
 export default function LeadTracker() {
   const navigate = useNavigate();
 
-  const [creators, setCreators] = useState([]);
+  const [owners, setOwners] = useState([]);
   const [daily, setDaily] = useState([]);
   const [summaryLoading, setSummaryLoading] = useState(true);
 
@@ -119,7 +119,7 @@ export default function LeadTracker() {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [reportLeads, setReportLeads] = useState([]);
   const [page, setPage] = useState(1);
-  const [createdBy, setCreatedBy] = useState(ALL);
+  const [ownerId, setOwnerId] = useState(ALL);
   const [status, setStatus] = useState(ALL);
 
   // Creation-date range (YYYY-MM-DD); empty = all time.
@@ -133,7 +133,7 @@ export default function LeadTracker() {
       if (from) params.from = from;
       if (to) params.to = to;
       const { data } = await api.get('/dashboard/lead-tracker', { params });
-      setCreators(data.data.creators || []);
+      setOwners(data.data.owners || []);
       setDaily(data.data.daily || []);
     } catch (err) {
       toast.error(apiError(err));
@@ -148,7 +148,7 @@ export default function LeadTracker() {
     setLeadsLoading(true);
     try {
       const params = { page, limit: 10 };
-      if (createdBy !== ALL) params.createdBy = createdBy;
+      if (ownerId !== ALL) params.execId = ownerId;
       if (status !== ALL) params.status = status;
       if (from) params.createdFrom = from;
       if (to) params.createdTo = to;
@@ -160,16 +160,16 @@ export default function LeadTracker() {
     } finally {
       setLeadsLoading(false);
     }
-  }, [page, createdBy, status, from, to]);
+  }, [page, ownerId, status, from, to]);
 
   useEffect(() => { fetchLeads(); }, [fetchLeads]);
 
-  const totalLeads = useMemo(() => creators.reduce((a, c) => a + c.total, 0), [creators]);
-  const hasFilter = createdBy !== ALL || status !== ALL;
+  const totalLeads = useMemo(() => owners.reduce((a, c) => a + c.total, 0), [owners]);
+  const hasFilter = ownerId !== ALL || status !== ALL;
   const rangeLabel = from || to ? `${from || 'Start'} to ${to || 'Today'}` : 'All time';
 
-  const selectCreator = (id) => {
-    setCreatedBy((cur) => (cur === id ? ALL : id));
+  const selectOwner = (id) => {
+    setOwnerId((cur) => (cur === id ? ALL : id));
     setPage(1);
   };
 
@@ -190,7 +190,7 @@ export default function LeadTracker() {
 
     while (hasNext) {
       const params = { page: nextPage, limit: 100 };
-      if (createdBy !== ALL) params.createdBy = createdBy;
+      if (ownerId !== ALL) params.execId = ownerId;
       if (status !== ALL) params.status = status;
       if (from) params.createdFrom = from;
       if (to) params.createdTo = to;
@@ -207,15 +207,15 @@ export default function LeadTracker() {
     const metaRows = [
       excelXmlRow(['Lead Tracker Report'], 'Title'),
       excelXmlRow(['Date range', rangeLabel]),
-      excelXmlRow(['Creator filter', createdBy === ALL ? 'All creators' : creators.find((c) => c.creatorId === createdBy)?.name || createdBy]),
+      excelXmlRow(['Owner filter', ownerId === ALL ? 'All owners' : owners.find((c) => c.ownerId === ownerId)?.name || ownerId]),
       excelXmlRow(['Status filter', status === ALL ? 'All statuses' : STATUS_LABELS[status] || status]),
       excelXmlRow([]),
     ];
 
-    const creatorRows = [
+    const ownerRows = [
       ...metaRows,
-      excelXmlRow(['Created by', 'Role', 'Total', 'New', 'Kit', 'Rates', 'Generated', 'Delivered', 'First created', 'Last created'], 'Header'),
-      ...creators.map((c) => excelXmlRow([
+      excelXmlRow(['Owner', 'Role', 'Total', 'New', 'Kit', 'Rates', 'Generated', 'Delivered', 'First created', 'Last created'], 'Header'),
+      ...owners.map((c) => excelXmlRow([
         c.name,
         ROLE_LABELS[c.role] || c.role || '',
         c.total,
@@ -253,7 +253,7 @@ export default function LeadTracker() {
       <Interior ss:Color="#7f0f16" ss:Pattern="Solid" />
     </Style>
   </Styles>
-  ${excelWorksheet('Leads by creator', creatorRows)}
+  ${excelWorksheet('Leads by owner', ownerRows)}
   ${excelWorksheet('Leads created per day', dailyRows)}
   ${excelWorksheet('Lead details', detailRows)}
 </Workbook>`;
@@ -287,7 +287,7 @@ export default function LeadTracker() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Lead Tracker" description="Who created how many leads, their status and dates">
+      <PageHeader title="Lead Tracker" description="Who owns how many leads, their status and dates">
         <Button type="button" variant="outline" onClick={previewReport} disabled={Boolean(reportLoading)}>
           {reportLoading === 'preview' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}
           Preview
@@ -347,11 +347,11 @@ export default function LeadTracker() {
         </CardContent>
       </Card>
 
-      {/* Per-creator summary */}
+      {/* Per-owner summary */}
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base flex items-center gap-2">
-            <Users className="h-4 w-4" /> Leads by creator
+            <Users className="h-4 w-4" /> Leads by owner
             {!summaryLoading && (
               <span className="text-sm font-normal text-muted-foreground">· {totalLeads} leads total</span>
             )}
@@ -360,14 +360,14 @@ export default function LeadTracker() {
         <CardContent>
           {summaryLoading ? (
             <TableSkeleton />
-          ) : creators.length === 0 ? (
-            <EmptyState icon={Contact} title="No leads yet" description="Created leads will be tracked here by their creator." />
+          ) : owners.length === 0 ? (
+            <EmptyState icon={Contact} title="No leads yet" description="Leads will be tracked here by their current owner." />
           ) : (
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Created by</TableHead>
+                    <TableHead>Owner</TableHead>
                     <TableHead className="text-right">Total</TableHead>
                     {STATUS_COLS.map(([k, label]) => (
                       <TableHead key={k} className="text-right whitespace-nowrap">{label}</TableHead>
@@ -376,13 +376,13 @@ export default function LeadTracker() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {creators.map((c) => {
-                    const selected = createdBy === c.creatorId;
+                  {owners.map((c) => {
+                    const selected = ownerId === c.ownerId;
                     return (
                       <TableRow
-                        key={c.creatorId || 'unknown'}
+                        key={c.ownerId || 'unknown'}
                         className={cn('cursor-pointer', selected && 'bg-primary/5')}
-                        onClick={() => c.creatorId && selectCreator(c.creatorId)}
+                        onClick={() => c.ownerId && selectOwner(c.ownerId)}
                       >
                         <TableCell>
                           <span className="font-medium">{c.name}</span>
@@ -402,8 +402,8 @@ export default function LeadTracker() {
               </Table>
             </div>
           )}
-          {!summaryLoading && creators.length > 0 && (
-            <p className="mt-3 text-xs text-muted-foreground">Tip: click a creator to filter the detailed leads below.</p>
+          {!summaryLoading && owners.length > 0 && (
+            <p className="mt-3 text-xs text-muted-foreground">Tip: click an owner to filter the detailed leads below.</p>
           )}
         </CardContent>
       </Card>
@@ -415,12 +415,12 @@ export default function LeadTracker() {
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 mb-4">
-            <Select value={createdBy} onValueChange={(v) => { setCreatedBy(v); setPage(1); }}>
-              <SelectTrigger><SelectValue placeholder="Creator" /></SelectTrigger>
+            <Select value={ownerId} onValueChange={(v) => { setOwnerId(v); setPage(1); }}>
+              <SelectTrigger><SelectValue placeholder="Owner" /></SelectTrigger>
               <SelectContent>
-                <SelectItem value={ALL}>All creators</SelectItem>
-                {creators.filter((c) => c.creatorId).map((c) => (
-                  <SelectItem key={c.creatorId} value={c.creatorId}>{c.name}</SelectItem>
+                <SelectItem value={ALL}>All owners</SelectItem>
+                {owners.filter((c) => c.ownerId).map((c) => (
+                  <SelectItem key={c.ownerId} value={c.ownerId}>{c.name}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -432,7 +432,7 @@ export default function LeadTracker() {
               </SelectContent>
             </Select>
             {hasFilter && (
-              <Button variant="ghost" size="sm" className="justify-self-start" onClick={() => { setCreatedBy(ALL); setStatus(ALL); setPage(1); }}>
+              <Button variant="ghost" size="sm" className="justify-self-start" onClick={() => { setOwnerId(ALL); setStatus(ALL); setPage(1); }}>
                 <FilterX className="h-4 w-4" /> Clear
               </Button>
             )}
@@ -450,7 +450,7 @@ export default function LeadTracker() {
                     <TableRow>
                       <TableHead className="hidden sm:table-cell">Reference</TableHead>
                       <TableHead>Client</TableHead>
-                      <TableHead className="hidden md:table-cell">Created by</TableHead>
+                      <TableHead className="hidden md:table-cell">Owner</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead className="hidden sm:table-cell whitespace-nowrap">Lead date</TableHead>
                       <TableHead className="hidden lg:table-cell whitespace-nowrap">Created</TableHead>
@@ -464,7 +464,7 @@ export default function LeadTracker() {
                           <p className="font-medium leading-tight">{lead.businessName}</p>
                           <p className="text-xs text-muted-foreground mt-0.5">{lead.contactPerson} · {lead.city}</p>
                         </TableCell>
-                        <TableCell className="hidden md:table-cell">{lead.createdBy?.name || '—'}</TableCell>
+                        <TableCell className="hidden md:table-cell">{lead.assignedExecId?.name || '—'}</TableCell>
                         <TableCell><StatusBadge status={lead.status} /></TableCell>
                         <TableCell className="hidden sm:table-cell whitespace-nowrap text-muted-foreground">{formatDate(lead.leadDate)}</TableCell>
                         <TableCell className="hidden lg:table-cell whitespace-nowrap text-muted-foreground">{formatDate(lead.createdAt)}</TableCell>
@@ -497,8 +497,8 @@ export default function LeadTracker() {
               </Card>
               <Card>
                 <CardContent className="p-4">
-                  <p className="text-xs text-muted-foreground">Creators</p>
-                  <p className="mt-1 text-2xl font-semibold">{creators.length}</p>
+                  <p className="text-xs text-muted-foreground">Owners</p>
+                  <p className="mt-1 text-2xl font-semibold">{owners.length}</p>
                 </CardContent>
               </Card>
               <Card>
@@ -510,19 +510,19 @@ export default function LeadTracker() {
             </div>
 
             <div>
-              <h3 className="mb-2 text-sm font-semibold">Leads by creator</h3>
+              <h3 className="mb-2 text-sm font-semibold">Leads by owner</h3>
               <div className="max-h-64 overflow-auto rounded-md border">
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Created by</TableHead>
+                      <TableHead>Owner</TableHead>
                       <TableHead className="text-right">Total</TableHead>
                       {STATUS_COLS.map(([k, label]) => <TableHead key={k} className="text-right">{label}</TableHead>)}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {creators.map((c) => (
-                      <TableRow key={c.creatorId || c.name}>
+                    {owners.map((c) => (
+                      <TableRow key={c.ownerId || c.name}>
                         <TableCell>{c.name}</TableCell>
                         <TableCell className="text-right font-semibold">{c.total}</TableCell>
                         {STATUS_COLS.map(([k]) => <TableCell key={k} className="text-right tabular-nums">{c[k]}</TableCell>)}
@@ -541,7 +541,7 @@ export default function LeadTracker() {
                     <TableRow>
                       <TableHead>Reference</TableHead>
                       <TableHead>Client</TableHead>
-                      <TableHead>Created by</TableHead>
+                      <TableHead>Owner</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Created</TableHead>
                     </TableRow>
@@ -554,7 +554,7 @@ export default function LeadTracker() {
                           <p className="font-medium">{lead.businessName}</p>
                           <p className="text-xs text-muted-foreground">{lead.contactPerson} · {lead.city}</p>
                         </TableCell>
-                        <TableCell>{lead.createdBy?.name || '-'}</TableCell>
+                        <TableCell>{lead.assignedExecId?.name || '-'}</TableCell>
                         <TableCell>{STATUS_LABELS[lead.status] || lead.status}</TableCell>
                         <TableCell>{formatDate(lead.createdAt)}</TableCell>
                       </TableRow>

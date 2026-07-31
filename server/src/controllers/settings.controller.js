@@ -15,7 +15,7 @@ const getSettings = asyncHandler(async (_req, res) => {
 // PUT /api/settings
 const updateSettings = asyncHandler(async (req, res) => {
   const settings = await Setting.getGlobal();
-  const { email, company, kit } = req.body;
+  const { email, company, kit, export: exportCfg } = req.body;
 
   if (email) {
     // Keep the stored password when the client sends back the mask
@@ -24,6 +24,18 @@ const updateSettings = asyncHandler(async (req, res) => {
   }
   if (company) settings.company = { ...settings.company.toObject(), ...company };
   if (kit) settings.kit = { ...settings.kit.toObject(), ...kit };
+  if (exportCfg) {
+    // Containers merge per size so a partial edit doesn't wipe the other fields.
+    const current = settings.export.toObject();
+    settings.export = {
+      ...current,
+      ...exportCfg,
+      containers: {
+        ft20: { ...current.containers.ft20, ...(exportCfg.containers?.ft20 || {}) },
+        ft40: { ...current.containers.ft40, ...(exportCfg.containers?.ft40 || {}) },
+      },
+    };
+  }
   await settings.save();
 
   await logActivity({

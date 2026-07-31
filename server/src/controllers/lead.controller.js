@@ -12,8 +12,11 @@ const { searchRegex } = require('../utils/sanitize');
 const { logActivity } = require('../services/activity.service');
 const { sendKitEmail } = require('../services/email.service');
 const { generateKit, buildZip, getBrochureBuffer, BROCHURE_PATH, KITS_DIR } = require('../services/kit.service');
+const ExportCountry = require('../models/ExportCountry');
+const exportKitService = require('../services/exportKit.service');
+const { INDIAN_CITIES, canonicalCity } = require('../config/indianCities');
 const { uploadBuffer, deleteFiles, openDownloadStream, getBuffer } = require('../services/fileStore.service');
-const { stockistDlp, stockistPrice } = require('../config/kitContent');
+const { dlp, stockistPrice } = require('../config/kitContent');
 
 const POPULATE = [
   { path: 'assignedExecId', select: 'name email employeeCode phone' },
@@ -28,7 +31,6 @@ const POPULATE = [
 ];
 
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
-const roundTo10 = (n) => Math.round((Number(n) || 0) / 10) * 10;
 
 // Always copied on outgoing kit emails (in addition to any sender-added CCs).
 const FIXED_KIT_CC = 'angadh.arora@cpgh.in';
@@ -53,23 +55,23 @@ async function nextRefNumber(city) {
  * Snapshot a priced line from a rate-master item (standard, un-overridden).
  *
  * Distributor card: the editable price is the DLP (Delivered Landed Price) =
- * Basic + GST rounded to the nearest ₹10. `basic` is the master net rate and
- * `dsp` (Distributor Selling Price) is the product's institutional rate, looked
- * up by SKU. Stockist card: the editable price is the Stockist Price = exact
- * DLP (Basic + GST, unrounded) × 0.95; the DLP itself is fixed and re-derived
- * from `basic` wherever it's displayed. Institutional card: `netRate` is the
- * editable net rate as before.
+ * the Basic rate, exclusive of GST. `basic` is the master net rate and `dsp`
+ * (Distributor Selling Price) is the product's institutional rate, looked up by
+ * SKU. Stockist card: the editable price is the Stockist Price = that same DLP
+ * × 0.95; the DLP itself is fixed and re-derived from `basic` wherever it's
+ * displayed. Institutional card: `netRate` is the editable net rate as before.
+ * All rate-card prices are stated exclusive of GST — no GST is added anywhere.
  */
 function snapshotLine(item, kitType, dspBySku) {
   const isStockist = kitType === 'stockist';
   const isDistLike = kitType === 'distributor' || isStockist;
   const basic = item.netRate;
   const dsp = isDistLike ? (dspBySku?.get(item.sku) || 0) : 0;
-  // Distributor: rounded DLP · Stockist: Stockist Price · Institutional: net rate.
+  // Distributor: DLP · Stockist: Stockist Price · Institutional: net rate.
   const netRate = isStockist
-    ? stockistPrice(stockistDlp(basic, item.gst))
+    ? stockistPrice(dlp(basic))
     : isDistLike
-      ? roundTo10(basic * (1 + item.gst / 100))
+      ? dlp(basic)
       : basic;
   return {
     rateItemId: item._id,
@@ -85,7 +87,9 @@ function snapshotLine(item, kitType, dspBySku) {
     netRate,
     suggestiveMargin: item.suggestiveMargin || 0,
     gst: item.gst,
-    // DLP / Stockist Price already include GST; institutional net rate is pre-GST.
+    // Rate-card prices are exclusive of GST, so the dist-like cards carry the
+    // editable price as-is (the field name is legacy); the institutional
+    // quotation still derives its Net+GST display value.
     netInclGst: isDistLike ? netRate : round2(netRate * (1 + item.gst / 100)),
     deviationPct: 0,
   };
@@ -93,11 +97,9 @@ function snapshotLine(item, kitType, dspBySku) {
 
 function scopeFilter(user) {
   if (user.role === 'admin') return {}; // admin sees all
-  // PR managers keep sight of every lead they brought in, even after an admin
-  // hands it to a sales exec; execs see only the leads assigned to them.
-  if (user.role === 'pr_manager') {
-    return { $or: [{ assignedExecId: user._id }, { createdBy: user._id }] };
-  }
+  // Visibility follows the current owner, not the creator: reassigning a lead
+  // (e.g. to an admin) moves it entirely off the previous owner's lists, even
+  // if they created it.
   return { assignedExecId: user._id };
 }
 
@@ -105,18 +107,8 @@ function assertCanView(lead, user) {
   if (user.role === 'admin') return;
   const uid = user._id.toString();
   const exec = lead.assignedExecId?._id?.toString() || lead.assignedExecId?.toString();
-  const creator = lead.createdBy?._id?.toString() || lead.createdBy?.toString();
   if (exec === uid) return;
-  if (user.role === 'pr_manager' && creator === uid) return;
   throw ApiError.forbidden('You can only access your own leads');
-}
-
-/** Client details are locked once a kit type is chosen (admin may still edit). */
-function assertEditable(lead, user) {
-  if (user.role === 'admin') return;
-  if (lead.status !== 'new') {
-    throw ApiError.badRequest('Client details are locked once a kit type is selected');
-  }
 }
 
 /**
@@ -155,13 +147,19 @@ function applyCustomTerms(lead, customTerms) {
 }
 
 async function resolveExecId(req, providedId) {
-  // Everyone (exec, PR manager, admin) owns the leads they create. An admin
-  // may still explicitly assign a different sales exec by passing their id.
+  // Everyone (exec, PR manager, admin) owns the leads they create and stays
+  // owner until an admin reassigns. An admin may hand the lead to anyone —
+  // a sales exec, a PR manager, or an admin (which hides it from everyone
+  // else, since visibility follows the owner).
   if (!providedId || String(providedId) === String(req.user._id)) return req.user._id;
   if (req.user.role !== 'admin') return req.user._id;
-  const exec = await User.findOne({ _id: providedId, role: 'sales_exec', isActive: true });
-  if (!exec) throw ApiError.badRequest('Assigned sales executive not found or inactive');
-  return exec._id;
+  const owner = await User.findOne({
+    _id: providedId,
+    role: { $in: ['sales_exec', 'pr_manager', 'admin'] },
+    isActive: true,
+  });
+  if (!owner) throw ApiError.badRequest('Assigned user not found or inactive');
+  return owner._id;
 }
 
 async function buildKitFiles(lead) {
@@ -247,6 +245,9 @@ async function ensureFreshKit(lead) {
 // POST /api/leads
 const createLead = asyncHandler(async (req, res) => {
   const { assignedExecId, internalNotes, followUpDate, followUpNote, ...rest } = req.body;
+  // Every stored city goes through the canonical Indian-city list, so one city
+  // is always spelled one way ("mumbay" and "Bombay" both land as "Mumbai").
+  rest.city = canonicalCity(rest.city);
   const execId = await resolveExecId(req, assignedExecId);
   const refNumber = await nextRefNumber(rest.city);
 
@@ -280,6 +281,34 @@ const createLead = asyncHandler(async (req, res) => {
   res.status(201).json({ success: true, data: populated });
 });
 
+// GET /api/cities — the city dropdown's options: the canonical Indian list
+// plus any distinct city already stored on a lead (legacy or foreign values
+// survive normalisation and stay selectable). With ?inUse=true it instead
+// returns only the cities on leads the caller can see — the option set for the
+// lead-list filter.
+const listCities = asyncHandler(async (req, res) => {
+  if (req.query.inUse === 'true') {
+    const inUse = await Lead.distinct('city', scopeFilter(req.user));
+    return res.json({ success: true, data: inUse.filter(Boolean).sort((a, b) => a.localeCompare(b)) });
+  }
+  const dbCities = await Lead.distinct('city');
+  const all = [...new Set([...INDIAN_CITIES, ...dbCities.filter(Boolean)])].sort((a, b) =>
+    a.localeCompare(b)
+  );
+  res.json({ success: true, data: all });
+});
+
+// GET /api/leads/creators — the "Created by" filter's option set: only the
+// creators that actually appear on leads the caller can see, so an exec's
+// dropdown never lists people who created none of their leads.
+const listCreators = asyncHandler(async (req, res) => {
+  const ids = (await Lead.distinct('createdBy', scopeFilter(req.user))).filter(Boolean);
+  const creators = await User.find({ _id: { $in: ids } })
+    .select('name role')
+    .sort({ name: 1 });
+  res.json({ success: true, data: creators });
+});
+
 // GET /api/leads
 const listLeads = asyncHandler(async (req, res) => {
   const { page, limit, skip } = getPagination(req.query);
@@ -288,9 +317,13 @@ const listLeads = asyncHandler(async (req, res) => {
   if (q.status) filter.status = q.status;
   if (q.kitType) filter.kitType = q.kitType;
   if (q.businessType) filter.businessType = q.businessType;
-  if (q.city) filter.city = searchRegex(q.city);
+  // Cities are stored canonically, so the filter is an exact value from the
+  // dropdown — "Delhi" must not also match "New Delhi".
+  if (q.city) filter.city = q.city;
   if (q.execId && req.user.role === 'admin') filter.assignedExecId = q.execId;
-  if (q.createdBy && req.user.role === 'admin') filter.createdBy = q.createdBy;
+  // Anyone may narrow their list by creator — the visibility scope above still
+  // applies, so a non-admin only ever sees their own leads filtered further.
+  if (q.createdBy) filter.createdBy = q.createdBy;
   if (q.dateFrom || q.dateTo) {
     filter.leadDate = {};
     if (q.dateFrom) filter.leadDate.$gte = new Date(q.dateFrom);
@@ -311,15 +344,7 @@ const listLeads = asyncHandler(async (req, res) => {
   }
   if (q.search) {
     const rx = searchRegex(q.search);
-    const searchOr = [{ refNumber: rx }, { businessName: rx }, { contactPerson: rx }, { email: rx }, { mobileNumber: rx }];
-    // The PR-manager scope is itself an $or, so combine the two with $and
-    // instead of letting the search clause overwrite the visibility scope.
-    if (filter.$or) {
-      filter.$and = [{ $or: filter.$or }, { $or: searchOr }];
-      delete filter.$or;
-    } else {
-      filter.$or = searchOr;
-    }
+    filter.$or = [{ refNumber: rx }, { businessName: rx }, { contactPerson: rx }, { email: rx }, { mobileNumber: rx }];
   }
 
   const [leads, total] = await Promise.all([
@@ -342,18 +367,18 @@ const getLead = asyncHandler(async (req, res) => {
   res.json({ success: true, data: lead });
 });
 
-// PUT /api/leads/:id  (client details — only before a kit type is locked in)
+// PUT /api/leads/:id  (client details — editable at any stage until the kit is generated/locked)
 const updateLead = asyncHandler(async (req, res) => {
   const lead = await Lead.findById(req.params.id);
   if (!lead) throw ApiError.notFound('Lead not found');
   assertCanView(lead, req.user);
   assertNotLocked(lead);
-  assertEditable(lead, req.user);
 
   const { assignedExecId, ...rest } = req.body;
   if (assignedExecId && req.user.role === 'admin') {
     lead.assignedExecId = await resolveExecId(req, assignedExecId);
   }
+  if (rest.city !== undefined) rest.city = canonicalCity(rest.city);
   Object.assign(lead, rest);
   markEditedIfGenerated(lead);
   lead.modifiedBy = req.user._id;
@@ -440,6 +465,34 @@ const selectKitType = asyncHandler(async (req, res) => {
   assertNotLocked(lead);
   if (lead.status === 'delivered') throw ApiError.badRequest('This lead has already been delivered');
 
+  // The export kit has no upfront rate snapshot — its products, quantities and
+  // shipment configuration are all chosen in the export step and snapshotted
+  // when the shipment is confirmed. Selecting it just opens that step.
+  if (kitType === 'export') {
+    const from = lead.status;
+    const settings = await Setting.getGlobal();
+    lead.kitType = 'export';
+    lead.rates = [];
+    lead.rateEditLog = [];
+    lead.exportConfig = lead.exportConfig?.countryId ? lead.exportConfig : undefined;
+    lead.customTerms = {
+      paymentTerms: settings.kit?.defaultPaymentTerms || '',
+      creditPeriod: settings.kit?.defaultCreditPeriod || '',
+    };
+    lead.status = 'kit_selected';
+    markEditedIfGenerated(lead);
+    lead.modifiedBy = req.user._id;
+    lead.statusHistory.push({ from, to: 'kit_selected', changedBy: req.user._id, note: 'Kit: export' });
+    await lead.save();
+
+    await logActivity({
+      userId: req.user._id, action: 'LEAD_KIT_SELECTED', entity: 'Lead', entityId: lead._id,
+      details: `${lead.refNumber}: selected export kit`, ip: req.ip,
+    });
+    const populated = await Lead.findById(lead._id).populate(POPULATE);
+    return res.json({ success: true, data: populated });
+  }
+
   // Stockist kits have no rate master of their own — they draw from the
   // distributor catalogue and derive the stockist price from the DLP.
   const masterKitType = kitType === 'stockist' ? 'distributor' : kitType;
@@ -459,6 +512,7 @@ const selectKitType = asyncHandler(async (req, res) => {
   lead.kitType = kitType;
   lead.rates = items.map((item) => snapshotLine(item, kitType, dspBySku));
   lead.rateEditLog = [];
+  lead.exportConfig = undefined; // switching to a domestic kit drops any export snapshot
   lead.customTerms = {
     paymentTerms: settings.kit?.defaultPaymentTerms || '',
     creditPeriod: settings.kit?.defaultCreditPeriod || '',
@@ -485,6 +539,7 @@ const confirmRates = asyncHandler(async (req, res) => {
   if (!lead) throw ApiError.notFound('Lead not found');
   assertCanView(lead, req.user);
   assertNotLocked(lead);
+  if (lead.kitType === 'export') throw ApiError.badRequest('Export leads are confirmed from the export shipment step');
   if (!lead.kitType || !lead.rates.length) throw ApiError.badRequest('Select a kit type before confirming rates');
 
   const overrideById = new Map(rates.map((r) => [String(r.rateItemId), r]));
@@ -506,8 +561,8 @@ const confirmRates = asyncHandler(async (req, res) => {
         ? round2(((line.standardNetRate - newRate) / line.standardNetRate) * 100)
         : 0;
     // For the distributor card the edited value is the DLP and for the stockist
-    // card it's the Stockist Price — both already include GST; institutional
-    // net rates are pre-GST.
+    // card it's the Stockist Price — both stated exclusive of GST, like the
+    // institutional net rates.
     const isDist = lead.kitType === 'distributor' || lead.kitType === 'stockist';
     return {
       ...line.toObject(),
@@ -554,6 +609,119 @@ const confirmRates = asyncHandler(async (req, res) => {
   await logActivity({
     userId: req.user._id, action: 'LEAD_KIT_GENERATED', entity: 'Lead', entityId: lead._id,
     details: `${lead.refNumber}: generated ${lead.generatedFiles.length}-document ${lead.kitType} kit`, ip: req.ip,
+  });
+
+  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  res.json({ success: true, data: populated });
+});
+
+// PUT /api/leads/:id/export-config  (confirm the export shipment: snapshot the
+// selected products + the destination's commercials onto the lead, then
+// auto-generate the kit — the export counterpart of confirmRates)
+const confirmExportConfig = asyncHandler(async (req, res) => {
+  const { rateType, loadingType, containerSize, countryId, currency, lines, customTerms } = req.body;
+  const lead = await Lead.findById(req.params.id);
+  if (!lead) throw ApiError.notFound('Lead not found');
+  assertCanView(lead, req.user);
+  assertNotLocked(lead);
+  if (lead.kitType !== 'export') throw ApiError.badRequest('Select the export kit before configuring a shipment');
+
+  const country = await ExportCountry.findById(countryId);
+  if (!country || !country.isActive) throw ApiError.badRequest('Unknown or inactive destination country');
+
+  // Resolve + validate every line against the backing master. Weights default
+  // to the parsed pack size; a rate override is bounded by MRP like the
+  // domestic kits and logged the same way.
+  const resolved = await exportKitService.resolveLines(rateType, lines);
+  const edits = [];
+  lead.rates = resolved.map((l) => {
+    const item = l.item;
+    const netRate = round2(l.baseRateInr);
+    if (netRate > item.mrp) {
+      throw ApiError.badRequest(`"${item.productName}": rate ${netRate} exceeds MRP ${item.mrp}`);
+    }
+    if (netRate !== item.netRate) {
+      edits.push({ productName: item.productName, field: 'netRate', from: item.netRate, to: netRate, by: req.user._id });
+    }
+    const deviationPct =
+      item.netRate > 0 && netRate < item.netRate
+        ? round2(((item.netRate - netRate) / item.netRate) * 100)
+        : 0;
+    return {
+      rateItemId: item._id,
+      sku: item.sku,
+      productName: item.productName,
+      packSize: item.packSize,
+      category: item.category || '',
+      included: true,
+      mrp: item.mrp,
+      basic: 0,
+      dsp: 0,
+      standardNetRate: item.netRate,
+      netRate,
+      suggestiveMargin: item.suggestiveMargin || 0,
+      gst: item.gst,
+      // Exports are zero-rated under GST, so the line carries the base rate.
+      netInclGst: netRate,
+      deviationPct,
+      qty: l.qty,
+      unitWeightKg: l.unitWeightKg || 0,
+    };
+  });
+
+  lead.exportConfig = {
+    rateType,
+    loadingType,
+    containerSize: loadingType === 'full' ? containerSize : '',
+    currency,
+    countryId: country._id,
+    countryName: country.name,
+    countryCode: country.code,
+    cirPercent: country.cirPercent,
+    partLoadFreightPerKg: country.partLoadFreightPerKg,
+  };
+  applyCustomTerms(lead, customTerms);
+  if (edits.length) lead.rateEditLog.push(...edits);
+
+  // Validate the whole shipment (part-load weights, container, FX) by computing
+  // the card once before anything is persisted.
+  const card = await exportKitService.computeRateCardFromLead(lead);
+
+  const from = lead.status;
+  lead.status = 'rates_confirmed';
+  markEditedIfGenerated(lead);
+  lead.modifiedBy = req.user._id;
+  lead.statusHistory.push({
+    from, to: 'rates_confirmed', changedBy: req.user._id,
+    note:
+      `Export shipment: ${country.name} · ` +
+      `${loadingType === 'full' ? `full load (${card.config.container?.label || containerSize})` : 'part load'} · ` +
+      `${lead.rates.length} product(s) · ${currency}`,
+  });
+  await lead.save();
+
+  await logActivity({
+    userId: req.user._id, action: 'LEAD_RATES_CONFIRMED', entity: 'Lead', entityId: lead._id,
+    details:
+      `${lead.refNumber}: confirmed export shipment to ${country.name} ` +
+      `(${lead.rates.length} product(s), ${currency}${edits.length ? `, ${edits.length} rate override(s)` : ''})`,
+    ip: req.ip,
+  });
+
+  // Finalizing the shipment auto-(re)generates the kit, mirroring confirmRates.
+  await buildKitFiles(lead);
+  lead.status = from === 'delivered' ? 'delivered' : 'generated';
+  lead.locked = true;
+  lead.editedAfterGeneration = false;
+  lead.modifiedBy = req.user._id;
+  lead.statusHistory.push({
+    from: 'rates_confirmed', to: lead.status, changedBy: req.user._id, note: 'Kit generated · locked',
+  });
+  await lead.save();
+
+  await logActivity({
+    userId: req.user._id, action: 'LEAD_KIT_GENERATED', entity: 'Lead', entityId: lead._id,
+    details: `${lead.refNumber}: generated ${lead.generatedFiles.length}-document export kit`, ip: req.ip,
   });
 
   const populated = await Lead.findById(lead._id).populate(POPULATE);
@@ -1238,6 +1406,8 @@ const markDelivered = asyncHandler(async (req, res) => {
 });
 
 module.exports = {
+  listCities,
+  listCreators,
   createLead,
   listLeads,
   getLead,
@@ -1246,6 +1416,7 @@ module.exports = {
   deleteLead,
   selectKitType,
   confirmRates,
+  confirmExportConfig,
   generateLeadKit,
   saveTerms,
   unlockLead,

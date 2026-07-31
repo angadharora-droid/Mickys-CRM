@@ -82,10 +82,11 @@ const ONBOARDING_CHECKLIST = [
   },
 ];
 
-// Price-card terms & conditions (shared by both price cards). {priceLabel} is
-// "DLP" (distributor) or "Inst." (institutional).
+// Price-card terms & conditions (shared by the distributor and stockist cards;
+// the institutional kit has no price card, only the quotation). {priceLabel} is
+// "DLP" on the distributor card and dropped entirely on the stockist one.
 const PRICE_CARD_TERMS = [
-  'The above {priceLabel} prices are inclusive of GST @ 5%.',
+  'The above {priceLabel} prices are exclusive of GST @ 5%.',
   'Prices can be changed without any prior notice.',
   'Orders will be billed at prevailing prices at the time of dispatch.',
   'Orders must meet the MOQ.',
@@ -102,9 +103,10 @@ const INCENTIVE_SLABS = [
 ];
 const INCENTIVE_VALIDITY = 'W.E.F. 01/06/2025 TO 30/09/2026';
 
-// Quotation terms & conditions.
+// Quotation terms & conditions. The quotation lists a pre-GST unit price with
+// GST broken out in its own column, so its prices are quoted exclusive of tax.
 const QUOTATION_TERMS = [
-  'Prices are inclusive of GST @ 5%.',
+  'Prices are exclusive of GST @ 5%.',
   'Prices are valid for the period mentioned above only.',
   'Orders billed at prevailing prices at time of dispatch.',
   'Orders must meet the MOQ.',
@@ -119,14 +121,17 @@ const QUOTATION_DEFAULTS = {
   validityDays: 15,
 };
 
-// Stockist pricing (Stockist Price Card). Unlike the distributor card, whose
-// DLP is rounded to the nearest ₹10, the stockist card uses the exact landed
-// price (Basic + GST) and prices the stockist 5% below it, rounded to the
-// paisa — e.g. Basic 130 → DLP 136.50 → Stockist Price 129.68.
+// The landed price a distributor pays: the product's Basic rate, quoted
+// exclusive of GST — e.g. Basic 130 → DLP 130.00. Shared by the distributor
+// and stockist cards, which differ only in what they do with it. (No GST is
+// added anywhere on the rate cards: every price is stated exclusive of GST.)
+const dlp = (basic) => Math.round((Number(basic) || 0) * 100) / 100;
+
+// Stockist pricing (Stockist Price Card): 5% below the DLP, rounded to the
+// paisa — e.g. Basic 130 → DLP 130.00 → Stockist Price 123.50.
 const STOCKIST_FACTOR = 0.95;
-const stockistDlp = (basic, gst) => Math.round((Number(basic) || 0) * (1 + (Number(gst) || 0) / 100) * 100) / 100;
 // `dlp * 95` stays exact for paisa-precision DLPs, so half-values round up
-// (136.50 → 129.68) the way the reference price card does.
+// the way the reference price card does.
 const stockistPrice = (dlp) => Math.round((Number(dlp) || 0) * 95) / 100;
 
 module.exports = {
@@ -139,6 +144,6 @@ module.exports = {
   QUOTATION_TERMS,
   QUOTATION_DEFAULTS,
   STOCKIST_FACTOR,
-  stockistDlp,
+  dlp,
   stockistPrice,
 };

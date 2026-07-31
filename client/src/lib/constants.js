@@ -52,6 +52,7 @@ export const ACTION_POINTS = [
   'Send Sample',
   'Send distributor kit',
   'Send institutional kit',
+  'Send export kit',
 ];
 
 /** Optional lead fields worth completing. Keys match both the create form and
@@ -73,12 +74,14 @@ export const KIT_TYPES = [
   { value: 'distributor', label: 'Distributor Kit' },
   { value: 'stockist', label: 'Stockist Kit' },
   { value: 'institutional', label: 'Institutional Kit' },
+  { value: 'export', label: 'Export Kit' },
 ];
 
 export const KIT_TYPE_LABELS = {
   distributor: 'Distributor Kit',
   stockist: 'Stockist Kit',
   institutional: 'Institutional Kit',
+  export: 'Export Kit',
 };
 
 /** Document set per kit type (matches the developer brief). */
@@ -103,6 +106,10 @@ export const KIT_DOCS = {
     'Quotation with Terms & Conditions',
     "Micky's Brochure",
   ],
+  export: [
+    'Export Rate Card',
+    "Micky's Brochure",
+  ],
 };
 
 /**
@@ -112,7 +119,7 @@ export const KIT_DOCS = {
  */
 export const DEFAULT_KIT_TERMS = {
   distributor: [
-    'The above DLP prices are inclusive of GST @ 5%.',
+    'The above DLP prices are exclusive of GST @ 5%.',
     'Prices can be changed without any prior notice.',
     'Orders will be billed at prevailing prices at the time of dispatch.',
     'Orders must meet the MOQ.',
@@ -121,7 +128,7 @@ export const DEFAULT_KIT_TERMS = {
     'All disputes will be subjected to Nagpur jurisdiction.',
   ],
   stockist: [
-    'The above prices are inclusive of GST @ 5%.',
+    'The above prices are exclusive of GST @ 5%.',
     'Prices can be changed without any prior notice.',
     'Orders will be billed at prevailing prices at the time of dispatch.',
     'Orders must meet the MOQ.',
@@ -130,7 +137,7 @@ export const DEFAULT_KIT_TERMS = {
     'All disputes will be subjected to Nagpur jurisdiction.',
   ],
   institutional: [
-    'Prices are inclusive of GST @ 5%.',
+    'Prices are exclusive of GST @ 5%.',
     'Prices are valid for the period mentioned above only.',
     'Orders billed at prevailing prices at time of dispatch.',
     'Orders must meet the MOQ.',
@@ -138,6 +145,14 @@ export const DEFAULT_KIT_TERMS = {
     'Rates are inclusive of logistics to customer address / warehouse.',
     'All disputes subject to Nagpur jurisdiction.',
     'This quotation does not constitute a binding order confirmation.',
+  ],
+  // Mirrors the server's Setting.export.rateCardTerms default.
+  export: [
+    "Rates are quoted per pack and include the shipment's apportioned logistics as itemised on this card.",
+    'Exports are zero-rated under GST (supply under LUT); prices exclude destination-country duties, taxes and clearance charges.',
+    'Rates are indicative until confirmed by proforma invoice and are valid for 15 days from the card date.',
+    'Exchange rate as printed on this card; final invoicing at the rate prevailing on the invoice date.',
+    'Subject to Nagpur jurisdiction.',
   ],
 };
 
