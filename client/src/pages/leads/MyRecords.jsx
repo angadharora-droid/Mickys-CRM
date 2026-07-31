@@ -107,7 +107,7 @@ export default function MyRecords() {
   const fetchRecords = useCallback(async () => {
     setLoading(true);
     try {
-      const params = { page, limit: 10 };
+      const params = { page, limit: 100 };
       if (search) params.search = search;
       if (status !== ALL) params.status = status;
       const { data } = await api.get('/leads', { params });

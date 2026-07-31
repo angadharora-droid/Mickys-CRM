@@ -147,7 +147,7 @@ export default function LeadTracker() {
   const fetchLeads = useCallback(async () => {
     setLeadsLoading(true);
     try {
-      const params = { page, limit: 10 };
+      const params = { page, limit: 100 };
       if (ownerId !== ALL) params.execId = ownerId;
       if (status !== ALL) params.status = status;
       if (from) params.createdFrom = from;

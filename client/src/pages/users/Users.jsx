@@ -67,7 +67,7 @@ export default function Users() {
   const fetchUsers = useCallback(async () => {
     setLoading(true);
     try {
-      const params = { page, limit: 10 };
+      const params = { page, limit: 100 };
       if (search) params.search = search;
       if (roleFilter !== ALL) params.role = roleFilter;
       const { data } = await api.get('/users', { params });
