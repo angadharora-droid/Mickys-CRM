@@ -281,6 +281,23 @@ const settingsSchema = z.object({
     .optional(),
 });
 
+// ---------- Web push ----------
+// Shape produced by PushSubscription.toJSON() in the browser; unknown extras
+// (expirationTime, …) are stripped by zod.
+const pushSubscribeSchema = z.object({
+  subscription: z.object({
+    endpoint: z.string().url().max(1000),
+    keys: z.object({
+      p256dh: z.string().min(1).max(300),
+      auth: z.string().min(1).max(300),
+    }),
+  }),
+});
+
+const pushUnsubscribeSchema = z.object({
+  endpoint: z.string().url().max(1000),
+});
+
 module.exports = {
   objectId,
   BUSINESS_TYPES,
@@ -308,4 +325,6 @@ module.exports = {
   exchangeRatesSchema,
   exportRateCardSchema,
   exportConfirmSchema,
+  pushSubscribeSchema,
+  pushUnsubscribeSchema,
 };

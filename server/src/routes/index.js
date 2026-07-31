@@ -14,6 +14,7 @@ const dashboard = require('../controllers/dashboard.controller');
 const activity = require('../controllers/activity.controller');
 const settings = require('../controllers/settings.controller');
 const exportKit = require('../controllers/export.controller');
+const pushCtrl = require('../controllers/push.controller');
 
 const router = express.Router();
 
@@ -93,6 +94,11 @@ router.put('/export/exchange-rates', authenticate, authorize(ADMIN), validate(v.
 // Live shipment preview used by the lead export step. Generation itself runs
 // through the lead pipeline (PUT /leads/:id/export-config → generated kit).
 router.post('/export/rate-card/preview', authenticate, validate(v.exportRateCardSchema), exportKit.previewRateCard);
+
+// ---------- Web push notifications ----------
+router.get('/push/public-key', authenticate, pushCtrl.publicKey);
+router.post('/push/subscribe', authenticate, validate(v.pushSubscribeSchema), pushCtrl.subscribe);
+router.post('/push/unsubscribe', authenticate, validate(v.pushUnsubscribeSchema), pushCtrl.unsubscribe);
 
 // ---------- Dashboards ----------
 router.get('/dashboard/admin', authenticate, authorize(ADMIN), dashboard.adminAnalytics);

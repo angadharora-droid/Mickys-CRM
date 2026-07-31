@@ -1,11 +1,19 @@
 import { useState, useEffect } from 'react';
 import { Outlet } from 'react-router-dom';
+import { registerServiceWorker, syncPushSubscription } from '@/lib/push';
 import Sidebar from './Sidebar';
 import Header from './Header';
 import MobileNav from './MobileNav';
 
 export default function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // Register the push service worker up front and re-attach any existing push
+  // subscription to the account now signed in, so a shared device always
+  // notifies its current user.
+  useEffect(() => {
+    registerServiceWorker().then(() => syncPushSubscription());
+  }, []);
 
   // The app shell owns the viewport (h-[100dvh]) and scrolls internally via <main>.
   // Lock document-level scrolling while it's mounted so the page can never grow a

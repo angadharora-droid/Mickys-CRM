@@ -10,6 +10,7 @@ const Setting = require('../models/Setting');
 const { getPagination, buildMeta } = require('../utils/pagination');
 const { searchRegex } = require('../utils/sanitize');
 const { logActivity } = require('../services/activity.service');
+const { notifyUser } = require('../services/push.service');
 const { sendKitEmail } = require('../services/email.service');
 const { generateKit, buildZip, getBrochureBuffer, BROCHURE_PATH, KITS_DIR } = require('../services/kit.service');
 const ExportCountry = require('../models/ExportCountry');
@@ -146,6 +147,22 @@ function applyCustomTerms(lead, customTerms) {
   };
 }
 
+/**
+ * Web-push "a lead was assigned to you" to every device the new owner has
+ * registered. Fire-and-forget (notifyUser never throws) and skipped when
+ * someone assigns a lead to themselves. Tapping the notification opens the
+ * lead directly.
+ */
+function pushAssignment(actor, ownerId, lead) {
+  if (!ownerId || String(ownerId) === String(actor._id)) return;
+  notifyUser(ownerId, {
+    title: 'New lead assigned to you',
+    body: `${lead.businessName} (${lead.refNumber}) — assigned by ${actor.name}`,
+    url: `/leads/${lead._id}`,
+    tag: `lead-${lead._id}`,
+  });
+}
+
 async function resolveExecId(req, providedId) {
   // Everyone (exec, PR manager, admin) owns the leads they create and stays
   // owner until an admin reassigns. An admin may hand the lead to anyone —
@@ -276,6 +293,7 @@ const createLead = asyncHandler(async (req, res) => {
     userId: req.user._id, action: 'LEAD_CREATED', entity: 'Lead', entityId: lead._id,
     details: `Created lead ${lead.refNumber} for "${lead.businessName}" (${lead.city})`, ip: req.ip,
   });
+  pushAssignment(req.user, lead.assignedExecId, lead);
 
   const populated = await Lead.findById(lead._id).populate(POPULATE);
   res.status(201).json({ success: true, data: populated });
@@ -375,6 +393,7 @@ const updateLead = asyncHandler(async (req, res) => {
   assertNotLocked(lead);
 
   const { assignedExecId, ...rest } = req.body;
+  const prevOwner = String(lead.assignedExecId || '');
   if (assignedExecId && req.user.role === 'admin') {
     lead.assignedExecId = await resolveExecId(req, assignedExecId);
   }
@@ -388,6 +407,7 @@ const updateLead = asyncHandler(async (req, res) => {
     userId: req.user._id, action: 'LEAD_UPDATED', entity: 'Lead', entityId: lead._id,
     details: `Updated lead ${lead.refNumber}`, ip: req.ip,
   });
+  if (String(lead.assignedExecId) !== prevOwner) pushAssignment(req.user, lead.assignedExecId, lead);
 
   const populated = await Lead.findById(lead._id).populate(POPULATE);
   res.json({ success: true, data: populated });
@@ -401,7 +421,7 @@ const bulkReassignLeads = asyncHandler(async (req, res) => {
   const target = await User.findOne({ _id: assignedExecId, isActive: true });
   if (!target) throw ApiError.badRequest('Selected user not found or inactive');
 
-  const leads = await Lead.find({ _id: { $in: leadIds } }).select('refNumber assignedExecId generatedAt');
+  const leads = await Lead.find({ _id: { $in: leadIds } }).select('refNumber businessName assignedExecId generatedAt');
   if (!leads.length) throw ApiError.notFound('No matching leads found');
 
   // Leads already owned by the target are left untouched (and not logged).
@@ -423,6 +443,19 @@ const bulkReassignLeads = asyncHandler(async (req, res) => {
       userId: req.user._id, action: 'LEAD_REASSIGNED', entity: 'Lead', entityId: l._id,
       details: `Reassigned lead ${l.refNumber} to ${target.name}`, ip: req.ip,
     })));
+
+    // One tap-through notification for a single lead; a summary that opens the
+    // lead list when a batch was handed over.
+    if (changed.length === 1) {
+      pushAssignment(req.user, target._id, changed[0]);
+    } else if (String(target._id) !== String(req.user._id)) {
+      notifyUser(target._id, {
+        title: `${changed.length} leads assigned to you`,
+        body: `Assigned by ${req.user.name}`,
+        url: '/leads',
+        tag: 'bulk-assign',
+      });
+    }
   }
 
   res.json({
