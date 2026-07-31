@@ -48,6 +48,7 @@ router.get('/action-points', authenticate, leads.listActionPoints);
 router.get('/instructions', authenticate, leads.listInstructions);
 router.post('/leads', authenticate, authorize(EXEC, ADMIN, PR), validate(v.leadSchema), leads.createLead);
 router.get('/leads', authenticate, leads.listLeads);
+router.post('/leads/bulk-reassign', authenticate, authorize(ADMIN), validate(v.bulkReassignSchema), leads.bulkReassignLeads);
 router.get('/leads/:id', authenticate, leads.getLead);
 router.put('/leads/:id', authenticate, validate(v.updateLeadSchema), leads.updateLead);
 router.delete('/leads/:id', authenticate, leads.deleteLead);

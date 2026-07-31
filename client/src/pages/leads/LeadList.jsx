@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import api, { apiError } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import {
-  ROLES, LEAD_STATUSES, STATUS_LABELS, BUSINESS_TYPES, KIT_TYPES, KIT_TYPE_LABELS,
+  ROLES, ROLE_LABELS, LEAD_STATUSES, STATUS_LABELS, BUSINESS_TYPES, KIT_TYPES, KIT_TYPE_LABELS,
 } from '@/lib/constants';
 import { formatDate } from '@/lib/utils';
 import PageHeader from '@/components/shared/PageHeader';
@@ -18,7 +18,13 @@ import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { ChevronDown, ChevronRight, Plus, Search, FilterX, Contact, AlertTriangle, Lock } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  ChevronDown, ChevronRight, Plus, Search, FilterX, Contact, AlertTriangle, Lock, UserCog, X, Loader2,
+} from 'lucide-react';
 
 const ALL = '__all__';
 
@@ -41,6 +47,14 @@ export default function LeadList() {
   const [loading, setLoading] = useState(true);
   const [expandedRows, setExpandedRows] = useState({});
   const [execs, setExecs] = useState([]);
+
+  // Bulk reassign (admin): selection survives paging so leads can be gathered
+  // across pages; the header checkbox selects/clears the current page only.
+  const [selected, setSelected] = useState(() => new Set());
+  const [reassignOpen, setReassignOpen] = useState(false);
+  const [reassignTo, setReassignTo] = useState('');
+  const [reassigning, setReassigning] = useState(false);
+  const [assignees, setAssignees] = useState([]);
 
   // Write a single filter to the URL; changing any filter returns to page 1.
   const setFilter = useCallback((key, value) => {
@@ -97,10 +111,61 @@ export default function LeadList() {
   const clearFilters = () => {
     setSearchParams({}, { replace: true });
     setExpandedRows({});
+    setSelected(new Set());
   };
 
   const toggleRow = (id) => setExpandedRows((c) => ({ ...c, [id]: !c[id] }));
   const hasFilters = search || status !== ALL || kitType !== ALL || businessType !== ALL || execId !== ALL;
+
+  const toggleSelect = (id) => setSelected((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    return next;
+  });
+
+  const pageIds = leads.map((l) => l._id);
+  const allOnPageSelected = pageIds.length > 0 && pageIds.every((id) => selected.has(id));
+  const someOnPageSelected = pageIds.some((id) => selected.has(id));
+
+  const toggleSelectPage = () => setSelected((prev) => {
+    const next = new Set(prev);
+    if (allOnPageSelected) pageIds.forEach((id) => next.delete(id));
+    else pageIds.forEach((id) => next.add(id));
+    return next;
+  });
+
+  // Admin: hand the selected leads to any active user. The user list is fetched
+  // lazily the first time the dialog opens.
+  const openReassign = async () => {
+    setReassignTo('');
+    setReassignOpen(true);
+    if (assignees.length) return;
+    try {
+      const { data } = await api.get('/users', { params: { isActive: 'true', limit: 100 } });
+      setAssignees(data.data);
+    } catch (err) {
+      toast.error(apiError(err));
+    }
+  };
+
+  const bulkReassign = async () => {
+    setReassigning(true);
+    try {
+      const { data } = await api.post('/leads/bulk-reassign', {
+        leadIds: [...selected],
+        assignedExecId: reassignTo,
+      });
+      toast.success(data.message);
+      setReassignOpen(false);
+      setSelected(new Set());
+      fetchLeads();
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setReassigning(false);
+    }
+  };
 
   return (
     <div>
@@ -165,6 +230,24 @@ export default function LeadList() {
         )}
       </Card>
 
+      {canSeeAll && selected.size > 0 && (
+        <Card className="mb-4 p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-medium">
+              {selected.size} lead{selected.size === 1 ? '' : 's'} selected
+            </span>
+            <div className="ml-auto flex items-center gap-2">
+              <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>
+                <X className="h-4 w-4" /> Clear
+              </Button>
+              <Button size="sm" onClick={openReassign}>
+                <UserCog className="h-4 w-4" /> Reassign
+              </Button>
+            </div>
+          </div>
+        </Card>
+      )}
+
       <Card>
         {loading ? (
           <TableSkeleton />
@@ -179,6 +262,15 @@ export default function LeadList() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  {canSeeAll && (
+                    <TableHead className="w-10 px-2">
+                      <Checkbox
+                        checked={allOnPageSelected ? true : someOnPageSelected ? 'indeterminate' : false}
+                        onCheckedChange={toggleSelectPage}
+                        aria-label="Select all leads on this page"
+                      />
+                    </TableHead>
+                  )}
                   <TableHead className="w-10 px-2 lg:hidden" />
                   <TableHead className="hidden sm:table-cell">Reference</TableHead>
                   <TableHead>Client</TableHead>
@@ -195,6 +287,15 @@ export default function LeadList() {
                   return (
                     <Fragment key={lead._id}>
                       <TableRow className="cursor-pointer" onClick={() => navigate(`/leads/${lead._id}`)}>
+                        {canSeeAll && (
+                          <TableCell className="px-2" onClick={(e) => e.stopPropagation()}>
+                            <Checkbox
+                              checked={selected.has(lead._id)}
+                              onCheckedChange={() => toggleSelect(lead._id)}
+                              aria-label={`Select ${lead.businessName}`}
+                            />
+                          </TableCell>
+                        )}
                         <TableCell className="px-2 lg:hidden">
                           <Button
                             type="button" variant="ghost" size="icon" className="h-8 w-8"
@@ -231,7 +332,7 @@ export default function LeadList() {
                       </TableRow>
                       {isExpanded && (
                         <TableRow className="bg-muted/25 hover:bg-muted/25 lg:hidden">
-                          <TableCell colSpan={7} className="px-4 py-3">
+                          <TableCell colSpan={canSeeAll ? 8 : 7} className="px-4 py-3">
                             <dl className="grid gap-3 text-sm sm:grid-cols-3">
                               <div>
                                 <dt className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">City</dt>
@@ -258,6 +359,36 @@ export default function LeadList() {
           </>
         )}
       </Card>
+
+      {/* Admin: hand the selected leads to any active user */}
+      <Dialog open={reassignOpen} onOpenChange={setReassignOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Reassign {selected.size} lead{selected.size === 1 ? '' : 's'}</DialogTitle>
+            <DialogDescription>
+              Pass the selected leads on to any user. They will move to that person's list.
+            </DialogDescription>
+          </DialogHeader>
+          <Select value={reassignTo} onValueChange={setReassignTo}>
+            <SelectTrigger><SelectValue placeholder="Select user" /></SelectTrigger>
+            <SelectContent>
+              {assignees.map((u) => (
+                <SelectItem key={u._id} value={u._id}>
+                  {u.name}{u.employeeCode ? ` (${u.employeeCode})` : ''} · {ROLE_LABELS[u.role] || u.role}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setReassignOpen(false)} disabled={reassigning}>
+              Cancel
+            </Button>
+            <Button onClick={bulkReassign} disabled={!reassignTo || reassigning}>
+              {reassigning && <Loader2 className="h-4 w-4 animate-spin" />} Assign
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

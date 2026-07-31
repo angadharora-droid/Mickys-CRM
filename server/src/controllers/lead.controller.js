@@ -368,6 +368,45 @@ const updateLead = asyncHandler(async (req, res) => {
   res.json({ success: true, data: populated });
 });
 
+// POST /api/leads/bulk-reassign  (admin — hand a batch of leads to any active user)
+const bulkReassignLeads = asyncHandler(async (req, res) => {
+  const { leadIds, assignedExecId } = req.body;
+  // Unlike single-lead assignment (sales execs only), bulk reassignment may
+  // target any active user — admins and PR managers own leads the same way.
+  const target = await User.findOne({ _id: assignedExecId, isActive: true });
+  if (!target) throw ApiError.badRequest('Selected user not found or inactive');
+
+  const leads = await Lead.find({ _id: { $in: leadIds } }).select('refNumber assignedExecId generatedAt');
+  if (!leads.length) throw ApiError.notFound('No matching leads found');
+
+  // Leads already owned by the target are left untouched (and not logged).
+  const changed = leads.filter((l) => String(l.assignedExecId) !== String(target._id));
+  const changedIds = changed.map((l) => l._id);
+
+  if (changedIds.length) {
+    await Lead.updateMany(
+      { _id: { $in: changedIds } },
+      { $set: { assignedExecId: target._id, modifiedBy: req.user._id } }
+    );
+    // Generated kit PDFs print the assigned exec's contact details, so flag
+    // them stale — they're rebuilt with the new owner on next download/email.
+    await Lead.updateMany(
+      { _id: { $in: changedIds }, generatedAt: { $ne: null } },
+      { $set: { pdfStale: true } }
+    );
+    await Promise.all(changed.map((l) => logActivity({
+      userId: req.user._id, action: 'LEAD_REASSIGNED', entity: 'Lead', entityId: l._id,
+      details: `Reassigned lead ${l.refNumber} to ${target.name}`, ip: req.ip,
+    })));
+  }
+
+  res.json({
+    success: true,
+    message: `${changedIds.length} lead${changedIds.length === 1 ? '' : 's'} reassigned to ${target.name}`,
+    data: { reassigned: changedIds.length, unchanged: leads.length - changedIds.length },
+  });
+});
+
 // DELETE /api/leads/:id
 const deleteLead = asyncHandler(async (req, res) => {
   const lead = await Lead.findById(req.params.id);
@@ -1203,6 +1242,7 @@ module.exports = {
   listLeads,
   getLead,
   updateLead,
+  bulkReassignLeads,
   deleteLead,
   selectKitType,
   confirmRates,
