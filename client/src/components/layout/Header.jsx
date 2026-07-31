@@ -27,6 +27,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Moon, Sun, LogOut, KeyRound, ChevronDown, Bell, BellOff, Share, SquarePlus } from 'lucide-react';
+import NotificationBell from './NotificationBell';
 
 function greeting() {
   const h = new Date().getHours();
@@ -121,6 +122,8 @@ export default function Header() {
         >
           {theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
         </Button>
+
+        <NotificationBell />
 
         <Separator orientation="vertical" className="h-6 mx-1 hidden sm:block" />
 

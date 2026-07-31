@@ -1,6 +1,7 @@
 const webpush = require('web-push');
 const PushSubscription = require('../models/PushSubscription');
 const VapidConfig = require('../models/VapidConfig');
+const Notification = require('../models/Notification');
 
 // Contact address the push services may use to reach the server operator.
 const PUSH_CONTACT = process.env.WEB_PUSH_CONTACT || 'sales@mickys.in';
@@ -81,6 +82,17 @@ async function removeSubscription(userId, endpoint) {
  */
 async function notifyUser(userId, { title, body, url, tag }) {
   try {
+    // Every notification also lands in the user's in-app inbox (the header
+    // bell) — before the subscription check, so users who never enabled web
+    // push on a device still see what's new.
+    await Notification.create({
+      userId,
+      title,
+      body: body || '',
+      url: url || '/',
+      tag: tag || '',
+    }).catch((err) => console.error('[push] inbox save failed:', err.message));
+
     await ensureVapid();
     const subs = await PushSubscription.find({ userId });
     if (!subs.length) return;

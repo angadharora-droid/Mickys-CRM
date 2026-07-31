@@ -15,6 +15,7 @@ const activity = require('../controllers/activity.controller');
 const settings = require('../controllers/settings.controller');
 const exportKit = require('../controllers/export.controller');
 const pushCtrl = require('../controllers/push.controller');
+const notifications = require('../controllers/notification.controller');
 
 const router = express.Router();
 
@@ -95,6 +96,11 @@ router.put('/export/exchange-rates', authenticate, authorize(ADMIN), validate(v.
 // Live shipment preview used by the lead export step. Generation itself runs
 // through the lead pipeline (PUT /leads/:id/export-config → generated kit).
 router.post('/export/rate-card/preview', authenticate, validate(v.exportRateCardSchema), exportKit.previewRateCard);
+
+// ---------- In-app notifications (the header bell) ----------
+router.get('/notifications', authenticate, notifications.listNotifications);
+router.post('/notifications/read-all', authenticate, notifications.markAllRead);
+router.post('/notifications/:id/read', authenticate, notifications.markRead);
 
 // ---------- Web push notifications ----------
 router.get('/push/public-key', authenticate, pushCtrl.publicKey);
