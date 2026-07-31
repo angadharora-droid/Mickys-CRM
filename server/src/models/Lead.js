@@ -311,6 +311,10 @@ const leadSchema = new mongoose.Schema(
     // sheet sync. Blank for leads captured by hand. The sync keys off this so
     // re-running it never re-imports a row it has already seen.
     metaLeadId: { type: String, trim: true, default: '' },
+    // The Meta lead form's "how much gravy/paste do you use daily?" answer
+    // (e.g. "10–20 kg (small kitchen)"). Only Meta Ads leads carry it — it
+    // stays blank for hand-entered leads, and the UI shows it as such.
+    dailyUsage: { type: String, trim: true, default: '' },
 
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     modifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
