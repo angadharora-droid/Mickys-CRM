@@ -327,6 +327,14 @@ const listStates = asyncHandler(async (req, res) => {
   res.json({ success: true, data: inUse.filter(Boolean).sort((a, b) => a.localeCompare(b)) });
 });
 
+// GET /api/leads/usage-options — the Daily usage filter's option set: the
+// distinct Meta-form usage answers on leads the caller can see. Empty for
+// callers whose leads carry none (the UI hides the filter then).
+const listUsageOptions = asyncHandler(async (req, res) => {
+  const inUse = await Lead.distinct('dailyUsage', scopeFilter(req.user));
+  res.json({ success: true, data: inUse.filter(Boolean).sort((a, b) => a.localeCompare(b)) });
+});
+
 // GET /api/leads/creators — the "Created by" filter's option set: only the
 // creators that actually appear on leads the caller can see, so an exec's
 // dropdown never lists people who created none of their leads.
@@ -357,6 +365,13 @@ const listLeads = asyncHandler(async (req, res) => {
   // from the city, so they are exact values too.
   if (q.city) filter.city = q.city;
   if (q.state) filter.state = q.state;
+  // Daily usage mirrors the business-type multi-select: comma-separated list
+  // of the Meta form's exact answer values.
+  if (q.dailyUsage) {
+    const usages = String(q.dailyUsage).split(',').map((s) => s.trim()).filter(Boolean);
+    if (usages.length === 1) filter.dailyUsage = usages[0];
+    else if (usages.length > 1) filter.dailyUsage = { $in: usages };
+  }
   if (q.execId && req.user.role === 'admin') filter.assignedExecId = q.execId;
   // Anyone may narrow their list by creator — the visibility scope above still
   // applies, so a non-admin only ever sees their own leads filtered further.
@@ -1466,6 +1481,7 @@ const markDelivered = asyncHandler(async (req, res) => {
 module.exports = {
   listCities,
   listStates,
+  listUsageOptions,
   listCreators,
   createLead,
   listLeads,
