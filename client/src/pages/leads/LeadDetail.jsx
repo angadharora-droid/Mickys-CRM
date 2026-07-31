@@ -34,10 +34,12 @@ import {
 } from '@/components/ui/dialog';
 import {
   Loader2, Package, Download, Mail, Trash2, RotateCcw, FileText, CheckCircle2,
-  AlertTriangle, ArrowLeft, Boxes, Building2, Sparkles, Eye, EyeOff, Lock, Pencil, ExternalLink,
+  AlertTriangle, ArrowLeft, Boxes, Building2, Ship, Sparkles, Eye, EyeOff, Lock, Pencil, ExternalLink,
   MessageSquare, CalendarCheck, Paperclip, Upload, Image as ImageIcon, Target,
   ClipboardList, Plus, History, UserCog, X,
 } from 'lucide-react';
+import ExportKitStep from './ExportKitStep';
+import CityCombobox from '@/components/shared/CityCombobox';
 
 const NO_ACTION = '__none__';
 
@@ -94,22 +96,21 @@ function deriveLine(r) {
     ? ((r.standardNetRate - net) / r.standardNetRate) * 100
     : 0;
   const netInclGst = valid ? net * (1 + r.gst / 100) : 0;
-  // Distributor card: `net` is the editable DLP. Basic & GST are fixed; the DSP
-  // (suggested selling price) drives both margins.
+  // Distributor card: `net` is the editable DLP (the Basic rate, exclusive of
+  // GST). Basic is fixed; the DSP (suggested selling price) drives both margins.
   const basic = Number(r.basic) || 0;
-  const gstAmt = basic * (r.gst / 100);
   const dsp = Number(r.dsp) || 0;
   const dlp = net;
   const marginDsp = valid && dsp > 0 && dlp > 0 ? ((dsp - dlp) / dsp) * 100 : null;
   const marginMrp = valid && r.mrp > 0 && dlp > 0 ? ((r.mrp - dlp) / r.mrp) * 100 : null;
   // Stockist card: `net` is the editable Stockist Price; its fixed DLP is the
-  // exact Basic + GST (unrounded, unlike the distributor card's ₹10-rounded DLP)
-  // and the saving/margin columns benchmark the price against DLP, DSP and MRP.
-  const dlpExact = Math.round(basic * (1 + r.gst / 100) * 100) / 100;
+  // Basic rate (exclusive of GST) and the saving/margin columns benchmark the
+  // price against DLP, DSP and MRP.
+  const dlpExact = Math.round(basic * 100) / 100;
   const vsDlp = valid && dlpExact > 0 && net > 0 ? ((dlpExact - net) / dlpExact) * 100 : null;
   const vsDsp = valid && dsp > 0 && net > 0 ? ((dsp - net) / dsp) * 100 : null;
   const vsMrp = valid && r.mrp > 0 && net > 0 ? ((r.mrp - net) / r.mrp) * 100 : null;
-  return { net, valid, aboveMrp, deviation, netInclGst, error: !valid || aboveMrp, basic, gstAmt, dsp, dlp, marginDsp, marginMrp, dlpExact, vsDlp, vsDsp, vsMrp };
+  return { net, valid, aboveMrp, deviation, netInclGst, error: !valid || aboveMrp, basic, dsp, dlp, marginDsp, marginMrp, dlpExact, vsDlp, vsDsp, vsMrp };
 }
 
 function Stepper({ status }) {
@@ -224,13 +225,19 @@ export default function LeadDetail() {
     });
     // Prefill the email draft so it reads as an editable preview (never blank).
     const kitLabel =
-      lead.kitType === 'stockist' ? 'Stockist' : lead.kitType === 'institutional' ? 'Institutional' : 'Distributor';
+      lead.kitType === 'stockist' ? 'Stockist' : lead.kitType === 'institutional' ? 'Institutional'
+        : lead.kitType === 'export' ? 'Export' : 'Distributor';
     const docNoun = lead.kitType === 'institutional' ? 'quotation' : 'term sheet';
-    const defaultSubject = `Micky's Sales Kit for ${lead.businessName} — Ref: ${lead.refNumber}`;
-    const defaultMessage =
-      `Dear ${lead.contactPerson || lead.businessName},\n\n` +
-      `Please find attached your Micky's ${kitLabel} sales kit. It includes our rate card, ` +
-      `${docNoun} and supporting documents. We look forward to partnering with you.`;
+    const defaultSubject = lead.kitType === 'export'
+      ? `Micky's Export Kit for ${lead.businessName} — Ref: ${lead.refNumber}`
+      : `Micky's Sales Kit for ${lead.businessName} — Ref: ${lead.refNumber}`;
+    const defaultMessage = lead.kitType === 'export'
+      ? `Dear ${lead.contactPerson || lead.businessName},\n\n` +
+        `Please find attached your Micky's Export kit. It includes our export rate card and product brochure. ` +
+        `We look forward to partnering with you.`
+      : `Dear ${lead.contactPerson || lead.businessName},\n\n` +
+        `Please find attached your Micky's ${kitLabel} sales kit. It includes our rate card, ` +
+        `${docNoun} and supporting documents. We look forward to partnering with you.`;
     setEmailForm((f) => ({
       ...f,
       to: f.to || lead.email || '',
@@ -263,15 +270,16 @@ export default function LeadDetail() {
   const isDistributor = lead.kitType === 'distributor';
   const isStockist = lead.kitType === 'stockist';
   const isDistLike = isDistributor || isStockist;
+  const isExport = lead.kitType === 'export';
   const hasKit = Boolean(lead.kitType);
   const statusIdx = LEAD_STATUSES.indexOf(lead.status);
   const ratesEdited = statusIdx >= LEAD_STATUSES.indexOf('rates_confirmed');
   // A generated kit freezes the lead until the user clicks Edit (unlock).
   const locked = Boolean(lead.locked);
   const editedAfterGen = Boolean(lead.editedAfterGeneration);
-  // Client details: execs may edit only while the lead is brand new; admins
-  // anytime — but never while a generated kit has it locked (unlock first).
-  const canEditClient = !locked && (user?.role === 'admin' || lead.status === 'new');
+  // Client details are editable at any stage (incl. after kit selection) —
+  // but never while a generated kit has the lead locked (unlock first).
+  const canEditClient = !locked;
   // Optional client/CRM details still blank — surfaced in a banner so the exec
   // knows what's left to fill in on this lead.
   const missingDetails = [
@@ -362,15 +370,20 @@ export default function LeadDetail() {
       .then(() => toast.success(`${KIT_TYPE_LABELS[kitType]} selected`))
       .catch(() => {});
 
-  // Admin: pass the lead on to a sales executive. The exec list is fetched
-  // lazily the first time the dialog opens.
+  // Admin: pass the lead on to any team member — admin, sales executive or PR
+  // manager. Handing it to an admin takes it off everyone else's list. The list
+  // is fetched lazily the first time the dialog opens.
   const openReassign = async () => {
     setReassignTo(lead.assignedExecId?._id || '');
     setReassignOpen(true);
     if (execs.length) return;
     try {
-      const { data } = await api.get('/users', { params: { role: 'sales_exec', isActive: 'true', limit: 100 } });
-      setExecs(data.data);
+      const [adminRes, execRes, prRes] = await Promise.all([
+        api.get('/users', { params: { role: 'admin', isActive: 'true', limit: 100 } }),
+        api.get('/users', { params: { role: 'sales_exec', isActive: 'true', limit: 100 } }),
+        api.get('/users', { params: { role: 'pr_manager', isActive: 'true', limit: 100 } }),
+      ]);
+      setExecs([...adminRes.data.data, ...execRes.data.data, ...prRes.data.data]);
     } catch (err) {
       toast.error(apiError(err));
     }
@@ -402,6 +415,22 @@ export default function LeadDetail() {
         customTerms: terms,
       })
     ).then(() => toast.success('Rates confirmed — kit generated')).catch(() => {});
+
+  // Export leads: confirm the shipment configuration (destination, load type,
+  // products with qty/weight) — the server snapshots it and generates the kit.
+  // Only the terms relevant to the rate card travel along; the agreement
+  // boilerplate is a domestic-kit concern.
+  const confirmExport = (payload) =>
+    run('export-config', () =>
+      api.put(`/leads/${lead._id}/export-config`, {
+        ...payload,
+        customTerms: {
+          paymentTerms: terms.paymentTerms,
+          creditPeriod: terms.creditPeriod,
+          termsAndConditions: terms.termsAndConditions,
+        },
+      })
+    ).then(() => toast.success('Shipment confirmed — export kit generated')).catch(() => {});
 
   const generate = () =>
     run('generate', () => api.post(`/leads/${lead._id}/generate`, { customTerms: terms }))
@@ -660,7 +689,10 @@ export default function LeadDetail() {
             <AlertTriangle className="h-3 w-3" /> Edited after generation
           </Badge>
         )}
-        <span className="text-sm text-muted-foreground">Exec: {lead.assignedExecId?.name || '—'}</span>
+        <span className="text-sm text-muted-foreground">Owner: {lead.assignedExecId?.name || '—'}</span>
+        {lead.createdBy?.name && lead.createdBy?._id !== (lead.assignedExecId?._id || '') && (
+          <span className="text-sm text-muted-foreground">· Created by: {lead.createdBy.name}</span>
+        )}
         {isAdmin && (
           <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={openReassign}>
             <UserCog className="h-3.5 w-3.5" /> Reassign
@@ -674,21 +706,25 @@ export default function LeadDetail() {
         </Button>
       </div>
 
-      {/* Admin: hand the lead to a sales executive */}
+      {/* Admin: hand the lead to any team member (admin / exec / PR manager) */}
       <Dialog open={reassignOpen} onOpenChange={setReassignOpen}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle>Reassign lead</DialogTitle>
             <DialogDescription>
-              Pass {lead.businessName} on to a sales executive. The lead will move to their list.
+              Pass {lead.businessName} on to a new owner — an admin, sales executive or PR manager.
+              Only the new owner (and admins) will see this lead afterwards.
             </DialogDescription>
           </DialogHeader>
           <Select value={reassignTo} onValueChange={setReassignTo}>
-            <SelectTrigger><SelectValue placeholder="Select sales executive" /></SelectTrigger>
+            <SelectTrigger><SelectValue placeholder="Select new owner" /></SelectTrigger>
             <SelectContent>
               {execs.map((e) => (
                 <SelectItem key={e._id} value={e._id}>
-                  {e.name}{e.employeeCode ? ` (${e.employeeCode})` : ''}
+                  {e.name}
+                  {e.role === 'admin' ? ' — Admin'
+                    : e.role === 'pr_manager' ? ' — PR Manager'
+                      : e.employeeCode ? ` (${e.employeeCode})` : ''}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -770,7 +806,7 @@ export default function LeadDetail() {
               </Button>
             ) : (
               <span className="text-xs font-normal text-muted-foreground">
-                {locked ? '🔒 Unlock the kit to edit' : '🔒 Locked (kit selected)'}
+                🔒 Unlock the kit to edit
               </span>
             )}
           </CardTitle>
@@ -814,7 +850,7 @@ export default function LeadDetail() {
                 </div>
                 <div className="space-y-1.5">
                   <Label>City *</Label>
-                  <Input value={clientForm.city} onChange={(e) => setClientField('city', e.target.value)} />
+                  <CityCombobox value={clientForm.city} onChange={(v) => setClientField('city', v)} />
                 </div>
                 <div className="space-y-1.5">
                   <Label>State</Label>
@@ -1201,10 +1237,14 @@ export default function LeadDetail() {
           {hasKit && !switching ? (
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-3">
-                {isDistributor ? <Boxes className="h-8 w-8 text-primary" /> : isStockist ? <Package className="h-8 w-8 text-primary" /> : <Building2 className="h-8 w-8 text-primary" />}
+                {isDistributor ? <Boxes className="h-8 w-8 text-primary" /> : isStockist ? <Package className="h-8 w-8 text-primary" /> : isExport ? <Ship className="h-8 w-8 text-primary" /> : <Building2 className="h-8 w-8 text-primary" />}
                 <div>
                   <p className="font-semibold">{KIT_TYPE_LABELS[lead.kitType]} selected</p>
-                  <p className="text-xs text-muted-foreground">{(KIT_DOCS[lead.kitType] || []).length} documents · {lead.rates.length} rate lines</p>
+                  <p className="text-xs text-muted-foreground">
+                    {(KIT_DOCS[lead.kitType] || []).length} documents · {isExport
+                      ? `${lead.rates.length ? `${lead.rates.length} products in shipment` : 'shipment not configured yet'}`
+                      : `${lead.rates.length} rate lines`}
+                  </p>
                 </div>
               </div>
               <Button variant="outline" size="sm" onClick={() => setSwitching(true)} disabled={locked || action === 'kit'}>
@@ -1217,6 +1257,7 @@ export default function LeadDetail() {
                 { type: 'distributor', icon: Boxes },
                 { type: 'stockist', icon: Package },
                 { type: 'institutional', icon: Building2 },
+                { type: 'export', icon: Ship },
               ].map(({ type, icon: Icon }) => (
                 <button
                   key={type}
@@ -1251,8 +1292,20 @@ export default function LeadDetail() {
         </CardContent>
       </Card>
 
+      {/* Step 3 — Export shipment (export kits configure everything here) */}
+      {hasKit && isExport && (
+        <ExportKitStep
+          lead={lead}
+          locked={locked}
+          busy={action === 'export-config'}
+          terms={terms.termsAndConditions}
+          onTermsChange={(v) => setTerms((t) => ({ ...t, termsAndConditions: v }))}
+          onConfirm={confirmExport}
+        />
+      )}
+
       {/* Step 3 - Rate review */}
-      {hasKit && (
+      {hasKit && !isExport && (
         <Card>
           <Tabs value={step3Tab} onValueChange={setStep3Tab}>
             <CardHeader className="pb-3">
@@ -1280,7 +1333,7 @@ export default function LeadDetail() {
                 {isStockist && (
                   <p className="text-xs text-muted-foreground">
                     Only <span className="font-medium text-foreground">Stockist Price</span> is editable — it defaults to 5% below
-                    the DLP and the saving/margin columns are calculated from it. DLP = Distributor Landed Price (Basic + GST) ·
+                    the DLP and the saving/margin columns are calculated from it. DLP = Distributor Landed Price (exclusive of GST) ·
                     DSP = Distributor Selling Price (the product&rsquo;s institutional rate).
                   </p>
                 )}
@@ -1320,7 +1373,6 @@ export default function LeadDetail() {
                         {isDistributor ? (
                           <>
                             <TableHead className="text-right hidden sm:table-cell">Basic</TableHead>
-                            <TableHead className="text-right hidden md:table-cell">GST 5%</TableHead>
                             <TableHead className="text-right">DLP</TableHead>
                             <TableHead className="text-right hidden lg:table-cell">Margin DLP&rarr;DSP</TableHead>
                             <TableHead className="text-right hidden sm:table-cell">DSP</TableHead>
@@ -1329,7 +1381,6 @@ export default function LeadDetail() {
                         ) : isStockist ? (
                           <>
                             <TableHead className="text-right hidden md:table-cell">Basic</TableHead>
-                            <TableHead className="text-right hidden md:table-cell">GST 5%</TableHead>
                             <TableHead className="text-right hidden sm:table-cell">DLP</TableHead>
                             <TableHead className="text-right">Stockist Price</TableHead>
                             <TableHead className="text-right hidden lg:table-cell">vs DLP (Saving %)</TableHead>
@@ -1385,7 +1436,6 @@ export default function LeadDetail() {
                             {isDistributor ? (
                               <>
                                 <TableCell className="text-right tabular-nums hidden sm:table-cell text-muted-foreground">{formatCurrency(d.basic)}</TableCell>
-                                <TableCell className="text-right tabular-nums hidden md:table-cell text-muted-foreground">{formatCurrency(d.gstAmt)}</TableCell>
                                 {priceCell}
                                 <TableCell className="text-right tabular-nums hidden lg:table-cell text-muted-foreground">{fmtPct(d.marginDsp)}</TableCell>
                                 <TableCell className="text-right tabular-nums hidden sm:table-cell">{d.dsp > 0 ? formatCurrency(d.dsp) : '—'}</TableCell>
@@ -1394,7 +1444,6 @@ export default function LeadDetail() {
                             ) : isStockist ? (
                               <>
                                 <TableCell className="text-right tabular-nums hidden md:table-cell text-muted-foreground">{d.basic > 0 ? formatCurrency(d.basic) : 'TBD'}</TableCell>
-                                <TableCell className="text-right tabular-nums hidden md:table-cell text-muted-foreground">{d.basic > 0 ? formatCurrency(d.gstAmt) : '—'}</TableCell>
                                 <TableCell className="text-right tabular-nums hidden sm:table-cell">{d.dlpExact > 0 ? formatCurrency(d.dlpExact) : '—'}</TableCell>
                                 {priceCell}
                                 <TableCell className="text-right tabular-nums hidden lg:table-cell text-muted-foreground">{fmtPct(d.vsDlp)}</TableCell>

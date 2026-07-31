@@ -12,6 +12,7 @@ import LeadTracker from '@/pages/leads/LeadTracker';
 import MyRecords from '@/pages/leads/MyRecords';
 import FollowUps from '@/pages/FollowUps';
 import RateMaster from '@/pages/rate-master/RateMaster';
+import ExportKit from '@/pages/export/ExportKit';
 import UsersPage from '@/pages/users/Users';
 import ActivityLogs from '@/pages/ActivityLogs';
 import ChangePassword from '@/pages/ChangePassword';
@@ -59,6 +60,14 @@ export default function App() {
           }
         />
 
+        <Route
+          path="/export"
+          element={
+            <ProtectedRoute roles={[ROLES.ADMIN]}>
+              <ExportKit />
+            </ProtectedRoute>
+          }
+        />
         <Route
           path="/rate-master"
           element={

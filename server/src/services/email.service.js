@@ -136,16 +136,23 @@ async function sendKitEmail({ lead, exec, to, cc, subject, message, files = [], 
   if (!recipient) return { skipped: true, reason: 'No recipient email' };
 
   const kitLabel =
-    lead.kitType === 'stockist' ? 'Stockist' : lead.kitType === 'institutional' ? 'Institutional' : 'Distributor';
-  // Distributor & stockist kits carry a term sheet; institutional carries a quotation.
+    lead.kitType === 'stockist' ? 'Stockist' : lead.kitType === 'institutional' ? 'Institutional'
+      : lead.kitType === 'export' ? 'Export' : 'Distributor';
+  // Distributor & stockist kits carry a term sheet; institutional carries a
+  // quotation; the export kit is an export rate card + brochure.
   const isTermSheet = lead.kitType === 'distributor' || lead.kitType === 'stockist';
+  const defaultBody =
+    lead.kitType === 'export'
+      ? `Please find attached your Micky&rsquo;s Export kit. It includes our export rate card and product brochure.
+         We look forward to partnering with you.`
+      : `Please find attached your Micky&rsquo;s ${kitLabel} sales kit. It includes our rate card,
+         ${isTermSheet ? 'term sheet' : 'quotation'} and supporting documents.
+         We look forward to partnering with you.`;
   const intro =
     message && message.trim()
       ? `<p style="margin:0 0 12px">${escapeHtml(message).replace(/\n/g, '<br>')}</p>`
       : `<p style="margin:0 0 12px">Dear ${escapeHtml(lead.contactPerson || lead.businessName)},</p>
-         <p style="margin:0 0 12px">Please find attached your Micky&rsquo;s ${kitLabel} sales kit. It includes our rate card,
-         ${isTermSheet ? 'term sheet' : 'quotation'} and supporting documents.
-         We look forward to partnering with you.</p>`;
+         <p style="margin:0 0 12px">${defaultBody}</p>`;
 
   // A plain, personal-looking email (no branded card/header/footer) — just the
   // message, a small details block and the attachment note.

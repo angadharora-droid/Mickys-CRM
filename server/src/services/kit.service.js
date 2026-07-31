@@ -268,17 +268,19 @@ function priceTable(doc, y, ctx) {
   // Column widths sum to the content width (last column takes the remainder).
   // The two margin columns are spelled out as "Margin …" (wrapping to two lines)
   // so the reader knows the percentages are margins.
+  // No GST column: every price on the card is stated exclusive of GST, so
+  // there is no tax breakdown to show. The width it used goes to the product
+  // name, so the remaining columns keep their positions.
   const defs = [
     ['sr', 'Sr', 18, 'left'],
-    ['name', 'Product Name', 138, 'left'],
+    ['name', 'Product Name', 180, 'left'],
     ['wt', 'Wt', 48, 'left'],
     ['mrp', 'MRP', 40, 'right'],
     ['basic', 'Basic', 40, 'right'],
-    ['gst', 'GST 5%', 42, 'right'],
-    ['dlp', 'DLP', 42, 'right'],
+    ['dlp', 'DLP', 52, 'right'],
     ['mDsp', 'Margin\nDLP-DSP', 50, 'right'],
     ['dsp', 'DSP', 40, 'right'],
-    ['mMrp', 'Margin\nDLP-MRP', W - 458, 'right'],
+    ['mMrp', 'Margin\nDLP-MRP', W - 468, 'right'],
   ];
   let cx = M;
   const cols = defs.map(([key, label, w, align]) => {
@@ -321,7 +323,6 @@ function priceTable(doc, y, ctx) {
       const dlp = Number(it.netRate) || 0; // editable DLP
       const dsp = Number(it.dsp) || 0;
       const tbd = !basic;
-      const gstAmt = basic * (it.gst / 100);
       const mDsp = dsp > 0 && dlp > 0 ? ((dsp - dlp) / dsp) * 100 : null;
       const mMrp = it.mrp > 0 && dlp > 0 ? ((it.mrp - dlp) / it.mrp) * 100 : null;
       const vals = {
@@ -330,8 +331,8 @@ function priceTable(doc, y, ctx) {
         wt: it.packSize || '',
         mrp: inr(it.mrp),
         basic: tbd ? 'TBD' : inr(basic),
-        gst: tbd ? '-' : inr2(gstAmt),
-        dlp: tbd ? '-' : inr(dlp),
+        // Discount overrides can land on the paisa, so the DLP keeps two decimals.
+        dlp: tbd ? '-' : inr2(dlp),
         mDsp: mDsp == null ? '-' : pct(mDsp),
         dsp: dsp > 0 ? inr(dsp) : '-',
         mMrp: mMrp == null ? '-' : pct(mMrp),
@@ -388,7 +389,7 @@ function drawPriceCard(doc, ctx) {
   y += 24;
 
   doc.font('Helvetica').fontSize(7.5).fill(SLATE)
-    .text('All prices in Rs.  ·  DLP = Delivered Landed Price  ·  DSP = Distributor Selling Price  ·  Margins shown as %', M, y, { width: W });
+    .text('All prices in Rs., exclusive of GST  ·  DLP = Delivered Landed Price  ·  DSP = Distributor Selling Price  ·  Margins shown as %', M, y, { width: W });
   y += 14;
   y = priceTable(doc, y, ctx);
   const priceTerms = content.PRICE_CARD_TERMS.map((t) => t.replace('{priceLabel}', 'DLP'));
@@ -398,10 +399,11 @@ function drawPriceCard(doc, ctx) {
 }
 
 // ---------------- Stockist Price Card ----------------
-// Mirrors the reference price card: Sr / Product / Wt / MRP / Basic / GST /
-// DLP (exact Basic + GST, unlike the distributor card's ₹10-rounded DLP) /
-// Stockist Price (the snapshot's editable netRate, standard = DLP × 0.95)
-// plus savings/margin columns benchmarked against DLP, DSP and MRP.
+// Mirrors the reference price card: Sr / Product / Wt / MRP / Basic /
+// DLP (the Basic rate, exclusive of GST) / Stockist Price (the snapshot's
+// editable netRate, standard = DLP × 0.95) plus savings/margin columns
+// benchmarked against DLP, DSP and MRP. No GST column — every price on the
+// card is stated exclusive of GST.
 function stockistPriceTable(doc, y, ctx) {
   const W = contentWidth(doc);
   const right = M + W;
@@ -412,11 +414,10 @@ function stockistPriceTable(doc, y, ctx) {
   // The Stockist Price and the three benchmark columns wrap to two lines.
   const defs = [
     ['sr', 'Sr', 15, 'left'],
-    ['name', 'Product Name', 116, 'left'],
+    ['name', 'Product Name', 156, 'left'],
     ['wt', 'Wt', 40, 'left'],
     ['mrp', 'MRP', 38, 'right'],
     ['basic', 'Basic', 38, 'right'],
-    ['gst', 'GST 5%', 40, 'right'],
     ['dlp', 'DLP', 40, 'right'],
     ['stk', 'Stockist\nPrice', 44, 'right'],
     ['vsDlp', 'vs DLP\nSaving', 47, 'right'],
@@ -460,8 +461,7 @@ function stockistPriceTable(doc, y, ctx) {
       const basic = Number(it.basic) || 0;
       const dsp = Number(it.dsp) || 0;
       const tbd = !basic;
-      const gstAmt = basic * (it.gst / 100);
-      const dlp = tbd ? 0 : content.stockistDlp(basic, it.gst); // exact Basic + GST
+      const dlp = tbd ? 0 : content.dlp(basic); // the Basic rate, exclusive of GST
       const stk = tbd ? 0 : Number(it.netRate) || 0; // snapshotted / exec-edited Stockist Price
       const vsDlp = dlp > 0 && stk > 0 ? ((dlp - stk) / dlp) * 100 : null;
       const vsDsp = dsp > 0 && stk > 0 ? ((dsp - stk) / dsp) * 100 : null;
@@ -472,7 +472,6 @@ function stockistPriceTable(doc, y, ctx) {
         wt: it.packSize || '',
         mrp: inr(it.mrp),
         basic: tbd ? 'TBD' : inr(basic),
-        gst: tbd ? '-' : inr2(gstAmt),
         dlp: tbd ? '-' : inr(dlp),
         stk: stk > 0 ? inr(stk) : '-',
         vsDlp: vsDlp == null ? '-' : pct(vsDlp),
@@ -504,7 +503,7 @@ function drawStockistPriceCard(doc, ctx) {
   y += 24;
 
   doc.font('Helvetica').fontSize(7.5).fill(SLATE)
-    .text('All prices in Rs.  ·  DLP = Distributor Landed Price (Basic + GST)  ·  Stockist Price = DLP x 0.95 (5% below DLP)  ·  DSP = Distributor Selling Price  ·  Margins shown as %', M, y, { width: W });
+    .text('All prices in Rs., exclusive of GST  ·  DLP = Distributor Landed Price  ·  Stockist Price = DLP x 0.95 (5% below DLP)  ·  DSP = Distributor Selling Price  ·  Margins shown as %', M, y, { width: W });
   y += 22;
   y = stockistPriceTable(doc, y, ctx);
   // Same T&C as the distributor card, but without the DLP price label prefix.
@@ -792,6 +791,36 @@ async function generateKit({ lead, exec, settings }) {
   const company = settings.company || {};
   const clientSlug = sanitizeName(lead.businessName);
   const ref = lead.refNumber;
+
+  // The export kit renders from the lead's frozen shipment snapshot via the
+  // export engine (different inputs from the domestic docs), plus the brochure.
+  if (lead.kitType === 'export') {
+    const exportKit = require('./exportKit.service');
+    const card = await exportKit.computeRateCardFromLead(lead, settings);
+    const files = [
+      {
+        docType: 'ExportRateCard',
+        label: `Export Rate Card — ${card.config.country.name} (${card.config.currency})`,
+        fileName: `Mickys_ExportRateCard_${clientSlug}_${ref}.pdf`,
+        buffer: await exportKit.renderRateCardPdf(card, { lead, exec }),
+        contentType: 'application/pdf',
+        static: false,
+      },
+    ];
+    if (fs.existsSync(BROCHURE_PATH)) {
+      files.push({
+        docType: BROCHURE_DOC.docType,
+        label: BROCHURE_DOC.label,
+        fileName: `Mickys_${BROCHURE_DOC.docType}.pdf`,
+        path: BROCHURE_PATH,
+        contentType: 'application/pdf',
+        static: true,
+      });
+    } else {
+      console.warn(`[kit] static document missing, skipping: ${BROCHURE_PATH}`);
+    }
+    return { files, zipName: `MickysExportKit_${clientSlug}_${ref}.zip` };
+  }
 
   const plan = DOC_PLANS[lead.kitType];
   if (!plan) throw new Error(`Unknown kit type: ${lead.kitType}`);

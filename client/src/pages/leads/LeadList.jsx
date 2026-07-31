@@ -40,6 +40,8 @@ export default function LeadList() {
   const kitType = searchParams.get('kit') || ALL;
   const businessType = searchParams.get('biz') || ALL;
   const execId = searchParams.get('exec') || ALL;
+  const creatorId = searchParams.get('creator') || ALL;
+  const city = searchParams.get('city') || ALL;
   const page = Number(searchParams.get('page')) || 1;
 
   const [leads, setLeads] = useState([]);
@@ -47,6 +49,8 @@ export default function LeadList() {
   const [loading, setLoading] = useState(true);
   const [expandedRows, setExpandedRows] = useState({});
   const [execs, setExecs] = useState([]);
+  const [creators, setCreators] = useState([]);
+  const [cities, setCities] = useState([]);
 
   // Bulk reassign (admin): selection survives paging so leads can be gathered
   // across pages; the header checkbox selects/clears the current page only.
@@ -78,10 +82,26 @@ export default function LeadList() {
 
   useEffect(() => {
     if (canSeeAll) {
-      api.get('/users', { params: { role: 'sales_exec', limit: 100 } })
-        .then((res) => setExecs(res.data.data))
+      // A lead's owner can be an admin, a sales exec or a PR manager, so the
+      // owner filter lists all three.
+      Promise.all([
+        api.get('/users', { params: { role: 'admin', limit: 100 } }),
+        api.get('/users', { params: { role: 'sales_exec', limit: 100 } }),
+        api.get('/users', { params: { role: 'pr_manager', limit: 100 } }),
+      ])
+        .then(([adminRes, execRes, prRes]) =>
+          setExecs([...adminRes.data.data, ...execRes.data.data, ...prRes.data.data]))
         .catch(() => {});
     }
+    // Only cities that actually have a visible lead — the filter's option set.
+    api.get('/cities', { params: { inUse: true } })
+      .then((res) => setCities(res.data.data))
+      .catch(() => {});
+    // Only creators that appear on leads the caller can see — so the dropdown
+    // never lists someone who created none of their visible leads.
+    api.get('/leads/creators')
+      .then((res) => setCreators(res.data.data))
+      .catch(() => {});
   }, [canSeeAll]);
 
   const fetchLeads = useCallback(async () => {
@@ -93,6 +113,8 @@ export default function LeadList() {
       if (kitType !== ALL) params.kitType = kitType;
       if (businessType !== ALL) params.businessType = businessType;
       if (execId !== ALL) params.execId = execId;
+      if (creatorId !== ALL) params.createdBy = creatorId;
+      if (city !== ALL) params.city = city;
       const { data } = await api.get('/leads', { params });
       setLeads(data.data);
       setMeta(data.meta);
@@ -101,7 +123,7 @@ export default function LeadList() {
     } finally {
       setLoading(false);
     }
-  }, [page, search, status, kitType, businessType, execId]);
+  }, [page, search, status, kitType, businessType, execId, creatorId, city]);
 
   useEffect(() => {
     const t = setTimeout(fetchLeads, search ? 350 : 0);
@@ -115,7 +137,9 @@ export default function LeadList() {
   };
 
   const toggleRow = (id) => setExpandedRows((c) => ({ ...c, [id]: !c[id] }));
-  const hasFilters = search || status !== ALL || kitType !== ALL || businessType !== ALL || execId !== ALL;
+  const hasFilters =
+    search || status !== ALL || kitType !== ALL || businessType !== ALL ||
+    execId !== ALL || creatorId !== ALL || city !== ALL;
 
   const toggleSelect = (id) => setSelected((prev) => {
     const next = new Set(prev);
@@ -213,12 +237,38 @@ export default function LeadList() {
             </SelectContent>
           </Select>
 
+          <Select value={city} onValueChange={(v) => setFilter('city', v)}>
+            <SelectTrigger><SelectValue placeholder="City" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL}>All cities</SelectItem>
+              {cities.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+            </SelectContent>
+          </Select>
+
+          <Select value={creatorId} onValueChange={(v) => setFilter('creator', v)}>
+            <SelectTrigger><SelectValue placeholder="Created by" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL}>All creators</SelectItem>
+              {creators.map((c) => (
+                <SelectItem key={c._id} value={c._id}>
+                  {c.name}
+                  {c.role === 'admin' ? ' — Admin' : c.role === 'pr_manager' ? ' — PR Manager' : ''}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
           {canSeeAll && (
             <Select value={execId} onValueChange={(v) => setFilter('exec', v)}>
-              <SelectTrigger><SelectValue placeholder="Exec" /></SelectTrigger>
+              <SelectTrigger><SelectValue placeholder="Assigned to" /></SelectTrigger>
               <SelectContent>
-                <SelectItem value={ALL}>All execs</SelectItem>
-                {execs.map((e) => <SelectItem key={e._id} value={e._id}>{e.name}</SelectItem>)}
+                <SelectItem value={ALL}>All owners</SelectItem>
+                {execs.map((e) => (
+                  <SelectItem key={e._id} value={e._id}>
+                    {e.name}
+                    {e.role === 'admin' ? ' — Admin' : e.role === 'pr_manager' ? ' — PR Manager' : ''}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           )}
@@ -276,7 +326,8 @@ export default function LeadList() {
                   <TableHead>Client</TableHead>
                   <TableHead className="hidden sm:table-cell">City</TableHead>
                   <TableHead className="hidden md:table-cell">Kit</TableHead>
-                  <TableHead className="hidden lg:table-cell">Exec</TableHead>
+                  <TableHead className="hidden lg:table-cell">Owner</TableHead>
+                  <TableHead className="hidden lg:table-cell">Created by</TableHead>
                   <TableHead>Status</TableHead>
                 </TableRow>
               </TableHeader>
@@ -316,6 +367,7 @@ export default function LeadList() {
                           {lead.kitType ? <Badge variant="outline">{KIT_TYPE_LABELS[lead.kitType]}</Badge> : <span className="text-muted-foreground">—</span>}
                         </TableCell>
                         <TableCell className="hidden lg:table-cell">{lead.assignedExecId?.name || '—'}</TableCell>
+                        <TableCell className="hidden lg:table-cell text-muted-foreground">{lead.createdBy?.name || '—'}</TableCell>
                         <TableCell>
                           <div className="flex flex-col items-start gap-1">
                             <div className="flex items-center gap-1.5">
@@ -332,7 +384,7 @@ export default function LeadList() {
                       </TableRow>
                       {isExpanded && (
                         <TableRow className="bg-muted/25 hover:bg-muted/25 lg:hidden">
-                          <TableCell colSpan={canSeeAll ? 8 : 7} className="px-4 py-3">
+                          <TableCell colSpan={canSeeAll ? 9 : 8} className="px-4 py-3">
                             <dl className="grid gap-3 text-sm sm:grid-cols-3">
                               <div>
                                 <dt className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">City</dt>
@@ -345,6 +397,14 @@ export default function LeadList() {
                               <div>
                                 <dt className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Lead date</dt>
                                 <dd className="mt-1 font-medium">{formatDate(lead.leadDate)}</dd>
+                              </div>
+                              <div>
+                                <dt className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Owner</dt>
+                                <dd className="mt-1 font-medium">{lead.assignedExecId?.name || '—'}</dd>
+                              </div>
+                              <div>
+                                <dt className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Created by</dt>
+                                <dd className="mt-1 font-medium">{lead.createdBy?.name || '—'}</dd>
                               </div>
                             </dl>
                           </TableCell>
