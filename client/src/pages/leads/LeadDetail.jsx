@@ -854,7 +854,9 @@ export default function LeadDetail() {
                 </div>
                 <div className="space-y-1.5">
                   <Label>State</Label>
-                  <Input value={clientForm.state} onChange={(e) => setClientField('state', e.target.value)} />
+                  {/* Auto-derived from the city on save for Indian cities; the
+                      typed value only sticks for cities off the Indian list. */}
+                  <Input placeholder="Auto-filled from city" value={clientForm.state} onChange={(e) => setClientField('state', e.target.value)} />
                 </div>
                 <div className="space-y-1.5">
                   <Label>GSTIN</Label>

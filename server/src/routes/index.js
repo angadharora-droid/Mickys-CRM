@@ -46,6 +46,7 @@ router.delete('/rate-items/:id', authenticate, authorize(ADMIN), rateItems.delet
 
 // ---------- Leads + Kit pipeline ----------
 router.get('/cities', authenticate, leads.listCities);
+router.get('/states', authenticate, leads.listStates);
 router.get('/follow-ups', authenticate, leads.listFollowUps);
 router.get('/action-points', authenticate, leads.listActionPoints);
 router.get('/instructions', authenticate, leads.listInstructions);
