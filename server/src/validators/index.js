@@ -87,6 +87,13 @@ const leadSchema = z.object({
 
 const updateLeadSchema = leadSchema.partial();
 
+// Bulk hand-off from the lead list. Unlike single-lead assignment (execs only),
+// the target here may be any active user — admin and PR manager included.
+const bulkReassignSchema = z.object({
+  leadIds: z.array(objectId).min(1, 'Select at least one lead').max(200),
+  assignedExecId: objectId,
+});
+
 const kitTypeSchema = z.object({
   kitType: z.enum(['distributor', 'stockist', 'institutional']),
 });
@@ -207,6 +214,7 @@ module.exports = {
   rateItemSchema,
   leadSchema,
   updateLeadSchema,
+  bulkReassignSchema,
   kitTypeSchema,
   ratesConfirmSchema,
   generateKitSchema,
