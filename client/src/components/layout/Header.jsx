@@ -26,7 +26,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Moon, Sun, LogOut, KeyRound, ChevronDown, Bell, BellOff, Share, SquarePlus } from 'lucide-react';
+import { Moon, Sun, LogOut, KeyRound, ChevronDown, Bell, BellOff, BellRing, Share, SquarePlus } from 'lucide-react';
 import NotificationBell from './NotificationBell';
 
 function greeting() {
@@ -112,6 +112,24 @@ export default function Header() {
       </div>
 
       <div className="flex items-center gap-1.5">
+        {/* Direct enable-notifications call-to-action — always visible until
+            push is on for this device (hidden only where push can't work at
+            all). On iOS Safari it opens the Add-to-Home-Screen guide. */}
+        {pushStatus && pushStatus !== 'enabled' && (pushStatus !== 'unsupported' || iosNeedsInstall()) && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={togglePush}
+            disabled={pushBusy}
+            title="Enable notifications"
+            className="rounded-full gap-1.5 border-amber-300/60 bg-amber-50 text-amber-900 hover:bg-amber-100 hover:text-amber-950 dark:border-amber-400/30 dark:bg-amber-400/10 dark:text-amber-200 dark:hover:bg-amber-400/20"
+          >
+            <BellRing className="h-4 w-4" />
+            <span className="hidden md:inline">Enable notifications</span>
+            <span className="md:hidden">Enable</span>
+          </Button>
+        )}
+
         <Button
           variant="ghost"
           size="icon"
