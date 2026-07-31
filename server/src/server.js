@@ -4,6 +4,7 @@ const connectDB = require('./config/db');
 const { startMetaSync } = require('./services/metaSync.service');
 const { startFxSync } = require('./services/fx.service');
 const { backfillLeadStates } = require('./scripts/backfill-states');
+const { backfillMetaUsage } = require('./scripts/backfill-meta-usage');
 
 async function main() {
   try {
@@ -20,6 +21,11 @@ async function main() {
     backfillLeadStates()
       .then((n) => n && console.log(`[states] backfilled state on ${n} lead(s)`))
       .catch((err) => console.error('[states] backfill failed:', err.message));
+    // Same for old Meta leads: lift the gravy/paste usage answer out of the
+    // note into dailyUsage. New imports store it directly.
+    backfillMetaUsage()
+      .then((n) => n && console.log(`[usage] backfilled dailyUsage on ${n} Meta lead(s)`))
+      .catch((err) => console.error('[usage] backfill failed:', err.message));
   } catch (err) {
     console.error('[server] failed to start:', err.message);
     process.exit(1);

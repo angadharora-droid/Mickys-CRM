@@ -20,6 +20,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import {
@@ -38,7 +41,10 @@ export default function LeadList() {
   const search = searchParams.get('q') || '';
   const status = searchParams.get('status') || ALL;
   const kitType = searchParams.get('kit') || ALL;
-  const businessType = searchParams.get('biz') || ALL;
+  // Business type is multi-select: a comma-separated list in the URL, empty =
+  // all types. The raw string is what effects/deps key off (stable identity).
+  const bizParam = searchParams.get('biz') || '';
+  const businessTypes = bizParam.split(',').filter(Boolean);
   const execId = searchParams.get('exec') || ALL;
   const creatorId = searchParams.get('creator') || ALL;
   const city = searchParams.get('city') || ALL;
@@ -117,7 +123,7 @@ export default function LeadList() {
       if (search) params.search = search;
       if (status !== ALL) params.status = status;
       if (kitType !== ALL) params.kitType = kitType;
-      if (businessType !== ALL) params.businessType = businessType;
+      if (bizParam) params.businessType = bizParam;
       if (execId !== ALL) params.execId = execId;
       if (creatorId !== ALL) params.createdBy = creatorId;
       if (city !== ALL) params.city = city;
@@ -130,7 +136,7 @@ export default function LeadList() {
     } finally {
       setLoading(false);
     }
-  }, [page, search, status, kitType, businessType, execId, creatorId, city, state]);
+  }, [page, search, status, kitType, bizParam, execId, creatorId, city, state]);
 
   useEffect(() => {
     const t = setTimeout(fetchLeads, search ? 350 : 0);
@@ -145,8 +151,15 @@ export default function LeadList() {
 
   const toggleRow = (id) => setExpandedRows((c) => ({ ...c, [id]: !c[id] }));
   const hasFilters =
-    search || status !== ALL || kitType !== ALL || businessType !== ALL ||
+    search || status !== ALL || kitType !== ALL || businessTypes.length > 0 ||
     execId !== ALL || creatorId !== ALL || city !== ALL || state !== ALL;
+
+  const toggleBusinessType = (b) => {
+    const next = businessTypes.includes(b)
+      ? businessTypes.filter((x) => x !== b)
+      : [...businessTypes, b];
+    setFilter('biz', next.join(','));
+  };
 
   const toggleSelect = (id) => setSelected((prev) => {
     const next = new Set(prev);
@@ -236,13 +249,40 @@ export default function LeadList() {
             </SelectContent>
           </Select>
 
-          <Select value={businessType} onValueChange={(v) => setFilter('biz', v)}>
-            <SelectTrigger><SelectValue placeholder="Business type" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL}>All types</SelectItem>
-              {BUSINESS_TYPES.map((b) => <SelectItem key={b} value={b}>{b}</SelectItem>)}
-            </SelectContent>
-          </Select>
+          {/* Business type: checkbox multi-select — several types can be
+              combined (e.g. Hotel + QSR). Empty selection = all types. */}
+          <DropdownMenu>
+            <DropdownMenuTrigger className="flex h-10 w-full items-center justify-between rounded-lg border border-input bg-card px-3 py-2 text-base sm:text-sm shadow-soft transition-colors focus:outline-none focus:border-ring focus:ring-2 focus:ring-ring/20">
+              <span className="line-clamp-1 text-left">
+                {businessTypes.length === 0
+                  ? 'All types'
+                  : businessTypes.length === 1
+                    ? businessTypes[0]
+                    : `${businessTypes.length} types`}
+              </span>
+              <ChevronDown className="h-4 w-4 opacity-50 shrink-0" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-56">
+              <DropdownMenuItem
+                className="gap-2"
+                onSelect={(e) => { e.preventDefault(); setFilter('biz', ''); }}
+              >
+                <Checkbox checked={businessTypes.length === 0} className="pointer-events-none" />
+                All types
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              {BUSINESS_TYPES.map((b) => (
+                <DropdownMenuItem
+                  key={b}
+                  className="gap-2"
+                  onSelect={(e) => { e.preventDefault(); toggleBusinessType(b); }}
+                >
+                  <Checkbox checked={businessTypes.includes(b)} className="pointer-events-none" />
+                  {b}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
 
           <Select value={city} onValueChange={(v) => setFilter('city', v)}>
             <SelectTrigger><SelectValue placeholder="City" /></SelectTrigger>
@@ -341,6 +381,9 @@ export default function LeadList() {
                   <TableHead>Client</TableHead>
                   <TableHead className="hidden sm:table-cell">City</TableHead>
                   <TableHead className="hidden md:table-cell">Kit</TableHead>
+                  {/* Meta Ads leads only — the form's gravy/paste usage answer.
+                      Blank for every hand-entered lead. */}
+                  <TableHead className="hidden lg:table-cell">Daily usage</TableHead>
                   <TableHead className="hidden lg:table-cell">Owner</TableHead>
                   <TableHead className="hidden lg:table-cell">Created by</TableHead>
                   <TableHead>Status</TableHead>
@@ -384,6 +427,7 @@ export default function LeadList() {
                         <TableCell className="hidden md:table-cell">
                           {lead.kitType ? <Badge variant="outline">{KIT_TYPE_LABELS[lead.kitType]}</Badge> : <span className="text-muted-foreground">—</span>}
                         </TableCell>
+                        <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">{lead.dailyUsage || ''}</TableCell>
                         <TableCell className="hidden lg:table-cell">{lead.assignedExecId?.name || '—'}</TableCell>
                         <TableCell className="hidden lg:table-cell text-muted-foreground">{lead.createdBy?.name || '—'}</TableCell>
                         <TableCell>
@@ -402,7 +446,7 @@ export default function LeadList() {
                       </TableRow>
                       {isExpanded && (
                         <TableRow className="bg-muted/25 hover:bg-muted/25 lg:hidden">
-                          <TableCell colSpan={canSeeAll ? 9 : 8} className="px-4 py-3">
+                          <TableCell colSpan={canSeeAll ? 10 : 9} className="px-4 py-3">
                             <dl className="grid gap-3 text-sm sm:grid-cols-3">
                               <div>
                                 <dt className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">City</dt>
@@ -416,6 +460,12 @@ export default function LeadList() {
                                 <dt className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Lead date</dt>
                                 <dd className="mt-1 font-medium">{formatDate(lead.leadDate)}</dd>
                               </div>
+                              {lead.dailyUsage && (
+                                <div>
+                                  <dt className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Daily usage</dt>
+                                  <dd className="mt-1 font-medium">{lead.dailyUsage}</dd>
+                                </div>
+                              )}
                               <div>
                                 <dt className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Owner</dt>
                                 <dd className="mt-1 font-medium">{lead.assignedExecId?.name || '—'}</dd>

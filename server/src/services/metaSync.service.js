@@ -14,7 +14,8 @@
  *   phone_number   -> mobileNumber         email        -> email
  *   city           -> city                 business_type_ -> businessType (enum)
  *   created_time   -> leadDate             id           -> metaLeadId (dedupe key)
- *   platform / campaign_name / ad_name / form_name / "how much gravy…" -> internalNotes
+ *   "how much gravy…" -> dailyUsage (also echoed into the note)
+ *   platform / campaign_name / ad_name / form_name -> internalNotes
  *
  * The sync is idempotent: rows are keyed on the Meta lead id, so it can be run
  * repeatedly — on the API's own schedule or from the CLI — and only ever adds
@@ -244,6 +245,9 @@ function toLead(rec) {
     businessType: mapBusinessType(pick(rec, 'business_type', /business_type/)),
     leadSource: 'Meta Ads',
     leadDate,
+    // The form's usage answer gets its own field (shown on the lead list);
+    // the note keeps a copy so the import trail stays complete.
+    dailyUsage: usage,
     internalNotes: notes.join('\n'),
   };
 }

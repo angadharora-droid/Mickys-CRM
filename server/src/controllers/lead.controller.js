@@ -345,7 +345,13 @@ const listLeads = asyncHandler(async (req, res) => {
   const q = req.query;
   if (q.status) filter.status = q.status;
   if (q.kitType) filter.kitType = q.kitType;
-  if (q.businessType) filter.businessType = q.businessType;
+  // Business type is multi-select in the UI: a comma-separated list means
+  // "any of these"; a single value keeps the old exact match.
+  if (q.businessType) {
+    const types = String(q.businessType).split(',').map((s) => s.trim()).filter(Boolean);
+    if (types.length === 1) filter.businessType = types[0];
+    else if (types.length > 1) filter.businessType = { $in: types };
+  }
   // Cities are stored canonically, so the filter is an exact value from the
   // dropdown — "Delhi" must not also match "New Delhi". States are derived
   // from the city, so they are exact values too.
