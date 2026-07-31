@@ -364,7 +364,12 @@ const listLeads = asyncHandler(async (req, res) => {
   // dropdown — "Delhi" must not also match "New Delhi". States are derived
   // from the city, so they are exact values too.
   if (q.city) filter.city = q.city;
-  if (q.state) filter.state = q.state;
+  // State is multi-select in the UI (state names never contain commas).
+  if (q.state) {
+    const statesWanted = String(q.state).split(',').map((s) => s.trim()).filter(Boolean);
+    if (statesWanted.length === 1) filter.state = statesWanted[0];
+    else if (statesWanted.length > 1) filter.state = { $in: statesWanted };
+  }
   // Daily usage mirrors the business-type multi-select: comma-separated list
   // of the Meta form's exact answer values.
   if (q.dailyUsage) {

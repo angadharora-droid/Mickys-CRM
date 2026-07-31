@@ -41,17 +41,18 @@ export default function LeadList() {
   const search = searchParams.get('q') || '';
   const status = searchParams.get('status') || ALL;
   const kitType = searchParams.get('kit') || ALL;
-  // Business type and daily usage are multi-select: comma-separated lists in
-  // the URL, empty = all. The raw strings are what effects/deps key off
-  // (stable identity).
+  // Business type, state and daily usage are multi-select: comma-separated
+  // lists in the URL, empty = all. The raw strings are what effects/deps key
+  // off (stable identity).
   const bizParam = searchParams.get('biz') || '';
   const businessTypes = bizParam.split(',').filter(Boolean);
+  const stateParam = searchParams.get('state') || '';
+  const selectedStates = stateParam.split(',').filter(Boolean);
   const usageParam = searchParams.get('usage') || '';
   const usages = usageParam.split(',').filter(Boolean);
   const execId = searchParams.get('exec') || ALL;
   const creatorId = searchParams.get('creator') || ALL;
   const city = searchParams.get('city') || ALL;
-  const state = searchParams.get('state') || ALL;
   const page = Number(searchParams.get('page')) || 1;
 
   const [leads, setLeads] = useState([]);
@@ -137,7 +138,7 @@ export default function LeadList() {
       if (execId !== ALL) params.execId = execId;
       if (creatorId !== ALL) params.createdBy = creatorId;
       if (city !== ALL) params.city = city;
-      if (state !== ALL) params.state = state;
+      if (stateParam) params.state = stateParam;
       const { data } = await api.get('/leads', { params });
       setLeads(data.data);
       setMeta(data.meta);
@@ -146,7 +147,7 @@ export default function LeadList() {
     } finally {
       setLoading(false);
     }
-  }, [page, search, status, kitType, bizParam, usageParam, execId, creatorId, city, state]);
+  }, [page, search, status, kitType, bizParam, usageParam, execId, creatorId, city, stateParam]);
 
   useEffect(() => {
     const t = setTimeout(fetchLeads, search ? 350 : 0);
@@ -162,7 +163,8 @@ export default function LeadList() {
   const toggleRow = (id) => setExpandedRows((c) => ({ ...c, [id]: !c[id] }));
   const hasFilters =
     search || status !== ALL || kitType !== ALL || businessTypes.length > 0 ||
-    usages.length > 0 || execId !== ALL || creatorId !== ALL || city !== ALL || state !== ALL;
+    usages.length > 0 || execId !== ALL || creatorId !== ALL || city !== ALL ||
+    selectedStates.length > 0;
 
   const toggleBusinessType = (b) => {
     const next = businessTypes.includes(b)
@@ -174,6 +176,13 @@ export default function LeadList() {
   const toggleUsage = (u) => {
     const next = usages.includes(u) ? usages.filter((x) => x !== u) : [...usages, u];
     setFilter('usage', next.join(','));
+  };
+
+  const toggleState = (s) => {
+    const next = selectedStates.includes(s)
+      ? selectedStates.filter((x) => x !== s)
+      : [...selectedStates, s];
+    setFilter('state', next.join(','));
   };
 
   const toggleSelect = (id) => setSelected((prev) => {
@@ -307,13 +316,40 @@ export default function LeadList() {
             </SelectContent>
           </Select>
 
-          <Select value={state} onValueChange={(v) => setFilter('state', v)}>
-            <SelectTrigger><SelectValue placeholder="State" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL}>All states</SelectItem>
-              {states.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-            </SelectContent>
-          </Select>
+          {/* State: checkbox multi-select — several states can be combined
+              (e.g. Gujarat + Maharashtra). Empty selection = all states. */}
+          <DropdownMenu>
+            <DropdownMenuTrigger className="flex h-10 w-full items-center justify-between rounded-lg border border-input bg-card px-3 py-2 text-base sm:text-sm shadow-soft transition-colors focus:outline-none focus:border-ring focus:ring-2 focus:ring-ring/20">
+              <span className="line-clamp-1 text-left">
+                {selectedStates.length === 0
+                  ? 'All states'
+                  : selectedStates.length === 1
+                    ? selectedStates[0]
+                    : `${selectedStates.length} states`}
+              </span>
+              <ChevronDown className="h-4 w-4 opacity-50 shrink-0" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="max-h-80 w-60 overflow-y-auto">
+              <DropdownMenuItem
+                className="gap-2"
+                onSelect={(e) => { e.preventDefault(); setFilter('state', ''); }}
+              >
+                <Checkbox checked={selectedStates.length === 0} className="pointer-events-none" />
+                All states
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              {states.map((s) => (
+                <DropdownMenuItem
+                  key={s}
+                  className="gap-2"
+                  onSelect={(e) => { e.preventDefault(); toggleState(s); }}
+                >
+                  <Checkbox checked={selectedStates.includes(s)} className="pointer-events-none" />
+                  {s}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
 
           {/* Daily usage (Meta leads only): checkbox multi-select over the
               form's answer values. Hidden when no visible lead carries one. */}
