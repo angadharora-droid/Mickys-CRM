@@ -328,7 +328,9 @@ export default function LeadCreate() {
               />
             </Field>
             <Field label="State" error={errors.state}>
-              <Input {...register('state')} />
+              {/* Auto-derived from the city on save for Indian cities; the
+                  typed value only sticks for cities off the Indian list. */}
+              <Input placeholder="Auto-filled from city" {...register('state')} />
             </Field>
             <Field label="Business type" required error={errors.businessType}>
               <Controller

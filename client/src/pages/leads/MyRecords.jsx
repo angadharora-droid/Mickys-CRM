@@ -42,6 +42,7 @@ const REPORT_COLUMNS = [
   ['Mobile', (l) => l.mobileNumber],
   ['Business type', (l) => l.businessType],
   ['City', (l) => l.city],
+  ['State', (l) => l.state || ''],
   ['Created by', (l) => l.createdBy?.name || ''],
   ['Assigned to', (l) => l.assignedExecId?.name || ''],
   ['Action point', (l) => l.actionPoint],

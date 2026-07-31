@@ -42,6 +42,7 @@ export default function LeadList() {
   const execId = searchParams.get('exec') || ALL;
   const creatorId = searchParams.get('creator') || ALL;
   const city = searchParams.get('city') || ALL;
+  const state = searchParams.get('state') || ALL;
   const page = Number(searchParams.get('page')) || 1;
 
   const [leads, setLeads] = useState([]);
@@ -51,6 +52,7 @@ export default function LeadList() {
   const [execs, setExecs] = useState([]);
   const [creators, setCreators] = useState([]);
   const [cities, setCities] = useState([]);
+  const [states, setStates] = useState([]);
 
   // Bulk reassign (admin): selection survives paging so leads can be gathered
   // across pages; the header checkbox selects/clears the current page only.
@@ -97,6 +99,10 @@ export default function LeadList() {
     api.get('/cities', { params: { inUse: true } })
       .then((res) => setCities(res.data.data))
       .catch(() => {});
+    // Same for states: derived from each lead's city, so the list stays short.
+    api.get('/states')
+      .then((res) => setStates(res.data.data))
+      .catch(() => {});
     // Only creators that appear on leads the caller can see — so the dropdown
     // never lists someone who created none of their visible leads.
     api.get('/leads/creators')
@@ -115,6 +121,7 @@ export default function LeadList() {
       if (execId !== ALL) params.execId = execId;
       if (creatorId !== ALL) params.createdBy = creatorId;
       if (city !== ALL) params.city = city;
+      if (state !== ALL) params.state = state;
       const { data } = await api.get('/leads', { params });
       setLeads(data.data);
       setMeta(data.meta);
@@ -123,7 +130,7 @@ export default function LeadList() {
     } finally {
       setLoading(false);
     }
-  }, [page, search, status, kitType, businessType, execId, creatorId, city]);
+  }, [page, search, status, kitType, businessType, execId, creatorId, city, state]);
 
   useEffect(() => {
     const t = setTimeout(fetchLeads, search ? 350 : 0);
@@ -139,7 +146,7 @@ export default function LeadList() {
   const toggleRow = (id) => setExpandedRows((c) => ({ ...c, [id]: !c[id] }));
   const hasFilters =
     search || status !== ALL || kitType !== ALL || businessType !== ALL ||
-    execId !== ALL || creatorId !== ALL || city !== ALL;
+    execId !== ALL || creatorId !== ALL || city !== ALL || state !== ALL;
 
   const toggleSelect = (id) => setSelected((prev) => {
     const next = new Set(prev);
@@ -242,6 +249,14 @@ export default function LeadList() {
             <SelectContent>
               <SelectItem value={ALL}>All cities</SelectItem>
               {cities.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+            </SelectContent>
+          </Select>
+
+          <Select value={state} onValueChange={(v) => setFilter('state', v)}>
+            <SelectTrigger><SelectValue placeholder="State" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL}>All states</SelectItem>
+              {states.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
             </SelectContent>
           </Select>
 
@@ -362,7 +377,10 @@ export default function LeadList() {
                           <p className="sm:hidden mt-0.5 font-mono text-[11px] font-semibold text-primary">{lead.refNumber}</p>
                           <p className="text-xs text-muted-foreground mt-0.5">{lead.contactPerson} · {lead.businessType}</p>
                         </TableCell>
-                        <TableCell className="hidden sm:table-cell">{lead.city}</TableCell>
+                        <TableCell className="hidden sm:table-cell">
+                          {lead.city}
+                          {lead.state && <p className="text-xs text-muted-foreground">{lead.state}</p>}
+                        </TableCell>
                         <TableCell className="hidden md:table-cell">
                           {lead.kitType ? <Badge variant="outline">{KIT_TYPE_LABELS[lead.kitType]}</Badge> : <span className="text-muted-foreground">—</span>}
                         </TableCell>

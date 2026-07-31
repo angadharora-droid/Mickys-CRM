@@ -15,7 +15,7 @@ const { sendKitEmail } = require('../services/email.service');
 const { generateKit, buildZip, getBrochureBuffer, BROCHURE_PATH, KITS_DIR } = require('../services/kit.service');
 const ExportCountry = require('../models/ExportCountry');
 const exportKitService = require('../services/exportKit.service');
-const { INDIAN_CITIES, canonicalCity } = require('../config/indianCities');
+const { INDIAN_CITIES, canonicalCity, stateForCity } = require('../config/indianCities');
 const { uploadBuffer, deleteFiles, openDownloadStream, getBuffer } = require('../services/fileStore.service');
 const { dlp, stockistPrice } = require('../config/kitContent');
 
@@ -265,6 +265,9 @@ const createLead = asyncHandler(async (req, res) => {
   // Every stored city goes through the canonical Indian-city list, so one city
   // is always spelled one way ("mumbay" and "Bombay" both land as "Mumbai").
   rest.city = canonicalCity(rest.city);
+  // The state follows the chosen city; a hand-entered state only survives for
+  // cities off the Indian list (e.g. foreign cities on export leads).
+  rest.state = stateForCity(rest.city) || String(rest.state || '').trim();
   const execId = await resolveExecId(req, assignedExecId);
   const refNumber = await nextRefNumber(rest.city);
 
@@ -316,6 +319,14 @@ const listCities = asyncHandler(async (req, res) => {
   res.json({ success: true, data: all });
 });
 
+// GET /api/states — the lead-list State filter's option set: the distinct
+// states on leads the caller can see (states are derived from the canonical
+// city, so they need no canonicalisation of their own).
+const listStates = asyncHandler(async (req, res) => {
+  const inUse = await Lead.distinct('state', scopeFilter(req.user));
+  res.json({ success: true, data: inUse.filter(Boolean).sort((a, b) => a.localeCompare(b)) });
+});
+
 // GET /api/leads/creators — the "Created by" filter's option set: only the
 // creators that actually appear on leads the caller can see, so an exec's
 // dropdown never lists people who created none of their leads.
@@ -336,8 +347,10 @@ const listLeads = asyncHandler(async (req, res) => {
   if (q.kitType) filter.kitType = q.kitType;
   if (q.businessType) filter.businessType = q.businessType;
   // Cities are stored canonically, so the filter is an exact value from the
-  // dropdown — "Delhi" must not also match "New Delhi".
+  // dropdown — "Delhi" must not also match "New Delhi". States are derived
+  // from the city, so they are exact values too.
   if (q.city) filter.city = q.city;
+  if (q.state) filter.state = q.state;
   if (q.execId && req.user.role === 'admin') filter.assignedExecId = q.execId;
   // Anyone may narrow their list by creator — the visibility scope above still
   // applies, so a non-admin only ever sees their own leads filtered further.
@@ -397,7 +410,13 @@ const updateLead = asyncHandler(async (req, res) => {
   if (assignedExecId && req.user.role === 'admin') {
     lead.assignedExecId = await resolveExecId(req, assignedExecId);
   }
-  if (rest.city !== undefined) rest.city = canonicalCity(rest.city);
+  if (rest.city !== undefined) {
+    rest.city = canonicalCity(rest.city);
+    // Re-derive the state from the (possibly changed) city; a manual state is
+    // only kept when the city isn't on the Indian list.
+    const derived = stateForCity(rest.city);
+    if (derived) rest.state = derived;
+  }
   Object.assign(lead, rest);
   markEditedIfGenerated(lead);
   lead.modifiedBy = req.user._id;
@@ -1440,6 +1459,7 @@ const markDelivered = asyncHandler(async (req, res) => {
 
 module.exports = {
   listCities,
+  listStates,
   listCreators,
   createLead,
   listLeads,

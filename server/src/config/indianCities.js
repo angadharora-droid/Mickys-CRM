@@ -393,4 +393,43 @@ function canonicalCity(input) {
 
 const isKnownCity = (s) => CANONICAL_BY_KEY.has(norm(s));
 
-module.exports = { CITIES_BY_STATE, INDIAN_CITIES, ALIASES, canonicalCity, isKnownCity, titleCase };
+// Reverse lookup: canonical city -> its state/UT. Built once from
+// CITIES_BY_STATE; first assignment wins should a name ever repeat.
+const STATE_BY_CITY_KEY = new Map();
+for (const [state, cities] of Object.entries(CITIES_BY_STATE)) {
+  for (const c of cities) {
+    if (!STATE_BY_CITY_KEY.has(norm(c))) STATE_BY_CITY_KEY.set(norm(c), state);
+  }
+}
+const STATE_BY_STATE_KEY = new Map(Object.keys(CITIES_BY_STATE).map((s) => [norm(s), s]));
+
+/**
+ * The state/UT a stored city belongs to, or '' when it isn't on the Indian
+ * list (foreign cities on export leads keep whatever state was typed by hand).
+ * Values that are themselves a state name — legacy leads where the state was
+ * entered in the city field ("Gujarat") — resolve to that state. Raw input is
+ * snapped through canonicalCity() first, so typos and old names still land.
+ */
+function stateForCity(city) {
+  const tidy = String(city || '').replace(/\s+/g, ' ').trim();
+  if (!tidy) return '';
+  const key = norm(tidy);
+  const canonKey = norm(canonicalCity(tidy));
+  return (
+    STATE_BY_CITY_KEY.get(key) ||
+    STATE_BY_STATE_KEY.get(key) ||
+    STATE_BY_CITY_KEY.get(canonKey) ||
+    STATE_BY_STATE_KEY.get(canonKey) ||
+    ''
+  );
+}
+
+module.exports = {
+  CITIES_BY_STATE,
+  INDIAN_CITIES,
+  ALIASES,
+  canonicalCity,
+  isKnownCity,
+  titleCase,
+  stateForCity,
+};
