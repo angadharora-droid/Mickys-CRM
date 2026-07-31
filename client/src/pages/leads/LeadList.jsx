@@ -41,10 +41,13 @@ export default function LeadList() {
   const search = searchParams.get('q') || '';
   const status = searchParams.get('status') || ALL;
   const kitType = searchParams.get('kit') || ALL;
-  // Business type is multi-select: a comma-separated list in the URL, empty =
-  // all types. The raw string is what effects/deps key off (stable identity).
+  // Business type and daily usage are multi-select: comma-separated lists in
+  // the URL, empty = all. The raw strings are what effects/deps key off
+  // (stable identity).
   const bizParam = searchParams.get('biz') || '';
   const businessTypes = bizParam.split(',').filter(Boolean);
+  const usageParam = searchParams.get('usage') || '';
+  const usages = usageParam.split(',').filter(Boolean);
   const execId = searchParams.get('exec') || ALL;
   const creatorId = searchParams.get('creator') || ALL;
   const city = searchParams.get('city') || ALL;
@@ -59,6 +62,7 @@ export default function LeadList() {
   const [creators, setCreators] = useState([]);
   const [cities, setCities] = useState([]);
   const [states, setStates] = useState([]);
+  const [usageOptions, setUsageOptions] = useState([]);
 
   // Bulk reassign (admin): selection survives paging so leads can be gathered
   // across pages; the header checkbox selects/clears the current page only.
@@ -109,6 +113,11 @@ export default function LeadList() {
     api.get('/states')
       .then((res) => setStates(res.data.data))
       .catch(() => {});
+    // Daily-usage answers in use on visible Meta leads; the filter hides
+    // entirely when there are none.
+    api.get('/leads/usage-options')
+      .then((res) => setUsageOptions(res.data.data))
+      .catch(() => {});
     // Only creators that appear on leads the caller can see — so the dropdown
     // never lists someone who created none of their visible leads.
     api.get('/leads/creators')
@@ -124,6 +133,7 @@ export default function LeadList() {
       if (status !== ALL) params.status = status;
       if (kitType !== ALL) params.kitType = kitType;
       if (bizParam) params.businessType = bizParam;
+      if (usageParam) params.dailyUsage = usageParam;
       if (execId !== ALL) params.execId = execId;
       if (creatorId !== ALL) params.createdBy = creatorId;
       if (city !== ALL) params.city = city;
@@ -136,7 +146,7 @@ export default function LeadList() {
     } finally {
       setLoading(false);
     }
-  }, [page, search, status, kitType, bizParam, execId, creatorId, city, state]);
+  }, [page, search, status, kitType, bizParam, usageParam, execId, creatorId, city, state]);
 
   useEffect(() => {
     const t = setTimeout(fetchLeads, search ? 350 : 0);
@@ -152,13 +162,18 @@ export default function LeadList() {
   const toggleRow = (id) => setExpandedRows((c) => ({ ...c, [id]: !c[id] }));
   const hasFilters =
     search || status !== ALL || kitType !== ALL || businessTypes.length > 0 ||
-    execId !== ALL || creatorId !== ALL || city !== ALL || state !== ALL;
+    usages.length > 0 || execId !== ALL || creatorId !== ALL || city !== ALL || state !== ALL;
 
   const toggleBusinessType = (b) => {
     const next = businessTypes.includes(b)
       ? businessTypes.filter((x) => x !== b)
       : [...businessTypes, b];
     setFilter('biz', next.join(','));
+  };
+
+  const toggleUsage = (u) => {
+    const next = usages.includes(u) ? usages.filter((x) => x !== u) : [...usages, u];
+    setFilter('usage', next.join(','));
   };
 
   const toggleSelect = (id) => setSelected((prev) => {
@@ -299,6 +314,43 @@ export default function LeadList() {
               {states.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
             </SelectContent>
           </Select>
+
+          {/* Daily usage (Meta leads only): checkbox multi-select over the
+              form's answer values. Hidden when no visible lead carries one. */}
+          {usageOptions.length > 0 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger className="flex h-10 w-full items-center justify-between rounded-lg border border-input bg-card px-3 py-2 text-base sm:text-sm shadow-soft transition-colors focus:outline-none focus:border-ring focus:ring-2 focus:ring-ring/20">
+                <span className="line-clamp-1 text-left">
+                  {usages.length === 0
+                    ? 'All usage'
+                    : usages.length === 1
+                      ? usages[0]
+                      : `${usages.length} selected`}
+                </span>
+                <ChevronDown className="h-4 w-4 opacity-50 shrink-0" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-72">
+                <DropdownMenuItem
+                  className="gap-2"
+                  onSelect={(e) => { e.preventDefault(); setFilter('usage', ''); }}
+                >
+                  <Checkbox checked={usages.length === 0} className="pointer-events-none" />
+                  All usage
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                {usageOptions.map((u) => (
+                  <DropdownMenuItem
+                    key={u}
+                    className="gap-2"
+                    onSelect={(e) => { e.preventDefault(); toggleUsage(u); }}
+                  >
+                    <Checkbox checked={usages.includes(u)} className="pointer-events-none" />
+                    {u}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
 
           <Select value={creatorId} onValueChange={(v) => setFilter('creator', v)}>
             <SelectTrigger><SelectValue placeholder="Created by" /></SelectTrigger>

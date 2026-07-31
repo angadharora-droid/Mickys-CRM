@@ -55,6 +55,7 @@ router.post('/leads', authenticate, authorize(EXEC, ADMIN, PR), validate(v.leadS
 router.get('/leads', authenticate, leads.listLeads);
 router.post('/leads/bulk-reassign', authenticate, authorize(ADMIN), validate(v.bulkReassignSchema), leads.bulkReassignLeads);
 router.get('/leads/creators', authenticate, leads.listCreators);
+router.get('/leads/usage-options', authenticate, leads.listUsageOptions);
 router.get('/leads/:id', authenticate, leads.getLead);
 router.put('/leads/:id', authenticate, validate(v.updateLeadSchema), leads.updateLead);
 router.delete('/leads/:id', authenticate, leads.deleteLead);
