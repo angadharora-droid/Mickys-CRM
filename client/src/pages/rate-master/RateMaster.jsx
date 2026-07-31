@@ -52,7 +52,7 @@ export default function RateMaster() {
   const fetchItems = useCallback(async () => {
     setLoading(true);
     try {
-      const params = { page, limit: 10, kitType };
+      const params = { page, limit: 100, kitType };
       if (search) params.search = search;
       const { data } = await api.get('/rate-items', { params });
       setItems(data.data);
