@@ -1578,7 +1578,6 @@ export default function LeadDetail() {
                         <TableHead className="text-right">MRP</TableHead>
                         {isDistributor ? (
                           <>
-                            <TableHead className="text-right hidden sm:table-cell">Basic</TableHead>
                             <TableHead className="text-right">DLP</TableHead>
                             <TableHead className="text-right hidden lg:table-cell">Margin DLP&rarr;DSP</TableHead>
                             <TableHead className="text-right hidden sm:table-cell">DSP</TableHead>
@@ -1641,7 +1640,6 @@ export default function LeadDetail() {
                             <TableCell className="text-right tabular-nums">{formatCurrency(r.mrp)}</TableCell>
                             {isDistributor ? (
                               <>
-                                <TableCell className="text-right tabular-nums hidden sm:table-cell text-muted-foreground">{formatCurrency(d.basic)}</TableCell>
                                 {priceCell}
                                 <TableCell className="text-right tabular-nums hidden lg:table-cell text-muted-foreground">{fmtPct(d.marginDsp)}</TableCell>
                                 <TableCell className="text-right tabular-nums hidden sm:table-cell">{d.dsp > 0 ? formatCurrency(d.dsp) : '—'}</TableCell>
