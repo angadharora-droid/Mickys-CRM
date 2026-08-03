@@ -19,7 +19,8 @@ const listReports = asyncHandler(async (req, res) => {
 // GET /api/reports/:type?from&to&execId&format=json|xlsx
 const getReport = asyncHandler(async (req, res) => {
   const { type } = req.params;
-  if (!reportService.REPORTS[type]) throw ApiError.notFound('Unknown report type');
+  // Whitelist check (own keys only — "constructor" etc. must not pass).
+  if (!reportService.REPORT_TYPES.includes(type)) throw ApiError.notFound('Unknown report type');
 
   const ctx = reportService.buildContext(req.user, req.query);
   const report = await reportService.runReport(type, ctx);
@@ -51,6 +52,9 @@ const exportAll = asyncHandler(async (req, res) => {
   const ctx = reportService.buildContext(req.user, req.query);
   const reports = [];
   for (const type of reportService.REPORT_TYPES) {
+    // The daily summary caps at ~6 months; on longer all-report exports skip
+    // that sheet instead of aborting the whole workbook.
+    if (type === 'daily-summary' && reportService.rangeDayCount(ctx) > reportService.DAILY_SUMMARY_MAX_DAYS) continue;
     reports.push(await reportService.runReport(type, ctx));
   }
   const buffer = await reportService.buildWorkbook(reports, ctx, req.user.name);

@@ -73,6 +73,89 @@ const STATUS_TONES = {
   Failed: 'bg-destructive/10 text-destructive',
 };
 
+const CHIP_TONES = {
+  default: 'bg-card',
+  sky: 'bg-sky-50 dark:bg-sky-950/40',
+  amber: 'bg-amber-50 dark:bg-amber-950/40',
+  red: 'bg-red-50 dark:bg-red-950/40',
+  green: 'bg-emerald-50 dark:bg-emerald-950/40',
+};
+
+/** Headline numbers per report, computed from the full (uncapped) row set. */
+function summarize(type, report) {
+  if (!report) return [];
+  const rows = report.rows || [];
+  const t = report.totals || {};
+  const count = (fn) => rows.filter(fn).length;
+  const uniq = (key) => new Set(rows.map((r) => r[key]).filter(Boolean)).size;
+  switch (type) {
+    case 'visits':
+      return [
+        { label: 'Visits', value: rows.length, tone: 'sky' },
+        { label: 'Businesses', value: uniq('refNumber') },
+        { label: 'Cities', value: uniq('city') },
+        { label: 'Days in field', value: new Set(rows.map((r) => String(r.visitDate).slice(0, 10))).size },
+      ];
+    case 'leads':
+      return [
+        { label: 'Leads', value: rows.length, tone: 'sky' },
+        { label: 'Visited', value: count((r) => r.visits > 0) },
+        { label: 'Kit generated', value: count((r) => Boolean(r.generatedAt)) },
+        { label: 'Delivered', value: count((r) => r.delivered === 'Yes'), tone: 'green' },
+      ];
+    case 'follow-ups':
+      return [
+        { label: 'Open', value: count((r) => r.status === 'Open'), tone: 'sky' },
+        { label: 'Due today', value: count((r) => r.status === 'Due today'), tone: 'amber' },
+        { label: 'Overdue', value: count((r) => r.status === 'Overdue'), tone: 'red' },
+        { label: 'Closed', value: count((r) => r.status === 'Closed'), tone: 'green' },
+      ];
+    case 'action-points':
+      return [
+        { label: 'Open', value: count((r) => r.status === 'Open'), tone: 'sky' },
+        { label: 'Cleared', value: count((r) => r.status === 'Cleared'), tone: 'green' },
+      ];
+    case 'kits':
+      return [
+        { label: 'Kits', value: rows.length, tone: 'sky' },
+        { label: 'Delivered', value: count((r) => r.delivered === 'Yes'), tone: 'green' },
+        { label: 'Emails sent', value: rows.reduce((s, r) => s + (r.emailsSent || 0), 0) },
+      ];
+    case 'emails':
+      return [
+        { label: 'Sent', value: count((r) => r.status === 'Sent'), tone: 'green' },
+        { label: 'Failed', value: count((r) => r.status === 'Failed'), tone: 'red' },
+        { label: 'Businesses', value: uniq('refNumber') },
+      ];
+    case 'instructions':
+      return [
+        { label: 'Given', value: rows.length, tone: 'sky' },
+        { label: 'Open', value: count((r) => r.status === 'Open'), tone: 'amber' },
+        { label: 'Done', value: count((r) => r.status === 'Done'), tone: 'green' },
+      ];
+    case 'exec-performance':
+      return [
+        { label: 'Leads added', value: t.leadsAdded ?? 0, tone: 'sky' },
+        { label: 'Visits', value: t.visits ?? 0 },
+        { label: 'Kits generated', value: t.kitsGenerated ?? 0 },
+        { label: 'Kits delivered', value: t.kitsDelivered ?? 0, tone: 'green' },
+        { label: 'Follow-ups closed', value: t.followUpsClosed ?? 0 },
+        { label: 'Overdue', value: t.overdueFollowUps ?? 0, tone: 'red' },
+      ];
+    case 'daily-summary':
+      return [
+        { label: 'New leads', value: t.newLeads ?? 0, tone: 'sky' },
+        { label: 'Visits', value: t.visits ?? 0 },
+        { label: 'Kits generated', value: t.kitsGenerated ?? 0 },
+        { label: 'Kits delivered', value: t.kitsDelivered ?? 0, tone: 'green' },
+        { label: 'Follow-ups closed', value: t.followUpsClosed ?? 0 },
+        { label: 'Emails', value: t.emailsSent ?? 0 },
+      ];
+    default:
+      return [];
+  }
+}
+
 export default function Reports() {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
@@ -118,6 +201,8 @@ export default function Reports() {
       const { data } = await api.get(`/reports/${type}`, { params: query });
       setReport(data.data);
     } catch (err) {
+      // Never leave the previous report's rows on screen under the new title.
+      setReport(null);
       toast.error(apiError(err));
     } finally {
       setLoading(false);
@@ -173,9 +258,12 @@ export default function Reports() {
   const columns = report?.columns || [];
   const rows = report?.rows || [];
   const previewRows = rows.slice(0, PREVIEW_CAP);
+  const chips = loading ? [] : summarize(type, report);
 
   // The visit report reads best day-by-day, so its preview is grouped by date.
   const groupKey = type === 'visits' ? 'visitDate' : null;
+  const formatDayHeading = (d) =>
+    new Date(d).toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
 
   let lastGroup = null;
 
@@ -251,6 +339,23 @@ export default function Reports() {
         </CardContent>
       </Card>
 
+      {/* Headline numbers for the selected report & period */}
+      {chips.length > 0 && (
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+          {chips.map((chip) => (
+            <div
+              key={chip.label}
+              className={cn('rounded-xl border px-3 py-2.5', CHIP_TONES[chip.tone] || CHIP_TONES.default)}
+            >
+              <p className="text-xl font-bold leading-tight tabular-nums">{chip.value}</p>
+              <p className="mt-0.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                {chip.label}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Preview + export */}
       <Card>
         <CardHeader className="pb-3">
@@ -292,7 +397,7 @@ export default function Reports() {
                 </TableHeader>
                 <TableBody>
                   {previewRows.map((row, i) => {
-                    const groupLabel = groupKey ? formatDate(row[groupKey]) : null;
+                    const groupLabel = groupKey ? formatDayHeading(row[groupKey]) : null;
                     const showGroup = groupLabel && groupLabel !== lastGroup;
                     if (groupLabel) lastGroup = groupLabel;
                     return (
@@ -314,7 +419,7 @@ export default function Reports() {
                                 className={cn(
                                   'py-2.5 align-top text-sm',
                                   c.type === 'number' && 'text-right tabular-nums',
-                                  ['note', 'closingNote', 'text', 'subject', 'attachments'].includes(c.key)
+                                  ['note', 'closingNote', 'text', 'subject', 'attachments', 'address', 'internalNotes'].includes(c.key)
                                     ? 'min-w-[16rem] max-w-md whitespace-pre-wrap break-words'
                                     : 'whitespace-nowrap'
                                 )}
