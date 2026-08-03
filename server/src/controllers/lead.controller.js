@@ -24,6 +24,7 @@ const POPULATE = [
   { path: 'createdBy', select: 'name role' },
   { path: 'statusHistory.changedBy', select: 'name role' },
   { path: 'notes.createdBy', select: 'name role' },
+  { path: 'visitReports.createdBy', select: 'name role' },
   { path: 'instructions.createdBy', select: 'name role' },
   { path: 'instructions.doneBy', select: 'name role' },
   { path: 'crmHistory.by', select: 'name role' },
@@ -978,6 +979,117 @@ const deleteNote = asyncHandler(async (req, res) => {
   res.json({ success: true, data: populated });
 });
 
+/** A visit report may be edited/deleted by its author or any admin. Like
+ *  notes, visits are CRM metadata and are never frozen by the kit lock. */
+function assertCanModifyVisit(visit, user) {
+  if (user.role === 'admin') return;
+  if (String(visit.createdBy) !== String(user._id)) {
+    throw ApiError.forbidden('You can only edit or delete your own visit reports');
+  }
+}
+
+// POST /api/leads/:id/visit-reports  (record a client visit; optionally derive
+// the lead's next follow-up and action point from the meeting's outcome)
+const addVisitReport = asyncHandler(async (req, res) => {
+  const lead = await Lead.findById(req.params.id);
+  if (!lead) throw ApiError.notFound('Lead not found');
+  assertCanView(lead, req.user);
+
+  const note = String(req.body.note || '').trim();
+  if (!note) throw ApiError.badRequest('Visit note is required');
+  if (!req.body.visitDate) throw ApiError.badRequest('Visit date is required');
+  const visitDate = new Date(req.body.visitDate);
+
+  lead.visitReports.push({ visitDate, note, createdBy: req.user._id });
+
+  // Derived follow-up: scheduling needs a date — a follow-up note without one
+  // is ignored rather than wiping any follow-up already on the lead.
+  const followUpDate = req.body.followUpDate ? new Date(req.body.followUpDate) : null;
+  if (followUpDate) {
+    lead.followUp = {
+      note: String(req.body.followUpNote || '').trim(),
+      date: followUpDate,
+      status: 'open',
+      closingNote: '',
+      closedAt: undefined,
+      closedBy: undefined,
+    };
+  }
+
+  // Derived action point: same archival rule as setActionPoint, so replacing
+  // the previous value keeps its history trail.
+  const actionPoint = String(req.body.actionPoint || '');
+  if (actionPoint) {
+    if (lead.actionPoint && lead.actionPoint !== actionPoint) {
+      lead.crmHistory.push({ type: 'action_point', summary: lead.actionPoint, by: req.user._id });
+    }
+    lead.actionPoint = actionPoint;
+  }
+
+  lead.modifiedBy = req.user._id;
+  await lead.save();
+
+  await logActivity({
+    userId: req.user._id, action: 'LEAD_VISIT_ADDED', entity: 'Lead', entityId: lead._id,
+    details: `Added a visit report on ${lead.refNumber} (visited ${visitDate.toISOString().slice(0, 10)})`,
+    ip: req.ip,
+  });
+
+  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  res.status(201).json({ success: true, data: populated });
+});
+
+// PUT /api/leads/:id/visit-reports/:visitId  (edit a visit's date / note)
+const updateVisitReport = asyncHandler(async (req, res) => {
+  const lead = await Lead.findById(req.params.id);
+  if (!lead) throw ApiError.notFound('Lead not found');
+  assertCanView(lead, req.user);
+
+  const visit = lead.visitReports.id(req.params.visitId);
+  if (!visit) throw ApiError.notFound('Visit report not found');
+  assertCanModifyVisit(visit, req.user);
+
+  const note = String(req.body.note || '').trim();
+  if (!note) throw ApiError.badRequest('Visit note is required');
+  if (!req.body.visitDate) throw ApiError.badRequest('Visit date is required');
+
+  visit.visitDate = new Date(req.body.visitDate);
+  visit.note = note;
+  lead.modifiedBy = req.user._id;
+  await lead.save();
+
+  await logActivity({
+    userId: req.user._id, action: 'LEAD_VISIT_UPDATED', entity: 'Lead', entityId: lead._id,
+    details: `Edited a visit report on ${lead.refNumber}`, ip: req.ip,
+  });
+
+  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  res.json({ success: true, data: populated });
+});
+
+// DELETE /api/leads/:id/visit-reports/:visitId  (remove a visit report)
+const deleteVisitReport = asyncHandler(async (req, res) => {
+  const lead = await Lead.findById(req.params.id);
+  if (!lead) throw ApiError.notFound('Lead not found');
+  assertCanView(lead, req.user);
+
+  const visit = lead.visitReports.id(req.params.visitId);
+  if (!visit) throw ApiError.notFound('Visit report not found');
+  assertCanModifyVisit(visit, req.user);
+
+  lead.visitReports.pull(visit._id);
+  lead.modifiedBy = req.user._id;
+  await lead.save();
+
+  await logActivity({
+    userId: req.user._id, action: 'LEAD_VISIT_DELETED', entity: 'Lead', entityId: lead._id,
+    details: `Deleted a visit report from ${lead.refNumber}`, ip: req.ip,
+  });
+
+  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  res.json({ success: true, data: populated });
+});
+
 // POST /api/leads/:id/instructions  (admin adds a directive for the assigned exec)
 const addInstruction = asyncHandler(async (req, res) => {
   const lead = await Lead.findById(req.params.id);
@@ -1503,6 +1615,9 @@ module.exports = {
   addNote,
   updateNote,
   deleteNote,
+  addVisitReport,
+  updateVisitReport,
+  deleteVisitReport,
   addInstruction,
   closeInstruction,
   deleteInstruction,
