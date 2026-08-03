@@ -71,13 +71,17 @@ async function visitRows(ctx) {
     ...ctx.scope,
     visitReports: { $elemMatch: { visitDate: { $gte: ctx.from, $lte: ctx.to } } },
   })
-    .select('refNumber businessName contactPerson mobileNumber city businessType status assignedExecId visitReports')
+    .select(
+      'refNumber businessName contactPerson mobileNumber city state businessType leadSource status ' +
+      'assignedExecId visitReports actionPoint followUp.date followUp.status'
+    )
     .populate({ path: 'assignedExecId', select: 'name' })
     .populate({ path: 'visitReports.createdBy', select: 'name' })
     .lean();
 
   const rows = [];
   for (const l of leads) {
+    const visitCount = (l.visitReports || []).length;
     for (const v of l.visitReports || []) {
       if (!inRange(v.visitDate, ctx)) continue;
       rows.push({
@@ -85,9 +89,14 @@ async function visitRows(ctx) {
         ...leadBasics(l),
         contactPerson: l.contactPerson || '',
         mobileNumber: l.mobileNumber || '',
+        state: l.state || '',
         businessType: l.businessType || '',
+        leadSource: l.leadSource || '',
         status: STATUS_LABELS[l.status] || l.status,
         note: v.note || '',
+        totalVisits: visitCount,
+        actionPoint: l.actionPoint || '',
+        nextFollowUp: l.followUp?.status === 'open' && l.followUp?.date ? new Date(l.followUp.date) : null,
         loggedBy: v.createdBy?.name || '—',
         loggedAt: v.createdAt ? new Date(v.createdAt) : null,
       });
@@ -100,33 +109,46 @@ async function visitRows(ctx) {
 async function leadRows(ctx) {
   const leads = await Lead.find({ ...ctx.scope, leadDate: { $gte: ctx.from, $lte: ctx.to } })
     .select(
-      'refNumber businessName contactPerson designation mobileNumber email whatsappNumber city state ' +
-      'businessType leadSource dailyUsage assignedExecId status kitType actionPoint followUp leadDate createdBy createdAt'
+      'refNumber businessName contactPerson designation mobileNumber email whatsappNumber city state address gstin ' +
+      'businessType leadSource dailyUsage assignedExecId status kitType actionPoint followUp leadDate createdBy createdAt ' +
+      'internalNotes visitReports.visitDate generatedAt delivery.sentAt delivery.method emailLog.createdAt'
     )
     .populate({ path: 'assignedExecId', select: 'name' })
     .populate({ path: 'createdBy', select: 'name' })
     .sort({ leadDate: -1 })
     .lean();
 
-  return leads.map((l) => ({
-    leadDate: l.leadDate ? new Date(l.leadDate) : null,
-    ...leadBasics(l),
-    contactPerson: l.contactPerson || '',
-    designation: l.designation || '',
-    mobileNumber: l.mobileNumber || '',
-    email: l.email || '',
-    whatsappNumber: l.whatsappNumber || '',
-    state: l.state || '',
-    businessType: l.businessType || '',
-    leadSource: l.leadSource || '',
-    dailyUsage: l.dailyUsage || '',
-    status: STATUS_LABELS[l.status] || l.status,
-    kitType: KIT_TYPE_LABELS[l.kitType] || '',
-    actionPoint: l.actionPoint || '',
-    followUpDate: l.followUp?.date ? new Date(l.followUp.date) : null,
-    createdBy: l.createdBy?.name || '—',
-    createdAt: l.createdAt ? new Date(l.createdAt) : null,
-  }));
+  return leads.map((l) => {
+    const visitDates = (l.visitReports || []).map((v) => new Date(v.visitDate)).filter((d) => !Number.isNaN(d.getTime()));
+    return {
+      leadDate: l.leadDate ? new Date(l.leadDate) : null,
+      ...leadBasics(l),
+      contactPerson: l.contactPerson || '',
+      designation: l.designation || '',
+      mobileNumber: l.mobileNumber || '',
+      email: l.email || '',
+      whatsappNumber: l.whatsappNumber || '',
+      state: l.state || '',
+      businessType: l.businessType || '',
+      leadSource: l.leadSource || '',
+      dailyUsage: l.dailyUsage || '',
+      status: STATUS_LABELS[l.status] || l.status,
+      kitType: KIT_TYPE_LABELS[l.kitType] || '',
+      actionPoint: l.actionPoint || '',
+      followUpDate: l.followUp?.status === 'open' && l.followUp?.date ? new Date(l.followUp.date) : null,
+      visits: visitDates.length,
+      lastVisit: visitDates.length ? new Date(Math.max(...visitDates.map((d) => d.getTime()))) : null,
+      generatedAt: l.generatedAt ? new Date(l.generatedAt) : null,
+      delivered: l.delivery?.sentAt ? 'Yes' : 'No',
+      deliveryMethod: l.delivery?.method || '',
+      emailsSent: (l.emailLog || []).length,
+      gstin: l.gstin || '',
+      address: l.address || '',
+      internalNotes: l.internalNotes || '',
+      createdBy: l.createdBy?.name || '—',
+      createdAt: l.createdAt ? new Date(l.createdAt) : null,
+    };
+  });
 }
 
 async function followUpRows(ctx) {
@@ -138,19 +160,30 @@ async function followUpRows(ctx) {
       { crmHistory: { $elemMatch: { type: 'follow_up', date: { $gte: ctx.from, $lte: ctx.to } } } },
     ],
   })
-    .select('refNumber businessName city assignedExecId followUp crmHistory')
+    .select(
+      'refNumber businessName contactPerson mobileNumber city businessType status actionPoint ' +
+      'assignedExecId followUp crmHistory'
+    )
     .populate({ path: 'assignedExecId', select: 'name' })
     .populate({ path: 'crmHistory.by', select: 'name' })
     .lean();
 
   const rows = [];
   for (const l of leads) {
+    const shared = {
+      ...leadBasics(l),
+      contactPerson: l.contactPerson || '',
+      mobileNumber: l.mobileNumber || '',
+      businessType: l.businessType || '',
+      leadStatus: STATUS_LABELS[l.status] || l.status,
+      actionPoint: l.actionPoint || '',
+    };
     const fu = l.followUp || {};
     if (fu.status === 'open' && inRange(fu.date, ctx)) {
       const dueKey = istDayKey(fu.date);
       rows.push({
         dueDate: new Date(fu.date),
-        ...leadBasics(l),
+        ...shared,
         status: dueKey < todayKey ? 'Overdue' : dueKey === todayKey ? 'Due today' : 'Open',
         note: fu.note || '',
         closingNote: '',
@@ -164,7 +197,7 @@ async function followUpRows(ctx) {
       if (h.type !== 'follow_up' || !inRange(h.date, ctx)) continue;
       rows.push({
         dueDate: h.date ? new Date(h.date) : null,
-        ...leadBasics(l),
+        ...shared,
         status: 'Closed',
         note: h.summary || '',
         closingNote: h.note || '',
@@ -185,18 +218,29 @@ async function actionPointRows(ctx) {
       { crmHistory: { $elemMatch: { type: 'action_point', at: { $gte: ctx.from, $lte: ctx.to } } } },
     ],
   })
-    .select('refNumber businessName city assignedExecId actionPoint updatedAt crmHistory')
+    .select(
+      'refNumber businessName contactPerson mobileNumber city businessType status ' +
+      'assignedExecId actionPoint updatedAt crmHistory followUp.date followUp.status'
+    )
     .populate({ path: 'assignedExecId', select: 'name' })
     .populate({ path: 'crmHistory.by', select: 'name' })
     .lean();
 
   const rows = [];
   for (const l of leads) {
+    const shared = {
+      ...leadBasics(l),
+      contactPerson: l.contactPerson || '',
+      mobileNumber: l.mobileNumber || '',
+      businessType: l.businessType || '',
+      leadStatus: STATUS_LABELS[l.status] || l.status,
+      nextFollowUp: l.followUp?.status === 'open' && l.followUp?.date ? new Date(l.followUp.date) : null,
+    };
     // Open action points are current state, so they're always listed.
     if (l.actionPoint) {
       rows.push({
         actionPoint: l.actionPoint,
-        ...leadBasics(l),
+        ...shared,
         status: 'Open',
         clearedBy: '',
         clearedAt: null,
@@ -206,7 +250,7 @@ async function actionPointRows(ctx) {
       if (h.type !== 'action_point' || !inRange(h.at, ctx)) continue;
       rows.push({
         actionPoint: h.summary || '',
-        ...leadBasics(l),
+        ...shared,
         status: 'Cleared',
         clearedBy: h.by?.name || '—',
         clearedAt: h.at ? new Date(h.at) : null,
@@ -225,23 +269,37 @@ async function kitRows(ctx) {
       { 'delivery.sentAt': { $gte: ctx.from, $lte: ctx.to } },
     ],
   })
-    .select('refNumber businessName city assignedExecId kitType status rates generatedAt delivery emailLog.createdAt')
+    .select(
+      'refNumber businessName contactPerson mobileNumber city businessType assignedExecId kitType status ' +
+      'rates generatedAt generatedFiles delivery emailLog.createdAt'
+    )
     .populate({ path: 'assignedExecId', select: 'name' })
     .sort({ generatedAt: -1 })
     .lean();
 
-  return leads.map((l) => ({
-    generatedAt: l.generatedAt ? new Date(l.generatedAt) : null,
-    ...leadBasics(l),
-    kitType: KIT_TYPE_LABELS[l.kitType] || '—',
-    status: STATUS_LABELS[l.status] || l.status,
-    products: (l.rates || []).filter((r) => r.included !== false).length,
-    delivered: l.delivery?.sentAt ? 'Yes' : 'No',
-    deliveryMethod: l.delivery?.method || '',
-    deliveredTo: l.delivery?.sentTo || l.delivery?.note || '',
-    deliveredAt: l.delivery?.sentAt ? new Date(l.delivery.sentAt) : null,
-    emailsSent: (l.emailLog || []).length,
-  }));
+  return leads.map((l) => {
+    const included = (l.rates || []).filter((r) => r.included !== false);
+    const avgDiscount = included.length
+      ? Math.round((included.reduce((s, r) => s + (Number(r.deviationPct) || 0), 0) / included.length) * 10) / 10
+      : 0;
+    return {
+      generatedAt: l.generatedAt ? new Date(l.generatedAt) : null,
+      ...leadBasics(l),
+      contactPerson: l.contactPerson || '',
+      mobileNumber: l.mobileNumber || '',
+      businessType: l.businessType || '',
+      kitType: KIT_TYPE_LABELS[l.kitType] || '—',
+      status: STATUS_LABELS[l.status] || l.status,
+      products: included.length,
+      documents: (l.generatedFiles || []).length,
+      avgDiscount,
+      delivered: l.delivery?.sentAt ? 'Yes' : 'No',
+      deliveryMethod: l.delivery?.method || '',
+      deliveredTo: l.delivery?.sentTo || l.delivery?.note || '',
+      deliveredAt: l.delivery?.sentAt ? new Date(l.delivery.sentAt) : null,
+      emailsSent: (l.emailLog || []).length,
+    };
+  });
 }
 
 async function emailRows(ctx) {
@@ -265,7 +323,9 @@ async function emailRows(ctx) {
         cc: (e.cc || []).join(', '),
         subject: e.subject || '',
         status: e.status === 'failed' ? 'Failed' : 'Sent',
+        provider: e.provider || '',
         attachments: (e.attachments || []).join(', '),
+        attachmentCount: (e.attachments || []).length,
         sentBy: e.sentBy?.name || '—',
       });
     }
@@ -279,7 +339,7 @@ async function instructionRows(ctx) {
     ...ctx.scope,
     instructions: { $elemMatch: { createdAt: { $gte: ctx.from, $lte: ctx.to } } },
   })
-    .select('refNumber businessName city assignedExecId instructions')
+    .select('refNumber businessName city businessType status assignedExecId instructions')
     .populate({ path: 'assignedExecId', select: 'name' })
     .populate({ path: 'instructions.createdBy', select: 'name' })
     .populate({ path: 'instructions.doneBy', select: 'name' })
@@ -289,11 +349,16 @@ async function instructionRows(ctx) {
   for (const l of leads) {
     for (const i of l.instructions || []) {
       if (!inRange(i.createdAt, ctx)) continue;
+      const done = i.status === 'done';
+      const end = done && i.doneAt ? new Date(i.doneAt) : new Date();
       rows.push({
         givenAt: new Date(i.createdAt),
         ...leadBasics(l),
+        businessType: l.businessType || '',
+        leadStatus: STATUS_LABELS[l.status] || l.status,
         text: i.text || '',
-        status: i.status === 'done' ? 'Done' : 'Open',
+        status: done ? 'Done' : 'Open',
+        daysOpen: Math.max(0, Math.round((end - new Date(i.createdAt)) / 86400000)),
         givenBy: i.createdBy?.name || '—',
         doneBy: i.doneBy?.name || '',
         doneAt: i.doneAt ? new Date(i.doneAt) : null,
@@ -308,8 +373,9 @@ async function instructionRows(ctx) {
 function activityScan(ctx) {
   return Lead.find(ctx.scope)
     .select(
-      'assignedExecId leadDate visitReports.visitDate generatedAt delivery.sentAt ' +
-      'followUp.status followUp.date crmHistory.type crmHistory.at emailLog.createdAt actionPoint instructions.status'
+      'assignedExecId leadDate visitReports.visitDate generatedAt delivery.sentAt status ' +
+      'followUp.status followUp.date crmHistory.type crmHistory.at emailLog.createdAt actionPoint ' +
+      'instructions.status instructions.createdAt instructions.doneAt'
     )
     .populate({ path: 'assignedExecId', select: 'name isActive' })
     .lean();
@@ -319,24 +385,31 @@ async function execPerformanceRows(ctx) {
   const leads = await activityScan(ctx);
   const todayKey = istDayKey(new Date());
   const byExec = new Map();
+  const fieldDays = new Map(); // exec id -> Set of IST days with at least one visit
 
   for (const l of leads) {
     const id = String(l.assignedExecId?._id || 'unassigned');
     if (!byExec.has(id)) {
       byExec.set(id, {
         executive: l.assignedExecId?.name || 'Unassigned',
-        totalLeads: 0, leadsAdded: 0, visits: 0, kitsGenerated: 0, kitsDelivered: 0,
-        followUpsClosed: 0, emailsSent: 0, openFollowUps: 0, overdueFollowUps: 0,
+        totalLeads: 0, leadsAdded: 0, visits: 0, activeDays: 0, kitsGenerated: 0, kitsDelivered: 0,
+        followUpsClosed: 0, instructionsDone: 0, emailsSent: 0, openFollowUps: 0, overdueFollowUps: 0,
         openActionPoints: 0, openInstructions: 0,
       });
+      fieldDays.set(id, new Set());
     }
     const s = byExec.get(id);
     s.totalLeads += 1;
     if (inRange(l.leadDate, ctx)) s.leadsAdded += 1;
-    s.visits += (l.visitReports || []).filter((v) => inRange(v.visitDate, ctx)).length;
+    for (const v of l.visitReports || []) {
+      if (!inRange(v.visitDate, ctx)) continue;
+      s.visits += 1;
+      fieldDays.get(id).add(istDayKey(v.visitDate));
+    }
     if (inRange(l.generatedAt, ctx)) s.kitsGenerated += 1;
     if (inRange(l.delivery?.sentAt, ctx)) s.kitsDelivered += 1;
     s.followUpsClosed += (l.crmHistory || []).filter((h) => h.type === 'follow_up' && inRange(h.at, ctx)).length;
+    s.instructionsDone += (l.instructions || []).filter((i) => inRange(i.doneAt, ctx)).length;
     s.emailsSent += (l.emailLog || []).filter((e) => inRange(e.createdAt, ctx)).length;
     if (l.followUp?.status === 'open') {
       s.openFollowUps += 1;
@@ -346,12 +419,18 @@ async function execPerformanceRows(ctx) {
     s.openInstructions += (l.instructions || []).filter((i) => i.status === 'open').length;
   }
 
+  for (const [id, s] of byExec) s.activeDays = fieldDays.get(id).size;
   return [...byExec.values()].sort((a, b) => a.executive.localeCompare(b.executive));
 }
 
+// The daily summary is bounded so a 13-month range can't produce a 400-row
+// sheet; export-all uses the same constant to skip (not abort) this report.
+const DAILY_SUMMARY_MAX_DAYS = 190;
+
+const rangeDayCount = (ctx) => Math.round((ctx.to - ctx.from) / 86400000);
+
 async function dailySummaryRows(ctx) {
-  const dayCount = Math.round((ctx.to - ctx.from) / 86400000);
-  if (dayCount > 190) {
+  if (rangeDayCount(ctx) > DAILY_SUMMARY_MAX_DAYS) {
     throw ApiError.badRequest('The daily summary covers at most 6 months — pick a shorter date range');
   }
 
@@ -359,7 +438,8 @@ async function dailySummaryRows(ctx) {
   const days = new Map(); // 'YYYY-MM-DD' -> counters
   for (let t = ctx.from.getTime(); t <= ctx.to.getTime(); t += 86400000) {
     days.set(istDayKey(new Date(t)), {
-      newLeads: 0, visits: 0, kitsGenerated: 0, kitsDelivered: 0, followUpsClosed: 0, emailsSent: 0,
+      newLeads: 0, visits: 0, kitsGenerated: 0, kitsDelivered: 0, followUpsClosed: 0,
+      actionPointsCleared: 0, instructionsGiven: 0, instructionsDone: 0, emailsSent: 0,
     });
   }
   const bump = (date, key) => {
@@ -373,7 +453,15 @@ async function dailySummaryRows(ctx) {
     (l.visitReports || []).forEach((v) => inRange(v.visitDate, ctx) && bump(v.visitDate, 'visits'));
     if (inRange(l.generatedAt, ctx)) bump(l.generatedAt, 'kitsGenerated');
     if (inRange(l.delivery?.sentAt, ctx)) bump(l.delivery.sentAt, 'kitsDelivered');
-    (l.crmHistory || []).forEach((h) => h.type === 'follow_up' && inRange(h.at, ctx) && bump(h.at, 'followUpsClosed'));
+    (l.crmHistory || []).forEach((h) => {
+      if (!inRange(h.at, ctx)) return;
+      if (h.type === 'follow_up') bump(h.at, 'followUpsClosed');
+      if (h.type === 'action_point') bump(h.at, 'actionPointsCleared');
+    });
+    (l.instructions || []).forEach((i) => {
+      if (inRange(i.createdAt, ctx)) bump(i.createdAt, 'instructionsGiven');
+      if (inRange(i.doneAt, ctx)) bump(i.doneAt, 'instructionsDone');
+    });
     (l.emailLog || []).forEach((e) => inRange(e.createdAt, ctx) && bump(e.createdAt, 'emailsSent'));
   }
 
@@ -399,10 +487,15 @@ const REPORTS = {
       { key: 'contactPerson', header: 'Contact', width: 18 },
       { key: 'mobileNumber', header: 'Mobile', width: 14 },
       { key: 'city', header: 'City', width: 14 },
+      { key: 'state', header: 'State', width: 14 },
       { key: 'businessType', header: 'Type', width: 13 },
+      { key: 'leadSource', header: 'Source', width: 14 },
       { key: 'status', header: 'Lead Status', width: 14 },
       { key: 'executive', header: 'Executive', width: 16 },
       { key: 'note', header: 'Visit Note', width: 50, wrap: true },
+      { key: 'totalVisits', header: 'Total Visits', type: 'number', width: 11 },
+      { key: 'actionPoint', header: 'Action Point', width: 18 },
+      { key: 'nextFollowUp', header: 'Next Follow-up', type: 'date', width: 14 },
       { key: 'loggedBy', header: 'Logged By', width: 16 },
       { key: 'loggedAt', header: 'Logged At', type: 'datetime', width: 18 },
     ],
@@ -430,6 +523,15 @@ const REPORTS = {
       { key: 'kitType', header: 'Kit', width: 15 },
       { key: 'actionPoint', header: 'Action Point', width: 18 },
       { key: 'followUpDate', header: 'Follow-up Due', type: 'date', width: 14 },
+      { key: 'visits', header: 'Visits', type: 'number', width: 8 },
+      { key: 'lastVisit', header: 'Last Visit', type: 'date', width: 13 },
+      { key: 'generatedAt', header: 'Kit Generated At', type: 'datetime', width: 18 },
+      { key: 'delivered', header: 'Delivered', width: 10 },
+      { key: 'deliveryMethod', header: 'Delivery Method', width: 14 },
+      { key: 'emailsSent', header: 'Emails', type: 'number', width: 8 },
+      { key: 'gstin', header: 'GSTIN', width: 18 },
+      { key: 'address', header: 'Address', width: 34, wrap: true },
+      { key: 'internalNotes', header: 'Internal Notes', width: 40, wrap: true },
       { key: 'createdBy', header: 'Created By', width: 16 },
       { key: 'createdAt', header: 'Created At', type: 'datetime', width: 18 },
     ],
@@ -442,9 +544,14 @@ const REPORTS = {
       { key: 'dueDate', header: 'Due Date', type: 'date', width: 13 },
       { key: 'refNumber', header: 'Ref', width: 20 },
       { key: 'businessName', header: 'Business', width: 26 },
+      { key: 'contactPerson', header: 'Contact', width: 18 },
+      { key: 'mobileNumber', header: 'Mobile', width: 14 },
       { key: 'city', header: 'City', width: 14 },
+      { key: 'businessType', header: 'Type', width: 13 },
       { key: 'executive', header: 'Executive', width: 16 },
       { key: 'status', header: 'Status', width: 12 },
+      { key: 'leadStatus', header: 'Lead Status', width: 14 },
+      { key: 'actionPoint', header: 'Action Point', width: 18 },
       { key: 'note', header: 'Reason', width: 34, wrap: true },
       { key: 'closingNote', header: 'Closing Note', width: 34, wrap: true },
       { key: 'closedBy', header: 'Closed By', width: 16 },
@@ -459,9 +566,14 @@ const REPORTS = {
       { key: 'actionPoint', header: 'Action Point', width: 22 },
       { key: 'refNumber', header: 'Ref', width: 20 },
       { key: 'businessName', header: 'Business', width: 26 },
+      { key: 'contactPerson', header: 'Contact', width: 18 },
+      { key: 'mobileNumber', header: 'Mobile', width: 14 },
       { key: 'city', header: 'City', width: 14 },
+      { key: 'businessType', header: 'Type', width: 13 },
       { key: 'executive', header: 'Executive', width: 16 },
       { key: 'status', header: 'Status', width: 11 },
+      { key: 'leadStatus', header: 'Lead Status', width: 14 },
+      { key: 'nextFollowUp', header: 'Next Follow-up', type: 'date', width: 14 },
       { key: 'clearedBy', header: 'Cleared By', width: 16 },
       { key: 'clearedAt', header: 'Cleared At', type: 'datetime', width: 18 },
     ],
@@ -474,11 +586,16 @@ const REPORTS = {
       { key: 'generatedAt', header: 'Generated At', type: 'datetime', width: 18 },
       { key: 'refNumber', header: 'Ref', width: 20 },
       { key: 'businessName', header: 'Business', width: 26 },
+      { key: 'contactPerson', header: 'Contact', width: 18 },
+      { key: 'mobileNumber', header: 'Mobile', width: 14 },
       { key: 'city', header: 'City', width: 14 },
+      { key: 'businessType', header: 'Type', width: 13 },
       { key: 'executive', header: 'Executive', width: 16 },
       { key: 'kitType', header: 'Kit', width: 15 },
       { key: 'status', header: 'Status', width: 15 },
       { key: 'products', header: 'Products', type: 'number', width: 10 },
+      { key: 'documents', header: 'Documents', type: 'number', width: 11 },
+      { key: 'avgDiscount', header: 'Avg Discount %', type: 'number', width: 14 },
       { key: 'delivered', header: 'Delivered', width: 10 },
       { key: 'deliveryMethod', header: 'Method', width: 10 },
       { key: 'deliveredTo', header: 'Delivered To', width: 24 },
@@ -500,6 +617,8 @@ const REPORTS = {
       { key: 'cc', header: 'CC', width: 24 },
       { key: 'subject', header: 'Subject', width: 40 },
       { key: 'status', header: 'Status', width: 9 },
+      { key: 'provider', header: 'Via', width: 10 },
+      { key: 'attachmentCount', header: 'Files', type: 'number', width: 7 },
       { key: 'attachments', header: 'Attachments', width: 40, wrap: true },
       { key: 'sentBy', header: 'Sent By', width: 16 },
     ],
@@ -514,8 +633,11 @@ const REPORTS = {
       { key: 'businessName', header: 'Business', width: 26 },
       { key: 'city', header: 'City', width: 14 },
       { key: 'executive', header: 'Executive', width: 16 },
+      { key: 'businessType', header: 'Type', width: 13 },
+      { key: 'leadStatus', header: 'Lead Status', width: 14 },
       { key: 'text', header: 'Instruction', width: 50, wrap: true },
       { key: 'status', header: 'Status', width: 9 },
+      { key: 'daysOpen', header: 'Days Open', type: 'number', width: 10 },
       { key: 'givenBy', header: 'Given By', width: 16 },
       { key: 'doneBy', header: 'Done By', width: 16 },
       { key: 'doneAt', header: 'Done At', type: 'datetime', width: 18 },
@@ -531,9 +653,11 @@ const REPORTS = {
       { key: 'totalLeads', header: 'Total Leads', type: 'number', width: 11 },
       { key: 'leadsAdded', header: 'Leads Added', type: 'number', width: 12 },
       { key: 'visits', header: 'Visits', type: 'number', width: 8 },
+      { key: 'activeDays', header: 'Field Days', type: 'number', width: 10 },
       { key: 'kitsGenerated', header: 'Kits Generated', type: 'number', width: 14 },
       { key: 'kitsDelivered', header: 'Kits Delivered', type: 'number', width: 13 },
       { key: 'followUpsClosed', header: 'Follow-ups Closed', type: 'number', width: 16 },
+      { key: 'instructionsDone', header: 'Instructions Done', type: 'number', width: 16 },
       { key: 'emailsSent', header: 'Emails Sent', type: 'number', width: 11 },
       { key: 'openFollowUps', header: 'Open Follow-ups', type: 'number', width: 15 },
       { key: 'overdueFollowUps', header: 'Overdue', type: 'number', width: 9 },
@@ -553,6 +677,9 @@ const REPORTS = {
       { key: 'kitsGenerated', header: 'Kits Generated', type: 'number', width: 14 },
       { key: 'kitsDelivered', header: 'Kits Delivered', type: 'number', width: 13 },
       { key: 'followUpsClosed', header: 'Follow-ups Closed', type: 'number', width: 16 },
+      { key: 'actionPointsCleared', header: 'Actions Cleared', type: 'number', width: 14 },
+      { key: 'instructionsGiven', header: 'Instructions Given', type: 'number', width: 16 },
+      { key: 'instructionsDone', header: 'Instructions Done', type: 'number', width: 16 },
       { key: 'emailsSent', header: 'Emails Sent', type: 'number', width: 11 },
     ],
   },
@@ -593,6 +720,14 @@ function buildContext(user, { from, to, execId }) {
   }
   if (fromStr > toStr) throw ApiError.badRequest('The "from" date must not be after the "to" date');
   const bounds = istBounds(fromStr, toStr);
+  // Reject calendar-invalid dates (e.g. 2026-02-30) — they'd otherwise parse to
+  // a rolled-over or Invalid Date and silently return the wrong day's data.
+  if (
+    Number.isNaN(bounds.from.getTime()) || Number.isNaN(bounds.to.getTime()) ||
+    istDayKey(bounds.from) !== fromStr || istDayKey(bounds.to) !== toStr
+  ) {
+    throw ApiError.badRequest('One of the dates is not a valid calendar day');
+  }
   if ((bounds.to - bounds.from) / 86400000 > 400) {
     throw ApiError.badRequest('Choose a date range of at most 13 months');
   }
@@ -609,7 +744,9 @@ function buildContext(user, { from, to, execId }) {
 }
 
 async function runReport(type, ctx) {
-  const def = REPORTS[type];
+  // Own-property lookup: a plain-object registry would otherwise accept
+  // prototype-chain keys like "constructor" and crash on def.build.
+  const def = Object.hasOwn(REPORTS, type) ? REPORTS[type] : null;
   if (!def) throw ApiError.badRequest(`Unknown report type "${type}"`);
   const rows = await def.build(ctx);
   return {
@@ -713,6 +850,8 @@ async function buildWorkbook(reports, ctx, generatedBy) {
 module.exports = {
   REPORTS,
   REPORT_TYPES,
+  DAILY_SUMMARY_MAX_DAYS,
+  rangeDayCount,
   reportCatalog,
   buildContext,
   runReport,
