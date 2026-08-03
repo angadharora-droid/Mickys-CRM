@@ -255,10 +255,13 @@ export default function Reports() {
     downloadXlsx('all', '/reports/export/all', query, `mickys-all-reports_${from}_to_${to}.xlsx`);
 
   const active = catalog.find((c) => c.type === type);
-  const columns = report?.columns || [];
-  const rows = report?.rows || [];
+  // Only trust a payload that matches the selected type — on a type switch there
+  // is one pre-effect frame where `report` still holds the previous type's data.
+  const current = report?.type === type ? report : null;
+  const columns = current?.columns || [];
+  const rows = current?.rows || [];
   const previewRows = rows.slice(0, PREVIEW_CAP);
-  const chips = loading ? [] : summarize(type, report);
+  const chips = loading ? [] : summarize(type, current);
 
   // The visit report reads best day-by-day, so its preview is grouped by date.
   const groupKey = type === 'visits' ? 'visitDate' : null;
@@ -362,9 +365,9 @@ export default function Reports() {
           <CardTitle className="text-base flex flex-wrap items-center justify-between gap-2">
             <span className="flex items-center gap-2">
               {active?.label || 'Report'}
-              {report && (
+              {current && (
                 <Badge variant="secondary">
-                  {report.meta.count} record{report.meta.count === 1 ? '' : 's'}
+                  {current.meta.count} record{current.meta.count === 1 ? '' : 's'}
                 </Badge>
               )}
             </span>
@@ -437,12 +440,12 @@ export default function Reports() {
                     );
                   })}
                 </TableBody>
-                {report?.totals && (
+                {current?.totals && (
                   <TableFooter>
                     <TableRow>
                       {columns.map((c, i) => (
                         <TableCell key={c.key} className={cn('py-2.5 text-sm font-semibold', c.type === 'number' && 'text-right tabular-nums')}>
-                          {i === 0 ? 'Total' : c.type === 'number' ? report.totals[c.key] ?? '' : ''}
+                          {i === 0 ? 'Total' : c.type === 'number' ? current.totals[c.key] ?? '' : ''}
                         </TableCell>
                       ))}
                     </TableRow>
