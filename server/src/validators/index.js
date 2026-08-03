@@ -136,6 +136,20 @@ const instructionSchema = z.object({
   text: z.string().trim().min(1, 'Instruction text is required').max(4000),
 });
 
+// Recording a visit may also derive the lead's next follow-up and action point
+// from what happened in the meeting — all three land in one save.
+const visitReportSchema = z.object({
+  visitDate: z.coerce.date(),
+  note: z.string().trim().min(1, 'Visit note is required').max(4000),
+  actionPoint: z.enum(ACTION_POINTS).optional().or(z.literal('')),
+  followUpDate: z.union([z.literal(''), z.coerce.date()]).optional(),
+  followUpNote: z.string().max(4000).optional().or(z.literal('')),
+});
+
+// Editing an existing visit only touches the visit itself (date + note) — the
+// derived follow-up / action point are managed in their own section.
+const updateVisitReportSchema = visitReportSchema.pick({ visitDate: true, note: true });
+
 const actionPointSchema = z.object({
   actionPoint: z.enum(ACTION_POINTS).optional().or(z.literal('')),
 });
@@ -315,6 +329,8 @@ module.exports = {
   saveTermsSchema,
   noteSchema,
   instructionSchema,
+  visitReportSchema,
+  updateVisitReportSchema,
   actionPointSchema,
   followUpSchema,
   closeFollowUpSchema,

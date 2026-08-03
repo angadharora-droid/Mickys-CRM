@@ -36,7 +36,7 @@ import {
   Loader2, Package, Download, Mail, Trash2, RotateCcw, FileText, CheckCircle2,
   AlertTriangle, ArrowLeft, Boxes, Building2, Ship, Sparkles, Eye, EyeOff, Lock, Pencil, ExternalLink,
   MessageSquare, CalendarCheck, Paperclip, Upload, Image as ImageIcon, Target,
-  ClipboardList, Plus, History, UserCog, X,
+  ClipboardList, Plus, History, UserCog, X, NotebookPen,
 } from 'lucide-react';
 import ExportKitStep from './ExportKitStep';
 import CityCombobox from '@/components/shared/CityCombobox';
@@ -180,6 +180,15 @@ export default function LeadDetail() {
   const [clientForm, setClientForm] = useState(null);
   const [actionPoint, setActionPoint] = useState('');
   const [followUpForm, setFollowUpForm] = useState({ note: '', date: '' });
+  const [visitForm, setVisitForm] = useState({
+    visitDate: new Date().toISOString().slice(0, 10),
+    note: '',
+    followUpDate: '',
+    followUpNote: '',
+    actionPoint: '',
+  });
+  const [visitEdit, setVisitEdit] = useState(null); // { id, visitDate, note }
+  const [confirmVisitId, setConfirmVisitId] = useState(null);
   const [closingOpen, setClosingOpen] = useState(false);
   const [closeNote, setCloseNote] = useState('');
   const [attUploading, setAttUploading] = useState(false);
@@ -320,6 +329,11 @@ export default function LeadDetail() {
     [...(lead.notes || [])]
       .sort((a, b) => new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt))[0]
       ?.text || lead.internalNotes || '';
+
+  // Visit reports, most recent visit first (ties broken by when they were logged).
+  const visitReports = [...(lead.visitReports || [])].sort(
+    (a, b) => new Date(b.visitDate) - new Date(a.visitDate) || new Date(b.createdAt) - new Date(a.createdAt)
+  );
 
   // Instructions: admins author them; the assigned exec (or an admin) marks done.
   const isAdmin = user?.role === 'admin';
@@ -533,6 +547,32 @@ export default function LeadDetail() {
     run('note-add', () => api.post(`/leads/${lead._id}/notes`, { text: noteDraft.trim() }))
       .then(() => { setEditingNote(false); toast.success('Internal note saved'); })
       .catch(() => {});
+
+  // ---- Visit reports ----
+  const addVisitReport = () =>
+    run('visit-add', () => api.post(`/leads/${lead._id}/visit-reports`, {
+      visitDate: visitForm.visitDate,
+      note: visitForm.note.trim(),
+      followUpDate: visitForm.followUpDate,
+      followUpNote: visitForm.followUpNote,
+      actionPoint: visitForm.actionPoint,
+    })).then(() => {
+      setVisitForm({
+        visitDate: new Date().toISOString().slice(0, 10),
+        note: '', followUpDate: '', followUpNote: '', actionPoint: '',
+      });
+      toast.success('Visit report added');
+    }).catch(() => {});
+
+  const saveVisitEdit = () =>
+    run('visit-edit', () => api.put(`/leads/${lead._id}/visit-reports/${visitEdit.id}`, {
+      visitDate: visitEdit.visitDate,
+      note: visitEdit.note.trim(),
+    })).then(() => { setVisitEdit(null); toast.success('Visit report updated'); }).catch(() => {});
+
+  const deleteVisitReport = (visitId) =>
+    run('visit-del', () => api.delete(`/leads/${lead._id}/visit-reports/${visitId}`))
+      .then(() => { setConfirmVisitId(null); toast.success('Visit report deleted'); }).catch(() => {});
 
   // ---- Instructions (admin -> exec directives) ----
   const addInstruction = () =>
@@ -998,6 +1038,170 @@ export default function LeadDetail() {
                 );
               })}
             </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Visit reports — what happened at each client meeting */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center justify-between gap-2">
+            <span className="flex items-center gap-2">
+              <NotebookPen className="h-4 w-4 text-muted-foreground" /> Visit Report
+            </span>
+            {visitReports.length > 0 && (
+              <Badge variant="secondary">{visitReports.length} visit{visitReports.length > 1 ? 's' : ''}</Badge>
+            )}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-3 rounded-lg border p-3">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label>Visit date</Label>
+                <Input
+                  type="date"
+                  value={visitForm.visitDate}
+                  onChange={(e) => setVisitForm((f) => ({ ...f, visitDate: e.target.value }))}
+                />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Visit note</Label>
+              <Textarea
+                rows={3}
+                placeholder="What happened in the meeting?…"
+                value={visitForm.note}
+                onChange={(e) => setVisitForm((f) => ({ ...f, note: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-3 rounded-lg bg-muted/30 p-3">
+              <p className="text-xs text-muted-foreground">
+                Based on this visit — schedule the next follow-up and set the action point (both optional).
+              </p>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="space-y-1.5">
+                  <Label>Next follow-up date</Label>
+                  <Input
+                    type="date"
+                    value={visitForm.followUpDate}
+                    onChange={(e) => setVisitForm((f) => ({ ...f, followUpDate: e.target.value }))}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Follow-up note</Label>
+                  <Input
+                    placeholder="Why follow up?…"
+                    value={visitForm.followUpNote}
+                    onChange={(e) => setVisitForm((f) => ({ ...f, followUpNote: e.target.value }))}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Action point</Label>
+                  <Select
+                    value={visitForm.actionPoint || NO_ACTION}
+                    onValueChange={(v) => setVisitForm((f) => ({ ...f, actionPoint: v === NO_ACTION ? '' : v }))}
+                  >
+                    <SelectTrigger><SelectValue placeholder="Select an action" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={NO_ACTION}>No action</SelectItem>
+                      {ACTION_POINTS.map((ap) => (
+                        <SelectItem key={ap} value={ap}>{ap}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </div>
+            <div className="flex justify-end">
+              <Button
+                size="sm"
+                onClick={addVisitReport}
+                disabled={!visitForm.note.trim() || !visitForm.visitDate || action === 'visit-add'}
+              >
+                {action === 'visit-add' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                Add visit report
+              </Button>
+            </div>
+          </div>
+
+          {visitReports.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No visits recorded yet.</p>
+          ) : (
+            <ul className="space-y-2">
+              {visitReports.map((v) => {
+                const canModify = isAdmin || String(v.createdBy?._id || v.createdBy || '') === String(user?._id || '');
+                const editing = visitEdit?.id === v._id;
+                return (
+                  <li key={v._id} className="rounded-lg border p-3">
+                    {editing ? (
+                      <div className="space-y-2">
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <Input
+                            type="date"
+                            value={visitEdit.visitDate}
+                            onChange={(e) => setVisitEdit((s) => ({ ...s, visitDate: e.target.value }))}
+                          />
+                        </div>
+                        <Textarea
+                          rows={3}
+                          value={visitEdit.note}
+                          onChange={(e) => setVisitEdit((s) => ({ ...s, note: e.target.value }))}
+                        />
+                        <div className="flex justify-end gap-2">
+                          <Button size="sm" variant="outline" onClick={() => setVisitEdit(null)} disabled={action === 'visit-edit'}>
+                            Cancel
+                          </Button>
+                          <Button
+                            size="sm"
+                            onClick={saveVisitEdit}
+                            disabled={!visitEdit.note.trim() || !visitEdit.visitDate || action === 'visit-edit'}
+                          >
+                            {action === 'visit-edit' ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                            Save
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-xs font-medium text-muted-foreground">
+                            Visited {formatDate(v.visitDate)}
+                          </p>
+                          <p className="mt-1 text-sm whitespace-pre-wrap break-words">{v.note}</p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {v.createdBy?.name || 'Unknown'} · logged {formatDateTime(v.createdAt)}
+                            {v.updatedAt && v.updatedAt !== v.createdAt ? ' · edited' : ''}
+                          </p>
+                        </div>
+                        {canModify && (
+                          <div className="flex shrink-0 items-center gap-1">
+                            <Button
+                              variant="ghost" size="icon" className="h-8 w-8"
+                              title="Edit visit report"
+                              onClick={() => setVisitEdit({
+                                id: v._id,
+                                visitDate: v.visitDate ? new Date(v.visitDate).toISOString().slice(0, 10) : '',
+                                note: v.note,
+                              })}
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                              variant="ghost" size="icon" className="h-8 w-8 text-destructive"
+                              title="Delete visit report"
+                              onClick={() => setConfirmVisitId(v._id)}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
           )}
         </CardContent>
       </Card>
@@ -1848,6 +2052,16 @@ export default function LeadDetail() {
         confirmLabel="Delete file"
         loading={action === 'att-del'}
         onConfirm={() => deleteAttachment(confirmAttId)}
+      />
+
+      <ConfirmDialog
+        open={Boolean(confirmVisitId)}
+        onOpenChange={(o) => { if (!o) setConfirmVisitId(null); }}
+        title="Delete visit report?"
+        description="This visit's record will be permanently removed from the lead."
+        confirmLabel="Delete visit"
+        loading={action === 'visit-del'}
+        onConfirm={() => deleteVisitReport(confirmVisitId)}
       />
 
       <FilePreviewDialog file={attPreview} onOpenChange={closeAttPreview} />

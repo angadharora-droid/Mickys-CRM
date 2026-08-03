@@ -107,6 +107,18 @@ const noteSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+/** A record of one client visit: when it happened and what was discussed in
+ *  the meeting. The next follow-up and action point are typically derived from
+ *  the latest visit (the add endpoint can set both in the same save). */
+const visitReportSchema = new mongoose.Schema(
+  {
+    visitDate: { type: Date, required: true },
+    note: { type: String, required: true, trim: true, maxlength: 4000 },
+    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  },
+  { timestamps: true }
+);
+
 /** A directive from an admin to the lead's assigned executive. It stays 'open'
  *  and surfaces on the exec's Follow-ups page until they mark it done. */
 const instructionSchema = new mongoose.Schema(
@@ -219,6 +231,10 @@ const leadSchema = new mongoose.Schema(
     // so older records can be consolidated on their next note save.
     internalNotes: { type: String, trim: true, default: '' },
     notes: { type: [noteSchema], default: [] },
+
+    // Client visits recorded against this lead (date + what happened in the
+    // meeting). The follow-up and action point below are derived from these.
+    visitReports: { type: [visitReportSchema], default: [] },
 
     // Admin -> exec directives for this lead. The exec marks each done once
     // actioned; open ones appear on their Follow-ups page.
