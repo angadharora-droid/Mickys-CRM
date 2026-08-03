@@ -11,6 +11,7 @@ import LeadDetail from '@/pages/leads/LeadDetail';
 import LeadTracker from '@/pages/leads/LeadTracker';
 import MyRecords from '@/pages/leads/MyRecords';
 import FollowUps from '@/pages/FollowUps';
+import Reports from '@/pages/Reports';
 import RateMaster from '@/pages/rate-master/RateMaster';
 import ExportKit from '@/pages/export/ExportKit';
 import UsersPage from '@/pages/users/Users';
@@ -43,6 +44,7 @@ export default function App() {
         />
         <Route path="/leads/:id" element={<LeadDetail />} />
         <Route path="/follow-ups" element={<FollowUps />} />
+        <Route path="/reports" element={<Reports />} />
         <Route
           path="/my-records"
           element={

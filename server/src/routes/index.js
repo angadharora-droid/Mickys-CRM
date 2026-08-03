@@ -16,6 +16,7 @@ const settings = require('../controllers/settings.controller');
 const exportKit = require('../controllers/export.controller');
 const pushCtrl = require('../controllers/push.controller');
 const notifications = require('../controllers/notification.controller');
+const reports = require('../controllers/report.controller');
 
 const router = express.Router();
 
@@ -110,6 +111,11 @@ router.post('/notifications/:id/read', authenticate, notifications.markRead);
 router.get('/push/public-key', authenticate, pushCtrl.publicKey);
 router.post('/push/subscribe', authenticate, validate(v.pushSubscribeSchema), pushCtrl.subscribe);
 router.post('/push/unsubscribe', authenticate, validate(v.pushUnsubscribeSchema), pushCtrl.unsubscribe);
+
+// ---------- Reports (role-scoped: execs see their own leads, admin sees all) ----------
+router.get('/reports', authenticate, reports.listReports);
+router.get('/reports/export/all', authenticate, reports.exportAll);
+router.get('/reports/:type', authenticate, reports.getReport);
 
 // ---------- Dashboards ----------
 router.get('/dashboard/admin', authenticate, authorize(ADMIN), dashboard.adminAnalytics);
