@@ -36,8 +36,8 @@ export function AuthProvider({ children }) {
     return () => window.removeEventListener('mickys:logout', onLogout);
   }, []);
 
-  const login = useCallback(async (email, password) => {
-    const { data } = await api.post('/auth/login', { email, password });
+  const login = useCallback(async (identifier, password) => {
+    const { data } = await api.post('/auth/login', { identifier, password });
     setAccessToken(data.data.accessToken);
     setUser(data.data.user);
     return data.data.user;

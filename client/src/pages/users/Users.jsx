@@ -27,16 +27,28 @@ import {
 } from '@/components/ui/select';
 import { ChevronDown, ChevronRight, Plus, Search, Users as UsersIcon, Pencil, UserX } from 'lucide-react';
 
-const schema = z.object({
-  name: z.string().min(2, 'Required'),
-  email: z.string().email('Invalid email'),
-  role: z.enum(['admin', 'sales_exec', 'pr_manager']),
-  employeeCode: z.string().optional(),
-  phone: z.string().optional(),
-  // Required on create, optional on edit — enforced in onSubmit since the
-  // same form serves both modes.
-  password: z.string().min(8, 'At least 8 characters').optional().or(z.literal('')),
-});
+const schema = z
+  .object({
+    name: z.string().min(2, 'Required'),
+    email: z.string().email('Invalid email'),
+    role: z.enum(['admin', 'sales_exec', 'pr_manager']),
+    employeeCode: z.string().optional(),
+    phone: z.string().optional(),
+    // Required on create, optional on edit — enforced in onSubmit since the
+    // same form serves both modes.
+    password: z.string().optional().or(z.literal('')),
+  })
+  .superRefine((d, ctx) => {
+    // Mirrors the server rule: 8+ characters for everyone, except admin
+    // accounts may instead use a 4 or 6 digit numeric PIN.
+    if (!d.password || d.password.length >= 8) return;
+    if (d.role === 'admin' && /^(\d{4}|\d{6})$/.test(d.password)) return;
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['password'],
+      message: d.role === 'admin' ? 'At least 8 characters, or a 4/6-digit PIN' : 'At least 8 characters',
+    });
+  });
 
 const EMPTY = { name: '', email: '', role: 'sales_exec', employeeCode: '', phone: '', password: '' };
 const ALL = '__all__';
@@ -56,13 +68,14 @@ export default function Users() {
   const [expandedRows, setExpandedRows] = useState({});
 
   const {
-    register, handleSubmit, reset, control,
+    register, handleSubmit, reset, control, watch,
     formState: { errors },
     setError,
   } = useForm({
     resolver: zodResolver(schema),
     defaultValues: EMPTY,
   });
+  const formRole = watch('role');
 
   const fetchUsers = useCallback(async () => {
     setLoading(true);
@@ -330,8 +343,13 @@ export default function Users() {
               </div>
               <div className="space-y-2">
                 <Label>{editing ? 'New password (optional)' : 'Password *'}</Label>
-                <Input type="password" {...register('password')} />
+                <Input type="password" autoComplete="new-password" {...register('password')} />
                 {errors.password && <p className="text-sm text-destructive">{errors.password.message}</p>}
+                {formRole === 'admin' && (
+                  <p className="text-xs text-muted-foreground">
+                    Admin accounts may use a 4 or 6 digit PIN instead of a text password.
+                  </p>
+                )}
               </div>
             </div>
             <DialogFooter>

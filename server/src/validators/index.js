@@ -22,28 +22,55 @@ const ACTION_POINTS = [
 ];
 
 // ---------- Auth ----------
+// Everyone signs in with their email; admins may also use their phone number.
+const phonePattern = /^\+?[\d\s()-]{7,20}$/;
 const loginSchema = z.object({
-  email: z.string().email(),
+  identifier: z
+    .string()
+    .trim()
+    .min(1, 'Email or phone number is required')
+    .refine(
+      (value) => z.string().email().safeParse(value).success || phonePattern.test(value),
+      'Enter a valid email or phone number'
+    ),
   password: z.string().min(1, 'Password is required'),
 });
 
+// Admins may use a short numeric PIN (4 or 6 digits) as their password for
+// quick sign-in; every other role must use a text password of 8+ characters.
+const ADMIN_PIN_PATTERN = /^(\d{4}|\d{6})$/;
+const PASSWORD_RULE_MESSAGE =
+  'Password must be at least 8 characters, or a 4/6-digit PIN for admin accounts';
+const passwordAllowedFor = (role, password) =>
+  password.length >= 8 || (role === 'admin' && ADMIN_PIN_PATTERN.test(password));
+
 const changePasswordSchema = z.object({
   currentPassword: z.string().min(1),
-  newPassword: z.string().min(8, 'New password must be at least 8 characters'),
+  // Only a basic floor here — the role-aware rule needs the logged-in user's
+  // role, which the controller checks via passwordAllowedFor().
+  newPassword: z.string().min(4, PASSWORD_RULE_MESSAGE),
 });
 
 // ---------- Users ----------
-const createUserSchema = z.object({
+const createUserBase = z.object({
   name: z.string().min(2),
   email: z.string().email(),
   role: z.enum(['admin', 'sales_exec', 'pr_manager']),
   employeeCode: z.string().min(1).max(20).optional().or(z.literal('')),
   phone: z.string().max(20).optional().or(z.literal('')),
-  password: z.string().min(8, 'Password must be at least 8 characters'),
+  password: z.string().min(4, PASSWORD_RULE_MESSAGE),
 });
 
-const updateUserSchema = createUserSchema.partial().extend({
-  password: z.string().min(8).optional().or(z.literal('')),
+const createUserSchema = createUserBase.superRefine((data, ctx) => {
+  if (!passwordAllowedFor(data.role, data.password)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['password'], message: PASSWORD_RULE_MESSAGE });
+  }
+});
+
+const updateUserSchema = createUserBase.partial().extend({
+  // Role-aware check happens in the controller against the user's final role,
+  // since the role field may be absent (or changing) in an update.
+  password: z.string().min(4, PASSWORD_RULE_MESSAGE).optional().or(z.literal('')),
   isActive: z.boolean().optional(),
 });
 
@@ -315,6 +342,8 @@ const pushUnsubscribeSchema = z.object({
 module.exports = {
   objectId,
   BUSINESS_TYPES,
+  passwordAllowedFor,
+  PASSWORD_RULE_MESSAGE,
   loginSchema,
   changePasswordSchema,
   createUserSchema,
