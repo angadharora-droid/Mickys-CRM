@@ -37,7 +37,9 @@ const userSchema = new mongoose.Schema(
     role: { type: String, enum: ROLES, required: true, index: true },
     employeeCode: { type: String, trim: true, uppercase: true },
     phone: { type: String, trim: true },
-    password: { type: String, required: true, minlength: 8, select: false },
+    // Floor of 4 covers admin PINs; the role-aware rule (8+ chars for everyone,
+    // 4/6-digit PIN allowed for admins) is enforced in validators/controllers.
+    password: { type: String, required: true, minlength: 4, select: false },
     isActive: { type: Boolean, default: true },
     // Active login sessions (supports multiple devices, rotation + session timing).
     sessions: { type: [sessionSchema], default: [], select: false },

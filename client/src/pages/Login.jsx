@@ -9,10 +9,19 @@ import { apiError } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Eye, EyeOff, Loader2, ShieldCheck, Mail, Lock } from 'lucide-react';
+import { Eye, EyeOff, Loader2, ShieldCheck, UserRound, Lock } from 'lucide-react';
 
+// Mirrors the server rule: email for everyone, phone number for admins.
+const phonePattern = /^\+?[\d\s()-]{7,20}$/;
 const schema = z.object({
-  email: z.string().email('Enter a valid email address'),
+  identifier: z
+    .string()
+    .trim()
+    .min(1, 'Email or phone number is required')
+    .refine(
+      (value) => z.string().email().safeParse(value).success || phonePattern.test(value),
+      'Enter a valid email or phone number'
+    ),
   password: z.string().min(1, 'Password is required'),
 });
 
@@ -36,7 +45,7 @@ export default function Login() {
   const onSubmit = async (values) => {
     setSubmitting(true);
     try {
-      await login(values.email, values.password);
+      await login(values.identifier, values.password);
       toast.success('Welcome back!');
       navigate(location.state?.from?.pathname || '/', { replace: true });
     } catch (err) {
@@ -77,20 +86,24 @@ export default function Login() {
 
           <form onSubmit={handleSubmit(onSubmit)} className="mt-7 space-y-5">
             <div className="space-y-2">
-              <Label htmlFor="email">Email address</Label>
+              <Label htmlFor="identifier">Email or phone number</Label>
               <div className="relative">
-                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <UserRound className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
-                  id="email"
-                  type="email"
-                  inputMode="email"
-                  placeholder="you@mickys.com"
-                  autoComplete="email"
+                  id="identifier"
+                  type="text"
+                  placeholder="you@mickys.com or 98765 43210"
+                  autoComplete="username"
                   className="h-12 pl-10"
-                  {...register('email')}
+                  {...register('identifier')}
                 />
               </div>
-              {errors.email && <p className="text-sm text-destructive">{errors.email.message}</p>}
+              {errors.identifier && (
+                <p className="text-sm text-destructive">{errors.identifier.message}</p>
+              )}
+              <p className="text-xs text-muted-foreground">
+                Phone sign-in is available for admins only.
+              </p>
             </div>
 
             <div className="space-y-2">

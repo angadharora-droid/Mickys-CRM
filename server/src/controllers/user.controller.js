@@ -4,6 +4,7 @@ const User = require('../models/User');
 const { getPagination, buildMeta } = require('../utils/pagination');
 const { logActivity } = require('../services/activity.service');
 const { searchRegex } = require('../utils/sanitize');
+const { passwordAllowedFor, PASSWORD_RULE_MESSAGE } = require('../validators');
 
 // GET /api/users?role=&search=&isActive=&page=&limit=
 const listUsers = asyncHandler(async (req, res) => {
@@ -62,6 +63,11 @@ const updateUser = asyncHandler(async (req, res) => {
   if (!user) throw ApiError.notFound('User not found');
 
   const { password, ...rest } = req.body;
+  // Validate against the role the user will have after this update, since a
+  // role change and a password reset can arrive in the same request.
+  if (password && !passwordAllowedFor(rest.role || user.role, password)) {
+    throw ApiError.badRequest(PASSWORD_RULE_MESSAGE);
+  }
   Object.assign(user, rest);
   if (password) user.password = password;
   await user.save();
