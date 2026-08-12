@@ -3,6 +3,7 @@ const env = require('./config/env');
 const connectDB = require('./config/db');
 const { startMetaSync } = require('./services/metaSync.service');
 const { startFxSync } = require('./services/fx.service');
+const { startDailyReport } = require('./services/dailyReport.service');
 const { backfillLeadStates } = require('./scripts/backfill-states');
 const { backfillMetaUsage } = require('./scripts/backfill-meta-usage');
 
@@ -16,6 +17,8 @@ async function main() {
     startMetaSync();
     // Refresh the export-kit exchange rates daily, so cards never use stale FX.
     startFxSync();
+    // Email yesterday's activity digest to the report inbox every morning.
+    startDailyReport();
     // Heal legacy data: derive each lead's state from its city (idempotent, so
     // it costs nothing once the data is in shape). New leads set it on create.
     backfillLeadStates()

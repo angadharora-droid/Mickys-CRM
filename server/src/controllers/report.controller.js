@@ -2,6 +2,7 @@ const asyncHandler = require('../utils/asyncHandler');
 const ApiError = require('../utils/ApiError');
 const { logActivity } = require('../services/activity.service');
 const reportService = require('../services/report.service');
+const dailyReportService = require('../services/dailyReport.service');
 
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
@@ -65,4 +66,20 @@ const exportAll = asyncHandler(async (req, res) => {
   sendWorkbook(res, buffer, `mickys-all-reports_${ctx.fromStr}_to_${ctx.toStr}.xlsx`);
 });
 
-module.exports = { listReports, getReport, exportAll };
+// POST /api/reports/daily-email  { date?, to? }  (admin)
+// Sends the daily activity digest now — for the given IST day (default:
+// yesterday) — to the configured report inbox, or to `to` for a test send.
+const sendDailyEmail = asyncHandler(async (req, res) => {
+  const { date, to } = req.body || {};
+  const result = await dailyReportService.sendDailyReport({ dayKey: date, to: to || undefined });
+  if (result.skipped) {
+    throw ApiError.badRequest('Email is not configured — set up SMTP/Resend in Admin → Settings first');
+  }
+  await logActivity({
+    userId: req.user._id, action: 'DAILY_REPORT_SENT', entity: 'Report',
+    details: `Sent daily report for ${result.day} to ${result.to}`, ip: req.ip,
+  });
+  res.json({ success: true, data: { day: result.day, to: result.to, counts: result.counts } });
+});
+
+module.exports = { listReports, getReport, exportAll, sendDailyEmail };

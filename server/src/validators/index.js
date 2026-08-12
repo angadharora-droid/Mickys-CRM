@@ -322,6 +322,17 @@ const settingsSchema = z.object({
     .optional(),
 });
 
+// ---------- Daily report ----------
+// Manual "send now" trigger: an optional IST day (defaults to yesterday) and
+// an optional recipient override for test sends.
+const dailyReportEmailSchema = z.object({
+  date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD')
+    .optional(),
+  to: z.string().email().optional().or(z.literal('')),
+});
+
 // ---------- Web push ----------
 // Shape produced by PushSubscription.toJSON() in the browser; unknown extras
 // (expirationTime, …) are stripped by zod.
@@ -366,6 +377,7 @@ module.exports = {
   manualDeliverySchema,
   emailKitSchema,
   settingsSchema,
+  dailyReportEmailSchema,
   exportCountrySchema,
   exchangeRatesSchema,
   exportRateCardSchema,

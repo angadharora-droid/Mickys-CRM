@@ -115,6 +115,9 @@ router.post('/push/unsubscribe', authenticate, validate(v.pushUnsubscribeSchema)
 // ---------- Reports (role-scoped: execs see their own leads, admin sees all) ----------
 router.get('/reports', authenticate, reports.listReports);
 router.get('/reports/export/all', authenticate, reports.exportAll);
+// Manual "send now" for the automated daily digest (scheduled sends run
+// in-process — see dailyReport.service).
+router.post('/reports/daily-email', authenticate, authorize(ADMIN), emailLimiter, validate(v.dailyReportEmailSchema), reports.sendDailyEmail);
 router.get('/reports/:type', authenticate, reports.getReport);
 
 // ---------- Dashboards ----------

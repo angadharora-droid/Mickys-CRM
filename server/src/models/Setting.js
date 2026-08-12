@@ -55,6 +55,11 @@ const settingSchema = new mongoose.Schema(
         ].join('\n'),
       },
     },
+    // Daily email digest bookkeeping: the last IST day (YYYY-MM-DD) whose
+    // report was emailed, so restarts/redeploys never send a day twice.
+    dailyReport: {
+      lastSentDay: { type: String, default: '' },
+    },
     // Defaults merged into every generated kit's term sheet / quotation.
     kit: {
       defaultPaymentTerms: { type: String, default: '100% advance against proforma invoice.' },
