@@ -2,17 +2,21 @@ const fs = require('fs');
 const path = require('path');
 const env = require('../config/env');
 const Setting = require('../models/Setting');
+const EmailCredential = require('../models/EmailCredential');
+const ApiError = require('../utils/ApiError');
+const { decrypt } = require('../utils/credCrypto');
 const { escapeHtml } = require('../utils/sanitize');
 
 let resendClient = null; // cached Resend SDK instance
 
 /**
- * Resolves the active email provider from .env + DB settings (Admin > Settings).
- * Resend is preferred whenever RESEND_API_KEY is set; SMTP is the fallback.
- * Returns null when email is disabled/unconfigured so callers can skip silently.
+ * Resolves the shared company email provider from .env + DB settings
+ * (Admin > Settings). Resend is preferred whenever RESEND_API_KEY is set;
+ * SMTP is the fallback. Returns null when email is disabled/unconfigured so
+ * callers can skip silently.
  */
-async function getProvider() {
-  const settings = await Setting.getGlobal();
+async function getProvider(settings) {
+  settings = settings || (await Setting.getGlobal());
   const dbEmail = settings.email || {};
   if (dbEmail.enabled === false) return null; // admin kill-switch
 
@@ -53,6 +57,53 @@ async function getProvider() {
   }
 
   return null;
+}
+
+/**
+ * Resolves a user's linked official mailbox (Email settings) into an SMTP
+ * provider, or null when they haven't linked one. Throws when the stored
+ * password can't be decrypted (e.g. CRED_ENCRYPTION_KEY was rotated) so a
+ * stale credential fails loudly instead of silently sending from the wrong
+ * account.
+ */
+async function getUserProvider(userId) {
+  if (!userId) return null;
+  const cred = await EmailCredential.findOne({ userId }).select('+passEnc');
+  if (!cred) return null;
+  let pass;
+  try {
+    pass = decrypt(cred.passEnc);
+  } catch (err) {
+    console.error(`[email] failed to decrypt linked mailbox for user ${userId}: ${err.message}`);
+    throw ApiError.badRequest(
+      'Your linked mailbox could not be used — the stored password is unreadable. Re-link it under Email settings.'
+    );
+  }
+  return {
+    type: 'smtp',
+    personal: true,
+    email: cred.email,
+    from: cred.email,
+    smtp: {
+      host: cred.host,
+      port: cred.port,
+      secure: cred.secure,
+      // On STARTTLS ports (secure=false) refuse to fall back to plaintext —
+      // the mailbox password must never cross the wire unencrypted.
+      requireTLS: !cred.secure,
+      auth: { user: cred.email, pass },
+    },
+  };
+}
+
+/**
+ * Whether the shared company account can send, and its from-address — used by
+ * the Email settings page and the send dialog to show who a mail would go
+ * out as.
+ */
+async function sharedMailboxStatus() {
+  const provider = await getProvider();
+  return { configured: !!provider, email: provider ? addressOf(provider.from) : '' };
 }
 
 // Resend wants attachment bytes inline; read any local file path into a Buffer.
@@ -99,14 +150,31 @@ async function sendViaSmtp(provider, { from, to, subject, html, attachments, rep
   return info.messageId;
 }
 
-async function sendMail({ to, subject, html, attachments = [], replyTo, fromName, cc, bcc }) {
-  const provider = await getProvider();
-  if (!provider) {
-    console.warn(`[email] skipped "${subject}" — email provider not configured`);
-    return { skipped: true };
+async function sendMail({ to, subject, html, attachments = [], replyTo, fromName, cc, bcc, senderUser }) {
+  const settings = await Setting.getGlobal();
+  if ((settings.email || {}).enabled === false) {
+    console.warn(`[email] skipped "${subject}" — email is disabled in Settings`);
+    return { skipped: true, reason: 'disabled' };
   }
-  // Keep the verified/authenticated sending address but show the exec's name when provided.
-  const from = fromName ? `"${fromName}" <${addressOf(provider.from)}>` : provider.from;
+
+  // A linked personal mailbox wins for user-triggered emails: the message goes
+  // out from the sender's own official account so replies land in their inbox.
+  let provider = senderUser ? await getUserProvider(senderUser._id) : null;
+  let from;
+  if (provider) {
+    const safeName = String(senderUser.name || '').replace(/["\\]/g, '').trim();
+    from = safeName ? `"${safeName}" <${provider.email}>` : provider.email;
+  } else {
+    provider = await getProvider(settings);
+    if (provider) {
+      // Keep the verified/authenticated sending address but show the exec's name when provided.
+      from = fromName ? `"${fromName}" <${addressOf(provider.from)}>` : provider.from;
+    }
+  }
+  if (!provider) {
+    console.warn(`[email] skipped "${subject}" — no email provider configured`);
+    return { skipped: true, reason: 'not-configured' };
+  }
   const payload = { from, to, subject, html, attachments, replyTo, cc, bcc };
 
   const messageId =
@@ -114,8 +182,15 @@ async function sendMail({ to, subject, html, attachments = [], replyTo, fromName
       ? await sendViaResend(provider, payload)
       : await sendViaSmtp(provider, payload);
 
-  console.log(`[email] sent "${subject}" to ${to} via ${provider.type} (${messageId})`);
-  return { skipped: false, messageId, provider: provider.type };
+  const via = provider.personal ? 'personal mailbox' : provider.type;
+  console.log(`[email] sent "${subject}" to ${to} via ${via} (${messageId})`);
+  return {
+    skipped: false,
+    messageId,
+    provider: provider.type,
+    from: addressOf(from),
+    sentVia: provider.personal ? 'personal' : 'company',
+  };
 }
 
 // Extracts the bare address from a "Name <addr@host>" or plain "addr@host" string.
@@ -125,13 +200,14 @@ function addressOf(from) {
 }
 
 /**
- * Sends a generated sales kit to the client. Uses the shared SMTP account but
- * presents the assigned exec as the sender (From name + Reply-To) so client
- * replies reach them. The kit inbox is BCC'd for record-keeping. Each kit
- * document is attached separately (as its own PDF). Skips silently when no
- * email provider is configured.
+ * Sends a generated sales kit to the client. Sent from the acting user's
+ * linked official mailbox when they've set one up under Email settings (so
+ * the From address is genuinely theirs and replies reach them); otherwise it
+ * falls back to the shared company account, presenting the assigned exec as
+ * the sender (From name + Reply-To). The kit inbox is BCC'd for
+ * record-keeping. Each kit document is attached separately (as its own PDF).
  */
-async function sendKitEmail({ lead, exec, to, cc, subject, message, files = [], bcc }) {
+async function sendKitEmail({ lead, exec, actingUser, to, cc, subject, message, files = [], bcc }) {
   const recipient = to || lead.email;
   if (!recipient) return { skipped: true, reason: 'No recipient email' };
 
@@ -179,6 +255,9 @@ async function sendKitEmail({ lead, exec, to, cc, subject, message, files = [], 
     bcc,
     subject: resolvedSubject,
     html,
+    // The acting user's linked mailbox (if any) takes over as the real sender;
+    // fromName/replyTo only shape the shared-account fallback.
+    senderUser: actingUser,
     fromName: exec?.name ? `${exec.name} via Micky's` : undefined,
     replyTo: exec?.email || undefined,
     attachments,
@@ -197,4 +276,4 @@ async function sendKitEmail({ lead, exec, to, cc, subject, message, files = [], 
   };
 }
 
-module.exports = { sendMail, sendKitEmail };
+module.exports = { sendMail, sendKitEmail, sharedMailboxStatus };

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import api, { apiError } from '@/lib/api';
 import {
@@ -172,6 +172,7 @@ export default function LeadDetail() {
   const [deliverNote, setDeliverNote] = useState('');
   const [deliverOpen, setDeliverOpen] = useState(false);
   const [viewEmail, setViewEmail] = useState(null); // an emailLog entry being previewed
+  const [mailbox, setMailbox] = useState(null); // /email-settings status: which account kit emails go out from
   const [previewFile, setPreviewFile] = useState(null);
   const [noteDraft, setNoteDraft] = useState('');
   const [editingNote, setEditingNote] = useState(false);
@@ -214,6 +215,11 @@ export default function LeadDetail() {
   }, [id, navigate]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Who would a kit email go out as? Shown up front in the send form.
+  useEffect(() => {
+    api.get('/email-settings').then(({ data }) => setMailbox(data.data)).catch(() => {});
+  }, []);
 
   // Go back to wherever the user came from so the leads list keeps its filters &
   // page; fall back to the list when this page was opened directly (no history).
@@ -1901,7 +1907,31 @@ export default function LeadDetail() {
                 <Label>Message</Label>
                 <Textarea rows={5} value={emailForm.message} onChange={(e) => setEmailForm((f) => ({ ...f, message: e.target.value }))} />
               </div>
-              <p className="text-xs text-muted-foreground">This is a preview — edit the subject and message above before sending. The reference details and attached documents are added automatically. Sent from the system account with your name and reply-to.</p>
+              <p className="text-xs text-muted-foreground">This is a preview — edit the subject and message above before sending. The reference details and attached documents are added automatically.</p>
+              {mailbox && (
+                mailbox.linked ? (
+                  <p className="text-xs flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400">
+                    <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                    Sent from your mailbox ({mailbox.email})
+                  </p>
+                ) : mailbox.company?.configured ? (
+                  <p className="text-xs text-muted-foreground flex items-start gap-1.5">
+                    <Mail className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                    <span>
+                      Sent from the company mailbox{mailbox.company.email ? ` (${mailbox.company.email})` : ''} —{' '}
+                      <Link to="/email-settings" className="underline underline-offset-2 hover:text-foreground">link your official ID</Link> under Email settings to send from your own address.
+                    </span>
+                  </p>
+                ) : (
+                  <p className="text-xs text-destructive flex items-start gap-1.5">
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                    <span>
+                      No email account available —{' '}
+                      <Link to="/email-settings" className="underline underline-offset-2">link your official mailbox in Email settings</Link> before sending.
+                    </span>
+                  </p>
+                )
+              )}
               <div className="flex flex-wrap items-center gap-3">
                 <Button onClick={sendEmail} disabled={action === 'email'}>
                   {action === 'email' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
@@ -2128,6 +2158,12 @@ export default function LeadDetail() {
           {viewEmail && (
             <div className="space-y-3 text-sm">
               <div className="grid gap-1 text-xs text-muted-foreground">
+                {viewEmail.from && (
+                  <p>
+                    <span className="font-medium text-foreground">From:</span> {viewEmail.from}
+                    {viewEmail.sentVia === 'personal' ? ' (sender’s mailbox)' : viewEmail.sentVia === 'company' ? ' (company mailbox)' : ''}
+                  </p>
+                )}
                 <p><span className="font-medium text-foreground">To:</span> {viewEmail.to || '—'}</p>
                 {viewEmail.cc?.length > 0 && (
                   <p><span className="font-medium text-foreground">CC:</span> {viewEmail.cc.join(', ')}</p>

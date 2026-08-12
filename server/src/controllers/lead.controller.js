@@ -1505,6 +1505,7 @@ const emailKit = asyncHandler(async (req, res) => {
   const [exec, settings] = await Promise.all([User.findById(lead.assignedExecId), Setting.getGlobal()]);
   const result = await sendKitEmail({
     lead, exec,
+    actingUser: req.user, // their linked mailbox (if any) becomes the sender
     to: req.body.to || lead.email,
     cc: cc.length ? cc : undefined,
     subject: req.body.subject,
@@ -1516,7 +1517,9 @@ const emailKit = asyncHandler(async (req, res) => {
     throw ApiError.badRequest(
       result.reason === 'No recipient email'
         ? 'No recipient email on this lead.'
-        : 'Email is not configured. Set RESEND_API_KEY or SMTP_* in the server .env (or SMTP in Settings).'
+        : result.reason === 'disabled'
+          ? 'Email sending is disabled in Settings.'
+          : 'No email account is available. Link your official mailbox under Email settings (user menu), or ask an admin to configure the company account.'
     );
   }
 
@@ -1534,6 +1537,8 @@ const emailKit = asyncHandler(async (req, res) => {
   // attachment names) so it can be reviewed in-app without a mailbox copy.
   lead.emailLog.push({
     to: result.to || req.body.to || lead.email,
+    from: result.from || '',
+    sentVia: result.sentVia || '',
     cc: result.cc || cc || [],
     bcc: result.bcc || [],
     subject: result.subject || req.body.subject || '',

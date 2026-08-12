@@ -26,7 +26,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Moon, Sun, LogOut, KeyRound, ChevronDown, Bell, BellOff, BellRing, Share, SquarePlus } from 'lucide-react';
+import { Moon, Sun, LogOut, KeyRound, ChevronDown, Bell, BellOff, BellRing, Share, SquarePlus, Mail } from 'lucide-react';
 import NotificationBell from './NotificationBell';
 
 function greeting() {
@@ -171,6 +171,9 @@ export default function Header() {
             <DropdownMenuItem onClick={togglePush} disabled={pushBusy}>
               {pushStatus === 'enabled' ? <BellOff /> : <Bell />}
               {pushStatus === 'enabled' ? 'Disable notifications' : 'Enable notifications'}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => navigate('/email-settings')}>
+              <Mail /> Email settings
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => navigate('/change-password')}>
               <KeyRound /> Change password

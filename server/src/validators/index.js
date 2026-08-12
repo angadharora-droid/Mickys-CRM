@@ -214,6 +214,29 @@ const emailKitSchema = z.object({
   message: z.string().max(8000).optional().or(z.literal('')),
 });
 
+// ---------- Per-user linked mailbox (Email settings) ----------
+// Preset providers resolve host/port/secure on the server; only "custom"
+// takes a free-form host/port from the client.
+const emailSettingsSchema = z
+  .object({
+    provider: z.enum(['rediffmail', 'hostinger', 'gmail', 'custom']),
+    email: z.string().trim().email('Enter a valid email address'),
+    password: z.string().min(1, 'Mailbox password is required').max(200),
+    host: z.string().trim().max(255).optional().or(z.literal('')),
+    port: z.coerce.number().int().min(1).max(65535).optional(),
+    secure: z.boolean().optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.provider === 'custom') {
+      if (!data.host) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['host'], message: 'SMTP host is required for a custom provider' });
+      }
+      if (!data.port) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['port'], message: 'SMTP port is required for a custom provider' });
+      }
+    }
+  });
+
 // ---------- Export kit ----------
 const exportCountrySchema = z.object({
   name: z.string().min(2, 'Country name is required'),
@@ -376,6 +399,7 @@ module.exports = {
   closeFollowUpSchema,
   manualDeliverySchema,
   emailKitSchema,
+  emailSettingsSchema,
   settingsSchema,
   dailyReportEmailSchema,
   exportCountrySchema,

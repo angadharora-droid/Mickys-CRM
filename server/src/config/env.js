@@ -57,6 +57,10 @@ const env = {
     maxAttempts: parseInt(process.env.LOGIN_MAX_ATTEMPTS || '8', 10),
     lockMs: parseInt(process.env.LOGIN_LOCK_MINUTES || '15', 10) * 60 * 1000,
   },
+  // Symmetric key for reversibly encrypting linked-mailbox SMTP passwords
+  // (utils/credCrypto.js). Required in production before users can link their
+  // official email accounts; any long random string works.
+  credEncryptionKey: process.env.CRED_ENCRYPTION_KEY || '',
   // Resend is preferred when RESEND_API_KEY is set; SMTP is the fallback.
   resend: {
     apiKey: process.env.RESEND_API_KEY || '',
