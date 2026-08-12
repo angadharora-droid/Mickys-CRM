@@ -87,6 +87,14 @@ const env = {
     intervalHours: parseInt(process.env.FX_SYNC_INTERVAL_HOURS || '24', 10),
     apiUrl: process.env.FX_API_URL || 'https://open.er-api.com/v6/latest/INR',
   },
+  // Daily activity digest emailed every morning with yesterday's numbers
+  // (IST). On by default; set DAILY_REPORT_ENABLED=false to turn it off.
+  dailyReport: {
+    enabled: process.env.DAILY_REPORT_ENABLED !== 'false',
+    to: process.env.DAILY_REPORT_TO || 'report@cpgh.in',
+    hourIst: parseInt(process.env.DAILY_REPORT_HOUR_IST || '8', 10),
+    minuteIst: parseInt(process.env.DAILY_REPORT_MINUTE_IST || '0', 10),
+  },
 };
 
 module.exports = env;
