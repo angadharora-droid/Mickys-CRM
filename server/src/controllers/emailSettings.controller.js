@@ -3,7 +3,7 @@ const asyncHandler = require('../utils/asyncHandler');
 const ApiError = require('../utils/ApiError');
 const EmailCredential = require('../models/EmailCredential');
 const { encrypt } = require('../utils/credCrypto');
-const { sharedMailboxStatus } = require('../services/email.service');
+const { sharedMailboxStatus, emailDomain } = require('../services/email.service');
 const { logActivity } = require('../services/activity.service');
 
 /**
@@ -74,6 +74,9 @@ const updateEmailSettings = asyncHandler(async (req, res) => {
     host,
     port,
     secure,
+    // Same EHLO hostname the real sends use — strict servers (Rediffmail Pro)
+    // reject the container's own hostname with "550 Invalid HeloHost".
+    name: emailDomain(email),
     requireTLS: !secure, // STARTTLS ports must still never send the password in the clear
     auth: { user: email, pass: password },
     connectionTimeout: 10_000,
