@@ -10,6 +10,18 @@ const { escapeHtml } = require('../utils/sanitize');
 let resendClient = null; // cached Resend SDK instance
 
 /**
+ * Domain part of an email address, used as the SMTP EHLO/HELO hostname.
+ * Strict MTAs (Rediffmail Pro among them) reject the hostname the container
+ * reports — on Railway that's an internal container ID, not a public FQDN —
+ * with "550 Invalid HeloHost", so we present the mailbox's own domain instead.
+ */
+function emailDomain(addr) {
+  const at = String(addr || '').lastIndexOf('@');
+  const domain = at > -1 ? addr.slice(at + 1).trim() : '';
+  return domain.includes('.') ? domain : undefined; // undefined → nodemailer default
+}
+
+/**
  * Resolves the shared company email provider from .env + DB settings
  * (Admin > Settings). Resend is preferred whenever RESEND_API_KEY is set;
  * SMTP is the fallback. Returns null when email is disabled/unconfigured so
@@ -37,6 +49,7 @@ async function getProvider(settings) {
         host: dbEmail.host,
         port: dbEmail.port || 587,
         secure: !!dbEmail.secure,
+        name: emailDomain(dbEmail.user) || emailDomain(from),
         auth: { user: dbEmail.user, pass: dbEmail.pass },
       },
     };
@@ -51,6 +64,7 @@ async function getProvider(settings) {
         host: env.smtp.host,
         port: env.smtp.port,
         secure: env.smtp.secure,
+        name: emailDomain(env.smtp.user) || emailDomain(from),
         auth: { user: env.smtp.user, pass: env.smtp.pass },
       },
     };
@@ -88,6 +102,7 @@ async function getUserProvider(userId) {
       host: cred.host,
       port: cred.port,
       secure: cred.secure,
+      name: emailDomain(cred.email),
       // On STARTTLS ports (secure=false) refuse to fall back to plaintext —
       // the mailbox password must never cross the wire unencrypted.
       requireTLS: !cred.secure,
@@ -130,24 +145,30 @@ async function sendViaResend(provider, { from, to, subject, html, attachments, r
     html,
     attachments: resendAttachments.length ? resendAttachments : undefined,
   });
-  if (error) throw new Error(`Resend send failed: ${error.message || JSON.stringify(error)}`);
+  if (error) throw ApiError.badRequest(`Resend refused the message: ${error.message || JSON.stringify(error)}`);
   return data?.id;
 }
 
 async function sendViaSmtp(provider, { from, to, subject, html, attachments, replyTo, cc, bcc }) {
   const nodemailer = require('nodemailer');
   const transporter = nodemailer.createTransport(provider.smtp);
-  const info = await transporter.sendMail({
-    from,
-    to,
-    cc: cc || undefined,
-    bcc: bcc || undefined,
-    replyTo: replyTo || undefined,
-    subject,
-    html,
-    attachments,
-  });
-  return info.messageId;
+  try {
+    const info = await transporter.sendMail({
+      from,
+      to,
+      cc: cc || undefined,
+      bcc: bcc || undefined,
+      replyTo: replyTo || undefined,
+      subject,
+      html,
+      attachments,
+    });
+    return info.messageId;
+  } catch (err) {
+    // Surface the SMTP server's own words as an operational 400 — otherwise a
+    // user-triggered send failure shows up as an opaque "Internal server error".
+    throw ApiError.badRequest(`The mail server refused the message: ${err.response || err.message}`);
+  }
 }
 
 async function sendMail({ to, subject, html, attachments = [], replyTo, fromName, cc, bcc, senderUser }) {
@@ -276,4 +297,4 @@ async function sendKitEmail({ lead, exec, actingUser, to, cc, subject, message, 
   };
 }
 
-module.exports = { sendMail, sendKitEmail, sharedMailboxStatus };
+module.exports = { sendMail, sendKitEmail, sharedMailboxStatus, emailDomain };
