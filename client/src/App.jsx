@@ -17,6 +17,7 @@ import ExportKit from '@/pages/export/ExportKit';
 import UsersPage from '@/pages/users/Users';
 import ActivityLogs from '@/pages/ActivityLogs';
 import ChangePassword from '@/pages/ChangePassword';
+import EmailSettings from '@/pages/EmailSettings';
 import NotFound from '@/pages/NotFound';
 
 export default function App() {
@@ -95,6 +96,7 @@ export default function App() {
           }
         />
         <Route path="/change-password" element={<ChangePassword />} />
+        <Route path="/email-settings" element={<EmailSettings />} />
       </Route>
 
       <Route path="/404" element={<NotFound />} />

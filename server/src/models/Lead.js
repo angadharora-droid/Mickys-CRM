@@ -191,6 +191,8 @@ const generatedFileSchema = new mongoose.Schema(
 const emailLogSchema = new mongoose.Schema(
   {
     to: { type: String, default: '' },
+    from: { type: String, default: '' }, // actual From address the mail went out as
+    sentVia: { type: String, default: '' }, // 'personal' (linked mailbox) | 'company' (shared account)
     cc: { type: [String], default: [] },
     bcc: { type: [String], default: [] },
     subject: { type: String, default: '' },

@@ -13,6 +13,7 @@ const leads = require('../controllers/lead.controller');
 const dashboard = require('../controllers/dashboard.controller');
 const activity = require('../controllers/activity.controller');
 const settings = require('../controllers/settings.controller');
+const emailSettings = require('../controllers/emailSettings.controller');
 const exportKit = require('../controllers/export.controller');
 const pushCtrl = require('../controllers/push.controller');
 const notifications = require('../controllers/notification.controller');
@@ -127,6 +128,13 @@ router.get('/dashboard/exec', authenticate, authorize(EXEC, PR), dashboard.execA
 
 // ---------- Activity Logs ----------
 router.get('/activity-logs', authenticate, authorize(ADMIN), activity.listLogs);
+
+// ---------- Per-user linked mailbox (Email settings; any signed-in user, own
+// account only). PUT verifies the SMTP login live, so it shares the email
+// rate limit.
+router.get('/email-settings', authenticate, emailSettings.getEmailSettings);
+router.put('/email-settings', authenticate, emailLimiter, validate(v.emailSettingsSchema), emailSettings.updateEmailSettings);
+router.delete('/email-settings', authenticate, emailSettings.deleteEmailSettings);
 
 // ---------- Settings ----------
 router.get('/settings', authenticate, authorize(ADMIN), settings.getSettings);
