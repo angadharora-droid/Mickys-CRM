@@ -1912,13 +1912,13 @@ export default function LeadDetail() {
                 mailbox.linked ? (
                   <p className="text-xs flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400">
                     <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-                    Sent from your mailbox ({mailbox.email})
+                    Will be sent from your mailbox ({mailbox.email})
                   </p>
                 ) : mailbox.company?.configured ? (
                   <p className="text-xs text-muted-foreground flex items-start gap-1.5">
                     <Mail className="h-3.5 w-3.5 shrink-0 mt-0.5" />
                     <span>
-                      Sent from the company mailbox{mailbox.company.email ? ` (${mailbox.company.email})` : ''} —{' '}
+                      Will be sent from the company mailbox{mailbox.company.email ? ` (${mailbox.company.email})` : ''} —{' '}
                       <Link to="/email-settings" className="underline underline-offset-2 hover:text-foreground">link your official ID</Link> under Email settings to send from your own address.
                     </span>
                   </p>
