@@ -107,10 +107,23 @@ export const KIT_DOCS = {
     "Micky's Brochure",
   ],
   export: [
-    'Export Rate Card',
+    'Standard FOB Price List',
     "Micky's Brochure",
   ],
 };
+
+// Terms for the export kit's FOB pricing (mirrors the server's
+// Setting.export.fobRateCardTerms default — the workbook's standard
+// quotation conditions). Export kits quote FOB only.
+export const DEFAULT_FOB_TERMS = [
+  'Prices are FOB Nhava Sheva, Incoterms® 2020 — ocean freight and insurance are quoted separately based on destination port and booking date.',
+  'Rates are based on one standard mixed-load consignment with approximately 18 MT saleable payload per FCL.',
+  'Minimum commercial order: one mixed-load FCL, subject to minimum SKU quantities.',
+  'Rates are valid for 15 days and subject to exchange-rate and statutory-cost changes.',
+  'The final proforma invoice may be adjusted if actual container utilisation is materially below the standard payload.',
+  'Exports are zero-rated under GST (supply under LUT); prices exclude destination-country duties, taxes and clearance charges.',
+  'Subject to Nagpur jurisdiction.',
+];
 
 /**
  * Default Terms & Conditions pre-filled in the Step 3 review (one clause per
@@ -146,28 +159,9 @@ export const DEFAULT_KIT_TERMS = {
     'All disputes subject to Nagpur jurisdiction.',
     'This quotation does not constitute a binding order confirmation.',
   ],
-  // Mirrors the server's Setting.export.rateCardTerms default.
-  export: [
-    "Rates are quoted per pack and include the shipment's apportioned logistics as itemised on this card.",
-    'Exports are zero-rated under GST (supply under LUT); prices exclude destination-country duties, taxes and clearance charges.',
-    'Rates are indicative until confirmed by proforma invoice and are valid for 15 days from the card date.',
-    'Exchange rate as printed on this card; final invoicing at the rate prevailing on the invoice date.',
-    'Subject to Nagpur jurisdiction.',
-  ],
+  // Export kits are FOB-only: the standard FOB quotation conditions.
+  export: DEFAULT_FOB_TERMS,
 };
-
-// Terms for the export kit's FOB rate type (mirrors the server's
-// Setting.export.fobRateCardTerms default — the workbook's standard
-// quotation conditions).
-export const DEFAULT_FOB_TERMS = [
-  'Prices are FOB Nhava Sheva, Incoterms® 2020 — ocean freight and insurance are quoted separately based on destination port and booking date.',
-  'Rates are based on one standard mixed-load consignment with approximately 18 MT saleable payload per FCL.',
-  'Minimum commercial order: one mixed-load FCL, subject to minimum SKU quantities.',
-  'Rates are valid for 15 days and subject to exchange-rate and statutory-cost changes.',
-  'The final proforma invoice may be adjusted if actual container utilisation is materially below the standard payload.',
-  'Exports are zero-rated under GST (supply under LUT); prices exclude destination-country duties, taxes and clearance charges.',
-  'Subject to Nagpur jurisdiction.',
-];
 
 export const DEFAULT_DISTRIBUTOR_AGREEMENT_TERMS = [
   ["Company Name", "MICKY'S BY CP FOODS"],

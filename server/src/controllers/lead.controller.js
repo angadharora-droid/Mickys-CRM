@@ -705,8 +705,13 @@ const confirmExportConfig = asyncHandler(async (req, res) => {
   assertNotLocked(lead);
   if (lead.kitType !== 'export') throw ApiError.badRequest('Select the export kit before configuring a shipment');
 
-  const country = await ExportCountry.findById(countryId);
-  if (!country || !country.isActive) throw ApiError.badRequest('Unknown or inactive destination country');
+  // FOB shipments are destination-independent (FOB Nhava Sheva) — no country
+  // is collected for them; the destination-priced rate types require one.
+  let country = null;
+  if (rateType !== 'fob' || countryId) {
+    country = await ExportCountry.findById(countryId);
+    if (!country || !country.isActive) throw ApiError.badRequest('Unknown or inactive destination country');
+  }
 
   // Resolve + validate every line against the backing master. Weights default
   // to the parsed pack size; a rate override is bounded by MRP like the
@@ -794,11 +799,11 @@ const confirmExportConfig = asyncHandler(async (req, res) => {
     loadingType,
     containerSize: loadingType === 'full' ? containerSize : '',
     currency,
-    countryId: country._id,
-    countryName: country.name,
-    countryCode: country.code,
-    cirPercent: country.cirPercent,
-    partLoadFreightPerKg: country.partLoadFreightPerKg,
+    countryId: country?._id,
+    countryName: country?.name || '',
+    countryCode: country?.code || '',
+    cirPercent: country?.cirPercent || 0,
+    partLoadFreightPerKg: country?.partLoadFreightPerKg || 0,
   };
   applyCustomTerms(lead, customTerms);
   if (edits.length) lead.rateEditLog.push(...edits);
@@ -814,7 +819,7 @@ const confirmExportConfig = asyncHandler(async (req, res) => {
   lead.statusHistory.push({
     from, to: 'rates_confirmed', changedBy: req.user._id,
     note:
-      `Export shipment: ${country.name} · ` +
+      `Export shipment: ${country ? `${country.name} · ` : ''}` +
       `${rateType === 'fob'
         ? `FOB (${card.config.fob?.label || 'standard mixed load'})`
         : loadingType === 'full' ? `full load (${card.config.container?.label || containerSize})` : 'part load'} · ` +
@@ -825,7 +830,7 @@ const confirmExportConfig = asyncHandler(async (req, res) => {
   await logActivity({
     userId: req.user._id, action: 'LEAD_RATES_CONFIRMED', entity: 'Lead', entityId: lead._id,
     details:
-      `${lead.refNumber}: confirmed export shipment to ${country.name} ` +
+      `${lead.refNumber}: confirmed export shipment${country ? ` to ${country.name}` : ' (FOB)'} ` +
       `(${lead.rates.length} product(s), ${currency}${edits.length ? `, ${edits.length} rate override(s)` : ''})`,
     ip: req.ip,
   });

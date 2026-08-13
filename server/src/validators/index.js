@@ -278,22 +278,32 @@ const requireContainerOnFullLoad = [
   { message: 'Container size is required for a full-load shipment', path: ['containerSize'] },
 ];
 
+// FOB prices are destination-independent (FOB Nhava Sheva), so no country is
+// collected for them; the destination-priced rate types still require one.
+const requireCountryOffFob = [
+  (v) => v.rateType === 'fob' || Boolean(v.countryId),
+  { message: 'Destination country is required', path: ['countryId'] },
+];
+
 const exportShipmentBase = z.object({
   rateType: z.enum(['distributor', 'institution', 'fob']),
   loadingType: z.enum(['full', 'part']),
   containerSize: z.enum(['ft20', 'ft40']).optional(),
-  countryId: objectId,
+  countryId: objectId.optional(),
   currency: z.enum(['USD', 'EUR', 'GBP', 'INR']),
   lines: z.array(exportLineSchema).min(1, 'Select at least one product'),
 });
 
 // Standalone computation (the live preview shown in the export step).
-const exportRateCardSchema = exportShipmentBase.refine(...requireContainerOnFullLoad);
+const exportRateCardSchema = exportShipmentBase
+  .refine(...requireContainerOnFullLoad)
+  .refine(...requireCountryOffFob);
 
 // Confirming an export lead's shipment (may carry edited T&C for the card).
 const exportConfirmSchema = exportShipmentBase
   .extend({ customTerms: customTermsSchema.optional() })
-  .refine(...requireContainerOnFullLoad);
+  .refine(...requireContainerOnFullLoad)
+  .refine(...requireCountryOffFob);
 
 // ---------- Settings ----------
 const exportContainerSchema = z.object({
