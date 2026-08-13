@@ -74,6 +74,10 @@ const env = {
     from: process.env.EMAIL_FROM || "Micky's Sales <no-reply@mickys.com>",
   },
   maxFileSizeMb: parseInt(process.env.MAX_FILE_SIZE_MB || '10', 10),
+  // Shared secret for the Tally-side stock push agent (X-Tally-Key header on
+  // POST /api/stock/sync). Empty disables key-based sync — manual admin
+  // upload in the dashboard still works.
+  tallySyncKey: process.env.TALLY_SYNC_KEY || '',
   // Meta Ads lead-form sheet poller. On by default so a fresh deploy keeps
   // pulling leads without any external scheduler; set META_SYNC_ENABLED=false
   // to turn it off, or run it by hand with `npm run sync:meta`.

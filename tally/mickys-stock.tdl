@@ -1,0 +1,147 @@
+;; =====================================================================
+;;  Mickys CRM  -  Tally Prime Stock Data Export TDL
+;; ---------------------------------------------------------------------
+;;  What this does:
+;;    * Defines a report "MickysStockReport" that the CRM backend can
+;;      pull over Tally's XML/HTTP gateway (the port shown in
+;;      Client/Server configuration - 9001 in our setup).
+;;    * For every stock item it returns: group, category, base unit,
+;;      opening qty/rate/value, inward qty/value, outward qty/value,
+;;      closing qty/rate/value, standard cost and standard price.
+;;    * Opening figures respect SVFROMDATE and closing figures respect
+;;      SVTODATE sent in the request, so the same report also answers
+;;      "stock as on <date>".
+;;
+;;  How to load in Tally Prime:
+;;    1. Copy this file to a permanent folder, e.g. C:\Tally\tdl\
+;;    2. In Tally Prime: F1 (Help) > TDLs & AddOns > F4 (Manage Local
+;;       TDLs) > "Load selected TDL files on startup" = Yes > enter the
+;;       full path of this file > Ctrl+A to save.
+;;    3. "Mickys Stock Export" now appears in Gateway of Tally, so you
+;;       can eyeball the data inside Tally itself.
+;;
+;;  How to query it:
+;;    POST tally/sample-stock-request.xml to http://<tally-pc>:9001
+;;    (see tally/README.md for the exact commands)
+;; =====================================================================
+
+;; ---- Optional menu entry: view the report inside Tally itself -------
+[#Menu: Gateway of Tally]
+    Add : Key Item : Mickys Stock Export : M : Display : MickysStockReport
+
+;; --------------------------- Report shell ----------------------------
+[Report: MickysStockReport]
+    Forms : MickysStockForm
+    Title : "Mickys Stock Export"
+
+[Form: MickysStockForm]
+    Parts  : MickysStockPart
+    XMLTag : "MICKYSSTOCK"
+
+[Part: MickysStockPart]
+    Lines    : MickysStockLine
+    Repeat   : MickysStockLine : MickysStockItems
+    Scrolled : Vertical
+
+;; One repeated line per stock item -> one <STOCKITEM> element each
+[Line: MickysStockLine]
+    Fields : MSItemName, MSItemGroup, MSItemCategory, MSItemUnits
+    Fields : MSOpeningQty, MSOpeningRate, MSOpeningValue
+    Fields : MSInwardQty, MSInwardValue
+    Fields : MSOutwardQty, MSOutwardValue
+    Fields : MSClosingQty, MSClosingRate, MSClosingValue
+    Fields : MSStdCost, MSStdPrice
+    XMLTag : "STOCKITEM"
+
+;; ----------------------------- Fields --------------------------------
+[Field: MSItemName]
+    Type   : String
+    Set as : $Name
+    XMLTag : "NAME"
+
+[Field: MSItemGroup]
+    Type   : String
+    Set as : $Parent
+    XMLTag : "GROUP"
+
+[Field: MSItemCategory]
+    Type   : String
+    Set as : $Category
+    XMLTag : "CATEGORY"
+
+[Field: MSItemUnits]
+    Type   : String
+    Set as : $BaseUnits
+    XMLTag : "BASEUNITS"
+
+;; Opening position (as on SVFROMDATE)
+[Field: MSOpeningQty]
+    Type   : Quantity
+    Set as : $OpeningBalance
+    XMLTag : "OPENINGQTY"
+
+[Field: MSOpeningRate]
+    Type   : Rate
+    Set as : $OpeningRate
+    XMLTag : "OPENINGRATE"
+
+[Field: MSOpeningValue]
+    Type   : Amount
+    Set as : $OpeningValue
+    XMLTag : "OPENINGVALUE"
+
+;; Movement within SVFROMDATE..SVTODATE
+[Field: MSInwardQty]
+    Type   : Quantity
+    Set as : $InwardQuantity
+    XMLTag : "INWARDQTY"
+
+[Field: MSInwardValue]
+    Type   : Amount
+    Set as : $InwardValue
+    XMLTag : "INWARDVALUE"
+
+[Field: MSOutwardQty]
+    Type   : Quantity
+    Set as : $OutwardQuantity
+    XMLTag : "OUTWARDQTY"
+
+[Field: MSOutwardValue]
+    Type   : Amount
+    Set as : $OutwardValue
+    XMLTag : "OUTWARDVALUE"
+
+;; Closing position (as on SVTODATE)
+[Field: MSClosingQty]
+    Type   : Quantity
+    Set as : $ClosingBalance
+    XMLTag : "CLOSINGQTY"
+
+[Field: MSClosingRate]
+    Type   : Rate
+    Set as : $ClosingRate
+    XMLTag : "CLOSINGRATE"
+
+[Field: MSClosingValue]
+    Type   : Amount
+    Set as : $ClosingValue
+    XMLTag : "CLOSINGVALUE"
+
+;; Pricing masters (value applicable as on date, if maintained)
+[Field: MSStdCost]
+    Type   : Rate
+    Set as : $StandardCost
+    XMLTag : "STANDARDCOST"
+
+[Field: MSStdPrice]
+    Type   : Rate
+    Set as : $StandardPrice
+    XMLTag : "STANDARDPRICE"
+
+;; --------------------------- Collection ------------------------------
+[Collection: MickysStockItems]
+    Type  : Stock Item
+    Fetch : Name, Parent, Category, BaseUnits
+    Fetch : OpeningBalance, OpeningRate, OpeningValue
+    Fetch : ClosingBalance, ClosingRate, ClosingValue
+    Fetch : StandardCost, StandardPrice

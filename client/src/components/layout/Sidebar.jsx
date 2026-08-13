@@ -12,6 +12,7 @@ import {
   ClipboardList,
   CalendarClock,
   FileSpreadsheet,
+  ReceiptText,
   X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -33,6 +34,13 @@ const NAV_SECTIONS = [
     items: [
       { to: '/rate-master', label: 'Rate Master', icon: Tags, roles: [ROLES.ADMIN] },
       { to: '/export', label: 'Export Settings', icon: Ship, roles: [ROLES.ADMIN] },
+    ],
+  },
+  {
+    label: 'Modules',
+    items: [
+      // Opens the separate Sales Order dashboard (its own sidebar & pages).
+      { to: '/sales', label: 'Sales Orders', icon: ReceiptText, roles: [ROLES.ADMIN] },
     ],
   },
   {
