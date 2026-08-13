@@ -279,7 +279,7 @@ const requireContainerOnFullLoad = [
 ];
 
 const exportShipmentBase = z.object({
-  rateType: z.enum(['distributor', 'institution']),
+  rateType: z.enum(['distributor', 'institution', 'fob']),
   loadingType: z.enum(['full', 'part']),
   containerSize: z.enum(['ft20', 'ft40']).optional(),
   countryId: objectId,
@@ -301,6 +301,14 @@ const exportContainerSchema = z.object({
   capacityTonsMin: z.coerce.number().min(0).optional(),
   capacityTonsMax: z.coerce.number().min(0).optional(),
   portTransportInr: z.coerce.number().min(0).optional(),
+});
+
+// One Standard Mixed-Load FOB assumption set (per load option).
+const fobVariantSchema = z.object({
+  label: z.string().max(60).optional(),
+  commonCostInr: z.coerce.number().min(0).optional(),
+  bufferPercent: z.coerce.number().min(0).max(100).optional(),
+  marginPercent: z.coerce.number().min(0).max(99).optional(),
 });
 
 const settingsSchema = z.object({
@@ -340,6 +348,20 @@ const settingsSchema = z.object({
           ft40: exportContainerSchema.optional(),
         })
         .optional(),
+      fob: z
+        .object({
+          payloadKg: z.coerce.number().positive().optional(),
+          overheadPercent: z.coerce.number().min(0).max(100).optional(),
+          variants: z
+            .object({
+              ft20: fobVariantSchema.optional(),
+              ft40: fobVariantSchema.optional(),
+              ton5: fobVariantSchema.optional(),
+            })
+            .optional(),
+        })
+        .optional(),
+      fobRateCardTerms: z.string().max(8000).optional(),
       rateCardTerms: z.string().max(8000).optional(),
     })
     .optional(),

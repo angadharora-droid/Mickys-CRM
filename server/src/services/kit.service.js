@@ -797,11 +797,16 @@ async function generateKit({ lead, exec, settings }) {
   if (lead.kitType === 'export') {
     const exportKit = require('./exportKit.service');
     const card = await exportKit.computeRateCardFromLead(lead, settings);
+    const isFob = card.config.rateType === 'fob';
     const files = [
       {
         docType: 'ExportRateCard',
-        label: `Export Rate Card — ${card.config.country.name} (${card.config.currency})`,
-        fileName: `Mickys_ExportRateCard_${clientSlug}_${ref}.pdf`,
+        label: isFob
+          ? `Standard FOB Price List — ${card.config.fob.label} (${card.config.currency})`
+          : `Export Rate Card — ${card.config.country.name} (${card.config.currency})`,
+        fileName: isFob
+          ? `Mickys_FOB_PriceList_${clientSlug}_${ref}.pdf`
+          : `Mickys_ExportRateCard_${clientSlug}_${ref}.pdf`,
         buffer: await exportKit.renderRateCardPdf(card, { lead, exec }),
         contentType: 'application/pdf',
         static: false,

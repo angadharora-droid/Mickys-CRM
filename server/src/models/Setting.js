@@ -43,6 +43,49 @@ const settingSchema = new mongoose.Schema(
           portTransportInr: { type: Number, default: 95000 },
         },
       },
+      // Standard Mixed-Load FOB assumptions (from the official FOB price list
+      // workbook): one shared payload/overhead plus per-load commercials. The
+      // FOB selling price is computed from these + the FobItem cost master:
+      //   logistics ₹/kg = commonCostInr / payloadKg × (1 + bufferPercent%)
+      //   price = (COGS × (1 + overheadPercent%) + logistics × net wt) / (1 − marginPercent%)
+      fob: {
+        payloadKg: { type: Number, default: 18000 },
+        overheadPercent: { type: Number, default: 25 },
+        variants: {
+          ft20: {
+            label: { type: String, default: '20 ft FCL' },
+            commonCostInr: { type: Number, default: 75000 },
+            bufferPercent: { type: Number, default: 10 },
+            marginPercent: { type: Number, default: 25 },
+          },
+          ft40: {
+            label: { type: String, default: '40 ft FCL' },
+            commonCostInr: { type: Number, default: 90000 },
+            bufferPercent: { type: Number, default: 15 },
+            marginPercent: { type: Number, default: 20 },
+          },
+          ton5: {
+            label: { type: String, default: '5 Ton Mixed Load' },
+            commonCostInr: { type: Number, default: 76060 },
+            bufferPercent: { type: Number, default: 15 },
+            marginPercent: { type: Number, default: 25 },
+          },
+        },
+      },
+      // Boilerplate printed under the FOB price list card, one clause per line
+      // (the workbook's "Standard Quotation Conditions").
+      fobRateCardTerms: {
+        type: String,
+        default: [
+          'Prices are FOB Nhava Sheva, Incoterms® 2020 — ocean freight and insurance are quoted separately based on destination port and booking date.',
+          'Rates are based on one standard mixed-load consignment with approximately 18 MT saleable payload per FCL.',
+          'Minimum commercial order: one mixed-load FCL, subject to minimum SKU quantities.',
+          'Rates are valid for 15 days and subject to exchange-rate and statutory-cost changes.',
+          'The final proforma invoice may be adjusted if actual container utilisation is materially below the standard payload.',
+          'Exports are zero-rated under GST (supply under LUT); prices exclude destination-country duties, taxes and clearance charges.',
+          'Subject to Nagpur jurisdiction.',
+        ].join('\n'),
+      },
       // Boilerplate printed under the export rate card table, one clause per line.
       rateCardTerms: {
         type: String,

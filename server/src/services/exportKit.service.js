@@ -21,6 +21,7 @@
  */
 const PDFDocument = require('pdfkit');
 const RateItem = require('../models/RateItem');
+const FobItem = require('../models/FobItem');
 const ExportCountry = require('../models/ExportCountry');
 const ExchangeRate = require('../models/ExchangeRate');
 const Setting = require('../models/Setting');
@@ -28,11 +29,12 @@ const ApiError = require('../utils/ApiError');
 const brand = require('../config/brand');
 const content = require('../config/kitContent');
 
-const RATE_TYPES = ['distributor', 'institution'];
+const RATE_TYPES = ['distributor', 'institution', 'fob'];
 const LOADING_TYPES = ['full', 'part'];
 const CONTAINER_SIZES = ['ft20', 'ft40'];
 
-// Which rate master backs each export rate type.
+// Which rate master backs each export rate type ('fob' uses the FobItem cost
+// master instead and is priced by the standard mixed-load engine below).
 const MASTER_FOR = { distributor: 'distributor', institution: 'institutional' };
 
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
@@ -44,6 +46,196 @@ function parsePackWeightKg(packSize) {
   const qty = Number(m[1]);
   if (!(qty > 0)) return null;
   return /^k/i.test(m[2]) ? qty : qty / 1000;
+}
+
+// ---------------------------------------------------- FOB pricing engine ----
+// Standard Mixed-Load FOB (per the official workbook): destination-independent
+// prices quoted FOB Nhava Sheva. Each load option (20 ft / 40 ft FCL, 5-ton
+// mixed load) carries its own commercial assumptions in Setting.export.fob;
+// ocean freight and insurance are never included (quoted separately), so the
+// destination country is printed on the card for the record only.
+
+/** Which FOB assumption set a shipment maps to. */
+const fobVariantKey = (loadingType, containerSize) =>
+  loadingType === 'part' ? 'ton5' : containerSize;
+
+/** Validated assumption set for a variant, with the buffered logistics ₹/kg. */
+function fobAssumptions(fobCfg, variant) {
+  const v = fobCfg?.variants?.[variant];
+  const payloadKg = Number(fobCfg?.payloadKg);
+  if (!v || !(payloadKg > 0)) {
+    throw ApiError.badRequest('FOB assumptions are not configured — set them in Export Settings');
+  }
+  const marginPercent = Number(v.marginPercent) || 0;
+  if (marginPercent >= 100) throw ApiError.badRequest('FOB target margin must be below 100%');
+  const logisticsPerKgInr =
+    ((Number(v.commonCostInr) || 0) / payloadKg) * (1 + (Number(v.bufferPercent) || 0) / 100);
+  return {
+    variant,
+    label: v.label || variant,
+    payloadKg,
+    overheadPercent: Number(fobCfg.overheadPercent) || 0,
+    commonCostInr: Number(v.commonCostInr) || 0,
+    bufferPercent: Number(v.bufferPercent) || 0,
+    marginPercent,
+    logisticsPerKgInr,
+  };
+}
+
+/** Unit price build-up (INR) for one FOB cost item under an assumption set. */
+function computeFobUnitPricing(item, a) {
+  const cogsInr =
+    (Number(item.ingredientCostInr) || 0) +
+    (Number(item.primaryPackingInr) || 0) +
+    (Number(item.secondaryPackingInr) || 0) +
+    (Number(item.otherVariableCostInr) || 0);
+  const factoryCostInr = cogsInr * (1 + a.overheadPercent / 100);
+  const logisticsInr = a.logisticsPerKgInr * (Number(item.netWeightKg) || 0);
+  const fobCostInr = factoryCostInr + logisticsInr;
+  const priceInr = fobCostInr / (1 - a.marginPercent / 100);
+  return {
+    cogsInr: round2(cogsInr),
+    factoryCostInr: round2(factoryCostInr),
+    logisticsInr: round2(logisticsInr),
+    fobCostInr: round2(fobCostInr),
+    priceInr: round2(priceInr),
+    cartonPriceInr: round2(round2(priceInr) * (Number(item.unitsPerCarton) || 1)),
+  };
+}
+
+/**
+ * Resolves shipment lines against the FOB cost master and prices them under
+ * the variant's assumptions. Input lines: [{ rateItemId, qty, unitWeightKg?,
+ * netRate? }] — netRate overrides the computed standard FOB price.
+ */
+async function resolveFobLines(lines, fobCfg, variant) {
+  const a = fobAssumptions(fobCfg, variant);
+  const items = await FobItem.find({ _id: { $in: lines.map((l) => l.rateItemId) } }).lean();
+  const itemById = new Map(items.map((it) => [String(it._id), it]));
+
+  return lines.map((l) => {
+    const it = itemById.get(String(l.rateItemId));
+    if (!it) throw ApiError.badRequest('A selected product no longer exists in the FOB cost master');
+    const pricing = computeFobUnitPricing(it, a);
+    const baseRateInr =
+      l.netRate !== undefined && l.netRate !== null ? Number(l.netRate) : pricing.priceInr;
+    if (!(baseRateInr >= 0)) throw ApiError.badRequest(`Invalid rate for "${it.productName}"`);
+    const unitWeightKg =
+      l.unitWeightKg !== undefined && l.unitWeightKg !== null && l.unitWeightKg !== ''
+        ? Number(l.unitWeightKg)
+        : it.netWeightKg;
+    return {
+      rateItemId: String(it._id),
+      sku: it.sku,
+      productName: it.productName,
+      packSize: it.packSize || '',
+      category: it.category || 'Other',
+      qty: l.qty,
+      unitWeightKg: unitWeightKg > 0 ? unitWeightKg : null,
+      baseRateInr,
+      standardRateInr: pricing.priceInr,
+      unitsPerCarton: it.unitsPerCarton || null,
+      pricing,
+      item: it,
+    };
+  });
+}
+
+/**
+ * Assembles a Standard FOB price card. Same overall shape as buildCard, but
+ * with no destination logistics: the FOB rate IS the base rate (standard
+ * mixed-load logistics and margin are already inside it).
+ */
+function buildFobCard({ loadingType, containerSize, country, currency, lines, fxDoc, assumptions, rateCardTerms }) {
+  const fxRate = currency === 'INR' ? 1 : Number(fxDoc.inrPer?.[currency]);
+  if (!(fxRate > 0)) throw ApiError.badRequest(`No stored exchange rate for ${currency} — refresh or set rates first`);
+  const toCur = (inr) => round2(inr / fxRate);
+
+  const computed = lines.map((l) => {
+    const qty = Math.floor(Number(l.qty));
+    if (!(qty > 0)) throw ApiError.badRequest(`Quantity for "${l.productName}" must be at least 1`);
+    const baseRateInr = round2(l.baseRateInr);
+    const cartonInr = l.unitsPerCarton ? round2(baseRateInr * l.unitsPerCarton) : null;
+    return {
+      ...l,
+      qty,
+      unitWeightKg: l.unitWeightKg > 0 ? l.unitWeightKg : null,
+      baseRateInr,
+      lineValueInr: round2(baseRateInr * qty),
+      logisticsShareInr: 0,
+      perUnitAddonInr: 0,
+      exportRateInr: baseRateInr,
+      cartonPriceInr: cartonInr,
+      baseRate: toCur(baseRateInr),
+      perUnitAddon: 0,
+      exportRate: toCur(baseRateInr),
+      cartonPrice: cartonInr === null ? null : toCur(cartonInr),
+      lineTotal: toCur(baseRateInr * qty),
+    };
+  });
+  if (!computed.length) throw ApiError.badRequest('Select at least one product');
+
+  const goodsValueInr = round2(computed.reduce((s, l) => s + l.lineValueInr, 0));
+  if (!(goodsValueInr > 0)) throw ApiError.badRequest('The shipment has no value — check the rates');
+  const missingWeight = computed.filter((l) => l.unitWeightKg === null).map((l) => l.sku);
+  const totalWeightKg = missingWeight.length
+    ? null
+    : round2(computed.reduce((s, l) => s + l.unitWeightKg * l.qty, 0));
+
+  const warnings = [];
+  if (totalWeightKg !== null && totalWeightKg > assumptions.payloadKg) {
+    warnings.push(
+      `Shipment weight ${(totalWeightKg / 1000).toFixed(2)} t exceeds the standard ${assumptions.payloadKg / 1000} t mixed-load payload — reprice from actuals before confirming the order`
+    );
+  }
+
+  const freightLabel = 'FOB Nhava Sheva — ocean freight & insurance quoted separately';
+  return {
+    config: {
+      rateType: 'fob',
+      loadingType,
+      containerSize: loadingType === 'full' ? containerSize : null,
+      container: null,
+      fob: assumptions,
+      country,
+      currency,
+    },
+    fx: {
+      currency,
+      inrPerUnit: fxRate,
+      fetchedAt: fxDoc.fetchedAt,
+      source: fxDoc.source,
+    },
+    lines: computed,
+    summary: {
+      lineCount: computed.length,
+      totalWeightKg,
+      goodsValueInr,
+      insuranceInr: 0,
+      freightInr: 0,
+      freightLabel,
+      logisticsInr: 0,
+      grandTotalInr: goodsValueInr,
+      goodsValue: toCur(goodsValueInr),
+      insurance: 0,
+      freight: 0,
+      logistics: 0,
+      grandTotal: toCur(goodsValueInr),
+      warnings,
+    },
+    rateCardTerms: rateCardTerms || '',
+  };
+}
+
+/** Active FOB cost items priced under a variant, for the builder UI. */
+async function listFobItems(variant) {
+  const settings = await Setting.getGlobal();
+  const a = fobAssumptions(settings.export?.fob, variant);
+  const items = await FobItem.find({ isActive: true }).sort({ category: 1, sku: 1 }).lean();
+  return {
+    assumptions: { ...a, logisticsPerKgInr: round2(a.logisticsPerKgInr) },
+    items: items.map((it) => ({ ...it, pricing: computeFobUnitPricing(it, a) })),
+  };
 }
 
 // ---------------------------------------------------------------- engine ----
@@ -219,19 +411,36 @@ async function computeRateCard({ rateType, loadingType, containerSize, countryId
   ]);
   if (!country || !country.isActive) throw ApiError.badRequest('Unknown or inactive destination country');
 
+  const countryInfo = {
+    id: String(country._id),
+    name: country.name,
+    code: country.code,
+    cirPercent: country.cirPercent,
+    partLoadFreightPerKg: country.partLoadFreightPerKg,
+  };
+
+  if (rateType === 'fob') {
+    const variant = fobVariantKey(loadingType, containerSize);
+    const resolved = await resolveFobLines(lines, settings.export?.fob, variant);
+    return buildFobCard({
+      loadingType,
+      containerSize,
+      country: countryInfo,
+      currency,
+      lines: resolved,
+      fxDoc,
+      assumptions: fobAssumptions(settings.export?.fob, variant),
+      rateCardTerms: settings.export?.fobRateCardTerms || '',
+    });
+  }
+
   const resolved = await resolveLines(rateType, lines);
   return buildCard({
     rateType,
     loadingType,
     containerSize,
     container: loadingType === 'full' ? settings.export?.containers?.[containerSize] : null,
-    country: {
-      id: String(country._id),
-      name: country.name,
-      code: country.code,
-      cirPercent: country.cirPercent,
-      partLoadFreightPerKg: country.partLoadFreightPerKg,
-    },
+    country: countryInfo,
     currency,
     lines: resolved,
     fxDoc,
@@ -262,6 +471,34 @@ async function computeRateCardFromLead(lead, settings, fxDoc) {
       unitWeightKg: l.unitWeightKg > 0 ? l.unitWeightKg : null,
       baseRateInr: l.netRate,
     }));
+
+  if (cfg.rateType === 'fob') {
+    // Prices are frozen on the lead (netRate); the cost master is re-read only
+    // for the carton pack counts, and the assumptions block prints the current
+    // settings the frozen prices were built from.
+    const variant = fobVariantKey(cfg.loadingType, cfg.containerSize);
+    const items = await FobItem.find({ _id: { $in: lines.map((l) => l.rateItemId) } })
+      .select('_id unitsPerCarton')
+      .lean();
+    const cartonById = new Map(items.map((it) => [String(it._id), it.unitsPerCarton]));
+    return buildFobCard({
+      loadingType: cfg.loadingType,
+      containerSize: cfg.containerSize,
+      country: {
+        id: String(cfg.countryId),
+        name: cfg.countryName,
+        code: cfg.countryCode,
+        cirPercent: cfg.cirPercent,
+        partLoadFreightPerKg: cfg.partLoadFreightPerKg,
+      },
+      currency: cfg.currency,
+      lines: lines.map((l) => ({ ...l, unitsPerCarton: cartonById.get(l.rateItemId) || null })),
+      fxDoc,
+      assumptions: fobAssumptions(settings.export?.fob, variant),
+      rateCardTerms:
+        (lead.customTerms?.termsAndConditions || '').trim() || settings.export?.fobRateCardTerms || '',
+    });
+  }
 
   return buildCard({
     rateType: cfg.rateType,
@@ -536,6 +773,130 @@ function totalsBlock(doc, y, card, footerLabel) {
   return y + 28;
 }
 
+/** Facts card for the FOB card: the standard mixed-load pricing basis. */
+function fobBasisCard(doc, y, card) {
+  const { config, fx } = card;
+  const a = config.fob;
+  const W = contentWidth(doc);
+  const rows = [
+    ['Price Basis', 'FOB Nhava Sheva · Incoterms® 2020'],
+    ['Load Option', a.label],
+    ['Standard Payload', `${(a.payloadKg / 1000).toLocaleString('en-IN')} MT saleable product per FCL`],
+    // "=" not "→": the arrow glyph is missing from PDFKit's WinAnsi Helvetica.
+    ['Common FOB Costs', `${inr(a.commonCostInr)} per load + ${a.bufferPercent}% buffer = ${inr(round2(a.logisticsPerKgInr))}/kg`],
+    ['Costing', `Factory overhead ${a.overheadPercent}% on COGS · target gross margin ${a.marginPercent}% of selling price`],
+    ['Destination', config.country.code ? `${config.country.name} (${config.country.code})` : config.country.name],
+    ['Currency', config.currency],
+    ['Exchange Rate', config.currency === 'INR' ? '—' : `1 ${config.currency} = Rs. ${fx.inrPerUnit}  (as of ${fmtDate(fx.fetchedAt)})`],
+  ];
+  const colW = W / 2 - 12;
+  const rowH = 26;
+  const boxH = Math.ceil(rows.length / 2) * rowH + 16;
+  doc.roundedRect(M, y, W, boxH, 6).fill(LIGHT);
+  rows.forEach(([k, v], i) => {
+    const x = M + 12 + (i % 2) * (W / 2);
+    const yy = y + 10 + Math.floor(i / 2) * rowH;
+    doc.font('Helvetica-Bold').fontSize(7.5).fill(SLATE).text(k.toUpperCase(), x, yy, { width: colW });
+    doc.font('Helvetica').fontSize(8.5).fill(INK).text(v, x, yy + 10, { width: colW, lineBreak: false });
+  });
+  doc.fillColor(INK);
+  return y + boxH + 14;
+}
+
+/** FOB price table: per-unit and per-carton FOB selling prices, no logistics
+ *  split (the standard mixed-load logistics is already inside the rate). */
+function fobRateTable(doc, y, card, footerLabel) {
+  const { lines, config } = card;
+  const cur = config.currency;
+  const W = contentWidth(doc);
+
+  const defs = [
+    ['sr', 'Sr', 20, 'left'],
+    ['name', 'Product Name', cur === 'INR' ? 185 : 140, 'left'],
+    ['pack', 'Pack', 42, 'left'],
+    ['qty', 'Qty', 30, 'right'],
+    ...(cur === 'INR' ? [] : [['rateInr', 'FOB Rate\n(Rs.)', 55, 'right']]),
+    ['rate', `FOB Rate\n(${cur})`, 58, 'right'],
+    ['upc', 'Units/\nCarton', 34, 'right'],
+    ['carton', `FOB/Carton\n(${cur})`, 60, 'right'],
+    ['total', `Amount\n(${cur})`, W - (cur === 'INR' ? 429 : 439), 'right'],
+  ];
+  let cx = M;
+  const cols = defs.map(([key, label, w, align]) => {
+    const c = { key, label, x: cx, w, align };
+    cx += w;
+    return c;
+  });
+
+  const HEAD_H = 26;
+  const drawHead = (yy) => {
+    doc.rect(M, yy, W, HEAD_H).fill(MAROON);
+    doc.font('Helvetica-Bold').fontSize(7).fill('#ffffff');
+    cols.forEach((c) => doc.text(c.label, c.x + 3, yy + 4, { width: c.w - 6, align: c.align }));
+    return yy + HEAD_H;
+  };
+  y = drawHead(y);
+
+  const groups = {};
+  lines.forEach((l) => {
+    (groups[l.category] = groups[l.category] || []).push(l);
+  });
+  const categoryOrder = [
+    ...content.CATEGORY_ORDER,
+    ...Object.keys(groups).filter((cat) => !content.CATEGORY_ORDER.includes(cat)),
+  ];
+
+  const num = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  let sr = 0;
+  categoryOrder.forEach((cat) => {
+    const rows = groups[cat];
+    if (!rows || !rows.length) return;
+    if (y > bottomLimit(doc) - 28) { y = newPage(doc, footerLabel); y = drawHead(y); }
+    doc.rect(M, y, W, 16).fill(BAND);
+    doc.font('Helvetica-Bold').fontSize(8).fill(MAROON).text(cat, M + 6, y + 4);
+    y += 16;
+    rows.forEach((l) => {
+      if (y > bottomLimit(doc)) { y = newPage(doc, footerLabel); y = drawHead(y); }
+      sr += 1;
+      if (sr % 2 === 0) doc.rect(M, y, W, 16).fill('#faf7f2');
+      const vals = {
+        sr: String(sr),
+        name: l.productName,
+        pack: l.packSize,
+        qty: String(l.qty),
+        rateInr: num(l.baseRateInr),
+        rate: num(l.exportRate),
+        upc: l.unitsPerCarton ? String(l.unitsPerCarton) : '-',
+        carton: l.cartonPrice === null ? '-' : num(l.cartonPrice),
+        total: num(l.lineTotal),
+      };
+      doc.font('Helvetica').fontSize(7.5);
+      cols.forEach((c) => doc.fill(c.key === 'rate' ? MAROON : INK).text(vals[c.key], c.x + 3, y + 4, { width: c.w - 6, align: c.align, lineBreak: false }));
+      y += 16;
+      doc.moveTo(M, y).lineTo(M + W, y).stroke(BORDER);
+    });
+  });
+  return y + 6;
+}
+
+/** FOB total: goods value only — freight/insurance are quoted separately. */
+function fobTotalsBlock(doc, y, card, footerLabel) {
+  const { summary, config } = card;
+  const cur = config.currency;
+  const W = contentWidth(doc);
+  if (y > bottomLimit(doc) - 60) y = newPage(doc, footerLabel);
+  const valX = M + W - 200;
+  doc.rect(M, y, W, 20).fill(MAROON);
+  doc.font('Helvetica-Bold').fontSize(9).fill('#ffffff').text('TOTAL FOB VALUE', M + 4, y + 6);
+  doc.font('Helvetica-Bold').fontSize(9).fill(GOLD)
+    .text(money(summary.grandTotal, cur) + (cur !== 'INR' ? `   (${inr(summary.grandTotalInr)})` : ''), valX, y + 6, { width: 200 - 4, align: 'right' });
+  y += 26;
+  doc.font('Helvetica-Oblique').fontSize(7.5).fill(SLATE)
+    .text(`${summary.freightLabel}.`, M, y, { width: W });
+  doc.fillColor(INK);
+  return y + 16;
+}
+
 function termsBlock(doc, y, termsText, footerLabel) {
   const items = String(termsText || '').split('\n').map((l) => l.trim()).filter(Boolean);
   if (!items.length) return y;
@@ -556,6 +917,7 @@ function termsBlock(doc, y, termsText, footerLabel) {
  *  address the card to a specific client (lead pipeline). */
 function renderRateCardPdf(card, ctx = {}) {
   const { config, summary } = card;
+  if (config.rateType === 'fob') return renderFobCardPdf(card, ctx);
   const roleLabel = config.rateType === 'institution' ? 'Institution' : 'Distributor';
   const footerLabel = `Export Rate Card (${roleLabel})  ·  Trade Confidential`;
   return renderPdfBuffer((doc) => {
@@ -591,6 +953,48 @@ function renderRateCardPdf(card, ctx = {}) {
   });
 }
 
+/** The Standard FOB Price List layout (rate type "fob"). */
+function renderFobCardPdf(card, ctx = {}) {
+  const { config, summary } = card;
+  const footerLabel = 'Standard FOB Price List  ·  Trade Confidential';
+  return renderPdfBuffer((doc) => {
+    const W = contentWidth(doc);
+    let y = brandHeader(
+      doc,
+      'Standard FOB Price List',
+      `FOB Nhava Sheva  ·  ${config.fob.label}  ·  ${config.currency}`,
+      ctx.lead
+    );
+    pageFooter(doc, footerLabel);
+    if (ctx.lead) y = clientBlock(doc, y, ctx.lead, ctx.exec);
+    y = fobBasisCard(doc, y, card);
+
+    doc.rect(M, y, W, 18).fill(MAROON);
+    doc.font('Helvetica-Bold').fontSize(9).fill('#ffffff')
+      .text('STANDARD FOB PRICE LIST BY SKU', M, y + 5, { width: W, align: 'center' });
+    y += 24;
+    doc.font('Helvetica').fontSize(7.5).fill(SLATE)
+      .text(
+        `All prices in ${config.currency} per pack  ·  standard mixed-load export logistics and target margin ` +
+          'are built into every rate  ·  GST zero-rated for export',
+        M, y, { width: W }
+      );
+    y += 16;
+    y = fobRateTable(doc, y, card, footerLabel);
+    y = fobTotalsBlock(doc, y + 4, card, footerLabel);
+
+    if (summary.warnings.length) {
+      if (y > bottomLimit(doc) - 40) y = newPage(doc, footerLabel);
+      summary.warnings.forEach((w) => {
+        doc.font('Helvetica-Oblique').fontSize(7.5).fill(MAROON).text(`Note: ${w}`, M, y, { width: W });
+        y += doc.heightOfString(`Note: ${w}`, { width: W }) + 4;
+      });
+      doc.fillColor(INK);
+    }
+    termsBlock(doc, y + 6, card.rateCardTerms, footerLabel);
+  });
+}
+
 /** "United Arab Emirates" -> "UnitedArabEmirates" for file names. */
 function sanitizeName(s) {
   return (
@@ -605,6 +1009,9 @@ function sanitizeName(s) {
 }
 
 function rateCardFileName(card) {
+  if (card.config.rateType === 'fob') {
+    return `Mickys_Standard_FOB_PriceList_${sanitizeName(card.config.country.name)}_${card.config.currency}.pdf`;
+  }
   const role = card.config.rateType === 'institution' ? 'Institution' : 'Distributor';
   return `Mickys_Export_RateCard_${role}_${sanitizeName(card.config.country.name)}_${card.config.currency}.pdf`;
 }
@@ -615,7 +1022,12 @@ module.exports = {
   CONTAINER_SIZES,
   MASTER_FOR,
   parsePackWeightKg,
+  fobVariantKey,
+  fobAssumptions,
+  computeFobUnitPricing,
   resolveLines,
+  resolveFobLines,
+  listFobItems,
   computeRateCard,
   computeRateCardFromLead,
   renderRateCardPdf,

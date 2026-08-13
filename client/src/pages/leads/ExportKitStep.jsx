@@ -12,14 +12,21 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import EmptyState from '@/components/shared/EmptyState';
 import TableSkeleton from '@/components/shared/TableSkeleton';
+import { DEFAULT_KIT_TERMS, DEFAULT_FOB_TERMS } from '@/lib/constants';
 import { Calculator, Loader2, Package, Search, Ship, TriangleAlert } from 'lucide-react';
 
 const RATE_TYPES = [
   { value: 'distributor', label: 'Distributor Rate' },
   { value: 'institution', label: 'Institution Rate' },
+  { value: 'fob', label: 'FOB Rate (Standard Mixed Load)' },
 ];
-// Which rate master backs each export rate type (mirrors the server).
+// Which rate master backs each export rate type (mirrors the server). The FOB
+// rate type is priced off the FOB cost master + standard load assumptions.
 const MASTER_FOR = { distributor: 'distributor', institution: 'institutional' };
+
+// Which FOB assumption set a shipment maps to (mirrors the server).
+const fobVariantKey = (loadingType, containerSize) =>
+  loadingType === 'part' ? 'ton5' : containerSize;
 
 const CURRENCIES = ['USD', 'EUR', 'GBP', 'INR'];
 const CUR_SYMBOL = { USD: '$', EUR: '€', GBP: '£', INR: '₹' };
@@ -57,6 +64,9 @@ export default function ExportKitStep({ lead, locked, busy, terms, onTermsChange
   const [config, setConfig] = useState(null);
   const [products, setProducts] = useState([]);
   const [loadingProducts, setLoadingProducts] = useState(true);
+  const [fobInfo, setFobInfo] = useState(null); // assumptions behind the FOB prices
+
+  const isFob = rateType === 'fob';
 
   // { [rateItemId]: { qty, unitWeightKg, netRate } }
   const [selection, setSelection] = useState({});
@@ -101,10 +111,30 @@ export default function ExportKitStep({ lead, locked, busy, terms, onTermsChange
     })();
   }, []);
 
+  // Which FOB assumption set the current load option maps to (null off FOB).
+  const fobVariant = isFob ? fobVariantKey(loadingType, containerSize) : null;
+
   // The full active catalogue of the backing master (paged fetch, 100/page).
+  // The FOB master returns computed prices for the selected load option, so it
+  // refetches whenever the load option (and with it the price basis) changes.
   const fetchProducts = useCallback(async () => {
     setLoadingProducts(true);
     try {
+      if (fobVariant) {
+        const { data } = await api.get('/export/fob-items', {
+          params: { variant: fobVariant },
+        });
+        setFobInfo(data.data.assumptions);
+        setProducts(
+          data.data.items.map((it) => ({
+            ...it,
+            netRate: it.pricing.priceInr,
+            cartonPriceInr: it.pricing.cartonPriceInr,
+          }))
+        );
+        return;
+      }
+      setFobInfo(null);
       const all = [];
       let page = 1;
       let hasNext = true;
@@ -122,16 +152,33 @@ export default function ExportKitStep({ lead, locked, busy, terms, onTermsChange
     } finally {
       setLoadingProducts(false);
     }
-  }, [rateType]);
+  }, [rateType, fobVariant]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { fetchProducts(); }, [fetchProducts]);
 
   const invalidate = () => setPreview(null);
 
   const switchRateType = (v) => {
+    // Swap in the matching default T&C when the exec hasn't customised them
+    // (the FOB card carries the standard FOB quotation conditions instead).
+    if ((v === 'fob') !== isFob) {
+      const exportDefault = (DEFAULT_KIT_TERMS.export || []).join('\n');
+      const fobDefault = DEFAULT_FOB_TERMS.join('\n');
+      const current = (terms || '').trim();
+      if (v === 'fob' && (!current || current === exportDefault)) onTermsChange(fobDefault);
+      if (v !== 'fob' && (!current || current === fobDefault)) onTermsChange(exportDefault);
+    }
     setRateType(v);
-    // The two masters have different item ids — a selection can't carry over.
+    // The masters have different item ids — a selection can't carry over.
     setSelection({});
+    invalidate();
+  };
+
+  // Under FOB pricing the load option IS the price basis, so switching it
+  // invalidates the selected lines' prices as well as the preview.
+  const switchLoadOption = (apply) => {
+    apply();
+    if (isFob) setSelection({});
     invalidate();
   };
 
@@ -144,7 +191,7 @@ export default function ExportKitStep({ lead, locked, busy, terms, onTermsChange
         delete next[p._id];
         return next;
       }
-      const w = parsePackWeightKg(p.packSize);
+      const w = p.netWeightKg ?? parsePackWeightKg(p.packSize);
       return { ...sel, [p._id]: { qty: 1, unitWeightKg: w ?? '', netRate: p.netRate } };
     });
   };
@@ -204,7 +251,14 @@ export default function ExportKitStep({ lead, locked, busy, terms, onTermsChange
   };
 
   const country = countries.find((c) => c._id === countryId);
-  const containerOptions = config?.containers
+  // Under FOB the container picks the assumption set, not a port-cost line, so
+  // the domestic port-transport figures would only mislead here.
+  const containerOptions = isFob
+    ? [
+        { size: 'ft20', label: '20 ft FCL' },
+        { size: 'ft40', label: '40 ft FCL' },
+      ]
+    : config?.containers
     ? Object.entries(config.containers).map(([size, c]) => ({
         size,
         label: `${c.label} · ${c.capacityTonsMin}–${c.capacityTonsMax} ton · Port ₹${Number(c.portTransportInr).toLocaleString('en-IN')}`,
@@ -221,7 +275,11 @@ export default function ExportKitStep({ lead, locked, busy, terms, onTermsChange
           <CardTitle className="text-base">Step 3 · Export Shipment</CardTitle>
           {cfg?.countryId && (
             <Badge variant="secondary">
-              Confirmed: {cfg.countryName} · {cfg.loadingType === 'full' ? 'Full load' : 'Part load'} · {cfg.currency}
+              Confirmed: {cfg.countryName} ·{' '}
+              {cfg.rateType === 'fob'
+                ? `FOB ${cfg.loadingType === 'full' ? (cfg.containerSize === 'ft40' ? '40 ft FCL' : '20 ft FCL') : '5 ton mixed load'}`
+                : cfg.loadingType === 'full' ? 'Full load' : 'Part load'}{' '}
+              · {cfg.currency}
             </Badge>
           )}
         </div>
@@ -242,18 +300,18 @@ export default function ExportKitStep({ lead, locked, busy, terms, onTermsChange
             </div>
             <div className="space-y-2">
               <Label>Loading type</Label>
-              <Select value={loadingType} onValueChange={(v) => { setLoadingType(v); invalidate(); }} disabled={locked}>
+              <Select value={loadingType} onValueChange={(v) => switchLoadOption(() => setLoadingType(v))} disabled={locked}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="full">Full Load (FCL)</SelectItem>
-                  <SelectItem value="part">Part Load (LCL)</SelectItem>
+                  <SelectItem value="part">{isFob ? '5 Ton Mixed Load' : 'Part Load (LCL)'}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             {loadingType === 'full' && (
               <div className="space-y-2">
                 <Label>Container</Label>
-                <Select value={containerSize} onValueChange={(v) => { setContainerSize(v); invalidate(); }} disabled={locked}>
+                <Select value={containerSize} onValueChange={(v) => switchLoadOption(() => setContainerSize(v))} disabled={locked}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {containerOptions.map((c) => <SelectItem key={c.size} value={c.size}>{c.label}</SelectItem>)}
@@ -287,7 +345,17 @@ export default function ExportKitStep({ lead, locked, busy, terms, onTermsChange
               No destination countries configured yet — an admin can add them under Export Settings.
             </p>
           )}
-          {loadingType === 'part' && country && (
+          {isFob && (
+            <p className="mt-3 text-xs text-muted-foreground">
+              FOB Nhava Sheva · standard mixed-load pricing
+              {fobInfo
+                ? ` (${fobInfo.label}: logistics ₹${fobInfo.logisticsPerKgInr}/kg on an ${(fobInfo.payloadKg / 1000).toLocaleString('en-IN')} MT payload, margin ${fobInfo.marginPercent}%)`
+                : ''}
+              . Ocean freight &amp; insurance are quoted separately — the destination is printed on the card for
+              reference only.
+            </p>
+          )}
+          {!isFob && loadingType === 'part' && country && (
             <p className="mt-3 text-xs text-muted-foreground">
               Part-load freight for {country.name}: ₹{country.partLoadFreightPerKg}/kg × shipment weight, then
               distributed across products in proportion to their rates.
@@ -312,7 +380,7 @@ export default function ExportKitStep({ lead, locked, busy, terms, onTermsChange
                       const next = { ...sel };
                       visibleProducts.forEach((p) => {
                         if (!next[p._id]) {
-                          const w = parsePackWeightKg(p.packSize);
+                          const w = p.netWeightKg ?? parsePackWeightKg(p.packSize);
                           next[p._id] = { qty: 1, unitWeightKg: w ?? '', netRate: p.netRate };
                         }
                       });
@@ -336,7 +404,11 @@ export default function ExportKitStep({ lead, locked, busy, terms, onTermsChange
           {loadingProducts ? (
             <TableSkeleton />
           ) : visibleProducts.length === 0 ? (
-            <EmptyState icon={Package} title="No products" description={`No active products in the ${MASTER_FOR[rateType]} rate master.`} />
+            <EmptyState
+              icon={Package}
+              title="No products"
+              description={isFob ? 'No active products in the FOB cost master.' : `No active products in the ${MASTER_FOR[rateType]} rate master.`}
+            />
           ) : (
             <div className="overflow-x-auto">
               <Table>
@@ -344,7 +416,7 @@ export default function ExportKitStep({ lead, locked, busy, terms, onTermsChange
                   <TableRow>
                     <TableHead className="w-10" />
                     <TableHead>Product</TableHead>
-                    <TableHead className="text-right">Base rate (₹)</TableHead>
+                    <TableHead className="text-right">{isFob ? 'FOB rate (₹)' : 'Base rate (₹)'}</TableHead>
                     <TableHead className="text-right w-24">Qty (packs)</TableHead>
                     <TableHead className="text-right w-28">Unit wt (kg)</TableHead>
                   </TableRow>
@@ -472,9 +544,19 @@ export default function ExportKitStep({ lead, locked, busy, terms, onTermsChange
                     <TableHead>Product</TableHead>
                     <TableHead className="text-right">Qty</TableHead>
                     <TableHead className="text-right">Wt (kg)</TableHead>
-                    <TableHead className="text-right">Base rate</TableHead>
-                    <TableHead className="text-right">{preview.config.loadingType === 'full' ? 'Logistics (equal split)' : 'Logistics (pro-rata)'}</TableHead>
-                    <TableHead className="text-right">Export rate</TableHead>
+                    {preview.config.rateType === 'fob' ? (
+                      <>
+                        <TableHead className="text-right">FOB rate</TableHead>
+                        <TableHead className="text-right">Units/carton</TableHead>
+                        <TableHead className="text-right">FOB/carton</TableHead>
+                      </>
+                    ) : (
+                      <>
+                        <TableHead className="text-right">Base rate</TableHead>
+                        <TableHead className="text-right">{preview.config.loadingType === 'full' ? 'Logistics (equal split)' : 'Logistics (pro-rata)'}</TableHead>
+                        <TableHead className="text-right">Export rate</TableHead>
+                      </>
+                    )}
                     <TableHead className="text-right">Amount</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -487,9 +569,19 @@ export default function ExportKitStep({ lead, locked, busy, terms, onTermsChange
                       </TableCell>
                       <TableCell className="text-right tabular-nums">{l.qty}</TableCell>
                       <TableCell className="text-right tabular-nums">{l.unitWeightKg === null ? '—' : (l.unitWeightKg * l.qty).toLocaleString('en-IN')}</TableCell>
-                      <TableCell className="text-right tabular-nums">{fmtMoney(l.baseRate, preview.config.currency)}</TableCell>
-                      <TableCell className="text-right tabular-nums">{fmtMoney(l.perUnitAddon, preview.config.currency)}</TableCell>
-                      <TableCell className="text-right tabular-nums font-semibold text-primary">{fmtMoney(l.exportRate, preview.config.currency)}</TableCell>
+                      {preview.config.rateType === 'fob' ? (
+                        <>
+                          <TableCell className="text-right tabular-nums font-semibold text-primary">{fmtMoney(l.exportRate, preview.config.currency)}</TableCell>
+                          <TableCell className="text-right tabular-nums">{l.unitsPerCarton || '—'}</TableCell>
+                          <TableCell className="text-right tabular-nums">{l.cartonPrice === null ? '—' : fmtMoney(l.cartonPrice, preview.config.currency)}</TableCell>
+                        </>
+                      ) : (
+                        <>
+                          <TableCell className="text-right tabular-nums">{fmtMoney(l.baseRate, preview.config.currency)}</TableCell>
+                          <TableCell className="text-right tabular-nums">{fmtMoney(l.perUnitAddon, preview.config.currency)}</TableCell>
+                          <TableCell className="text-right tabular-nums font-semibold text-primary">{fmtMoney(l.exportRate, preview.config.currency)}</TableCell>
+                        </>
+                      )}
                       <TableCell className="text-right tabular-nums">{fmtMoney(l.lineTotal, preview.config.currency)}</TableCell>
                     </TableRow>
                   ))}
@@ -498,12 +590,15 @@ export default function ExportKitStep({ lead, locked, busy, terms, onTermsChange
             </div>
 
             <div className="grid gap-2 sm:max-w-md sm:ml-auto text-sm">
-              {[
-                ['Goods value', preview.summary.goodsValue, preview.summary.goodsValueInr],
-                [preview.summary.freightLabel, preview.summary.freight, preview.summary.freightInr],
-                [`CIR insurance (${preview.config.country.cirPercent}%)`, preview.summary.insurance, preview.summary.insuranceInr],
-                ['Total logistics', preview.summary.logistics, preview.summary.logisticsInr],
-              ].map(([label, val, valInr]) => (
+              {(preview.config.rateType === 'fob'
+                ? [['Goods value (FOB)', preview.summary.goodsValue, preview.summary.goodsValueInr]]
+                : [
+                    ['Goods value', preview.summary.goodsValue, preview.summary.goodsValueInr],
+                    [preview.summary.freightLabel, preview.summary.freight, preview.summary.freightInr],
+                    [`CIR insurance (${preview.config.country.cirPercent}%)`, preview.summary.insurance, preview.summary.insuranceInr],
+                    ['Total logistics', preview.summary.logistics, preview.summary.logisticsInr],
+                  ]
+              ).map(([label, val, valInr]) => (
                 <div key={label} className="flex justify-between gap-4">
                   <span className="text-muted-foreground">{label}</span>
                   <span className="tabular-nums">
@@ -515,7 +610,7 @@ export default function ExportKitStep({ lead, locked, busy, terms, onTermsChange
                 </div>
               ))}
               <div className="flex justify-between gap-4 border-t pt-2 font-semibold">
-                <span>Grand total (goods + logistics)</span>
+                <span>{preview.config.rateType === 'fob' ? 'Total FOB value' : 'Grand total (goods + logistics)'}</span>
                 <span className="tabular-nums">
                   {fmtMoney(preview.summary.grandTotal, preview.config.currency)}
                   {preview.config.currency !== 'INR' && (
@@ -523,10 +618,14 @@ export default function ExportKitStep({ lead, locked, busy, terms, onTermsChange
                   )}
                 </span>
               </div>
+              {preview.config.rateType === 'fob' && (
+                <p className="text-xs text-muted-foreground text-right">{preview.summary.freightLabel}.</p>
+              )}
               {preview.summary.totalWeightKg !== null && (
                 <p className="text-xs text-muted-foreground text-right">
                   Shipment weight: {preview.summary.totalWeightKg.toLocaleString('en-IN')} kg
                   {preview.config.container ? ` · ${preview.config.container.label} (${preview.config.container.capacityTonsMin}–${preview.config.container.capacityTonsMax} t)` : ''}
+                  {preview.config.rateType === 'fob' && preview.config.fob ? ` · standard payload ${(preview.config.fob.payloadKg / 1000).toLocaleString('en-IN')} t` : ''}
                 </p>
               )}
             </div>

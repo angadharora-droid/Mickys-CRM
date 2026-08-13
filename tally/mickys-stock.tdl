@@ -31,16 +31,25 @@
 
 ;; ---------------- Push to Mickys CRM (Sync button) --------------------
 ;; The key in the URL must match the TALLY_SYNC_KEY environment variable on
-;; the CRM backend (Railway). With the report open, press Alt+Z (or click
-;; "Sync to CRM" in the button bar) to send the current stock position to
-;; the CRM over HTTPS.
+;; the CRM backend (Railway). With the report open, click "Sync to CRM" in
+;; the right-hand button bar (or press Ctrl+F10) to send the current stock
+;; position to the CRM over HTTPS. (Alt+Z is reserved by TallyPrime for the
+;; Exchange menu, so the shortcut is Ctrl+F10.)
 [System: Formula]
     MickysSyncURL : "https://api.mickys-crm.centrepointgroup.in/api/stock/sync?key=31a80f69783d9fb21e74b5b31ddc059bbcf83c4184d76769"
 
 [Button: MickysSyncBtn]
-    Key    : Alt+Z
+    Key    : Ctrl + F10
     Title  : "Sync to CRM"
     Action : HTTP Post : @@MickysSyncURL : ASCII : MickysStockReport
+
+;; ---- Hands-free daily sync -------------------------------------------
+;; Fires the same HTTP push automatically every time this company is
+;; opened in Tally, so the CRM gets fresh stock each morning without
+;; anyone pressing anything. Guarded by company name so opening any other
+;; company never pushes its data to the CRM.
+[System: Events]
+    MickysAutoSync : Load Company : ##SVCurrentCompany = "CENTRE POINT FOODS PRIVATE LIMITED" : HTTP Post : @@MickysSyncURL : ASCII : MickysStockReport
 
 ;; --------------------------- Report shell ----------------------------
 [Report: MickysStockReport]
