@@ -402,22 +402,26 @@ async function resolveLines(rateType, lines) {
   });
 }
 
-/** Standalone computation (preview): live country doc + current settings/FX. */
+/** Standalone computation (preview): live country doc + current settings/FX.
+ *  FOB cards are destination-independent, so no country is involved there. */
 async function computeRateCard({ rateType, loadingType, containerSize, countryId, currency, lines }) {
   const [settings, fxDoc, country] = await Promise.all([
     Setting.getGlobal(),
     ExchangeRate.getGlobal(),
-    ExportCountry.findById(countryId),
+    countryId ? ExportCountry.findById(countryId) : null,
   ]);
-  if (!country || !country.isActive) throw ApiError.badRequest('Unknown or inactive destination country');
 
-  const countryInfo = {
-    id: String(country._id),
-    name: country.name,
-    code: country.code,
-    cirPercent: country.cirPercent,
-    partLoadFreightPerKg: country.partLoadFreightPerKg,
-  };
+  let countryInfo = null;
+  if (countryId) {
+    if (!country || !country.isActive) throw ApiError.badRequest('Unknown or inactive destination country');
+    countryInfo = {
+      id: String(country._id),
+      name: country.name,
+      code: country.code,
+      cirPercent: country.cirPercent,
+      partLoadFreightPerKg: country.partLoadFreightPerKg,
+    };
+  }
 
   if (rateType === 'fob') {
     const variant = fobVariantKey(loadingType, containerSize);
@@ -434,6 +438,7 @@ async function computeRateCard({ rateType, loadingType, containerSize, countryId
     });
   }
 
+  if (!countryInfo) throw ApiError.badRequest('Destination country is required');
   const resolved = await resolveLines(rateType, lines);
   return buildCard({
     rateType,
@@ -455,7 +460,10 @@ async function computeRateCard({ rateType, loadingType, containerSize, countryId
  */
 async function computeRateCardFromLead(lead, settings, fxDoc) {
   const cfg = lead.exportConfig;
-  if (!cfg || !cfg.countryId) throw ApiError.badRequest('This lead has no confirmed export shipment');
+  // FOB shipments carry no destination; any other rate type must have one.
+  if (!cfg || (cfg.rateType !== 'fob' && !cfg.countryId)) {
+    throw ApiError.badRequest('This lead has no confirmed export shipment');
+  }
   if (!settings) settings = await Setting.getGlobal();
   if (!fxDoc) fxDoc = await ExchangeRate.getGlobal();
 
@@ -484,13 +492,15 @@ async function computeRateCardFromLead(lead, settings, fxDoc) {
     return buildFobCard({
       loadingType: cfg.loadingType,
       containerSize: cfg.containerSize,
-      country: {
-        id: String(cfg.countryId),
-        name: cfg.countryName,
-        code: cfg.countryCode,
-        cirPercent: cfg.cirPercent,
-        partLoadFreightPerKg: cfg.partLoadFreightPerKg,
-      },
+      country: cfg.countryId
+        ? {
+            id: String(cfg.countryId),
+            name: cfg.countryName,
+            code: cfg.countryCode,
+            cirPercent: cfg.cirPercent,
+            partLoadFreightPerKg: cfg.partLoadFreightPerKg,
+          }
+        : null,
       currency: cfg.currency,
       lines: lines.map((l) => ({ ...l, unitsPerCarton: cartonById.get(l.rateItemId) || null })),
       fxDoc,
@@ -785,7 +795,11 @@ function fobBasisCard(doc, y, card) {
     // "=" not "→": the arrow glyph is missing from PDFKit's WinAnsi Helvetica.
     ['Common FOB Costs', `${inr(a.commonCostInr)} per load + ${a.bufferPercent}% buffer = ${inr(round2(a.logisticsPerKgInr))}/kg`],
     ['Costing', `Factory overhead ${a.overheadPercent}% on COGS · target gross margin ${a.marginPercent}% of selling price`],
-    ['Destination', config.country.code ? `${config.country.name} (${config.country.code})` : config.country.name],
+    // FOB prices are destination-independent; a country appears only on legacy
+    // cards whose shipment snapshot still carries one.
+    ...(config.country
+      ? [['Destination', config.country.code ? `${config.country.name} (${config.country.code})` : config.country.name]]
+      : []),
     ['Currency', config.currency],
     ['Exchange Rate', config.currency === 'INR' ? '—' : `1 ${config.currency} = Rs. ${fx.inrPerUnit}  (as of ${fmtDate(fx.fetchedAt)})`],
   ];
@@ -1010,7 +1024,7 @@ function sanitizeName(s) {
 
 function rateCardFileName(card) {
   if (card.config.rateType === 'fob') {
-    return `Mickys_Standard_FOB_PriceList_${sanitizeName(card.config.country.name)}_${card.config.currency}.pdf`;
+    return `Mickys_Standard_FOB_PriceList_${sanitizeName(card.config.fob.label)}_${card.config.currency}.pdf`;
   }
   const role = card.config.rateType === 'institution' ? 'Institution' : 'Distributor';
   return `Mickys_Export_RateCard_${role}_${sanitizeName(card.config.country.name)}_${card.config.currency}.pdf`;
