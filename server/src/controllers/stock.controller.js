@@ -11,12 +11,13 @@ const { searchRegex } = require('../utils/sanitize');
 const { authenticate, authorize } = require('../middleware/auth');
 
 /**
- * Sync auth: either the Tally-side push agent presenting the shared key
- * (X-Tally-Key, enabled only when TALLY_SYNC_KEY is set), or a signed-in
- * admin doing a manual XML upload from the dashboard.
+ * Sync auth: either the Tally side presenting the shared key (enabled only
+ * when TALLY_SYNC_KEY is set) — as an X-Tally-Key header, or as ?key= in the
+ * URL because Tally's TDL HTTP Post action cannot send custom headers — or a
+ * signed-in admin doing a manual XML upload from the dashboard.
  */
 const tallyKeyOrAdmin = (req, res, next) => {
-  const key = req.headers['x-tally-key'];
+  const key = req.headers['x-tally-key'] || req.query.key;
   if (env.tallySyncKey && typeof key === 'string') {
     const a = Buffer.from(key);
     const b = Buffer.from(env.tallySyncKey);
@@ -81,6 +82,13 @@ const syncStock = asyncHandler(async (req, res) => {
     ip: req.ip,
   });
 
+  // Tally's HTTP Post action expects an XML response body; the dashboard
+  // upload gets the usual JSON envelope.
+  if (req.tallyPush) {
+    return res
+      .type('text/xml')
+      .send(`<RESPONSE><STATUS>1</STATUS><MESSAGE>Synced ${items.length} stock items to Mickys CRM</MESSAGE></RESPONSE>`);
+  }
   res.json({
     success: true,
     message: `Synced ${items.length} stock items`,

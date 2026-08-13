@@ -51,17 +51,44 @@ The response contains one `<STOCKITEM>` element per item:
 </STOCKITEM>
 ```
 
-## 3. Parsing notes (for the backend sync)
+## 3. Format notes (implemented in server/src/services/tallyStock.service.js)
 
-- Quantities come with the unit (`190 pkt`) and amounts use Indian comma grouping (`1,05,000.00`). Normalize with something like:
+Confirmed against a real export from TallyPrime 7.0 (Gold):
 
-  ```js
-  const num = (v) => parseFloat(String(v ?? "").replace(/,/g, "")) || 0;
-  ```
+- Values carry Tally's accounting sign (inward/closing negative, outward positive) — the parser abs()'s them.
+- Zero figures export as **empty tags**; file export has **no** thousands separators.
+- Quantities include the unit (`360.00 KG`), rates the `/unit` suffix (`78.00/KG`).
+- Reserved names come flagged with a `&#4;` control char (`&#4; Primary`, `&#4; Not Applicable`) → treated as "no group/category".
+- Validation per item: `closing = opening + inward − outward`.
 
-- Validation check per item: `closing = opening + inward − outward`.
-- If `INWARDQTY` / `OUTWARDQTY` come back empty on your Tally release, tell me the exact TallyPrime release number — those two method names vary slightly across releases and I'll adjust just those fields. Opening/closing will always work.
+## 4. Getting it into the CRM
 
-## 4. Getting this into the hosted CRM
+Two ways, both hitting `POST /api/stock/sync` on the backend:
 
-The backend runs on Railway and **cannot reach Tally on the shop PC directly** (Tally is on the local network, not the internet). The plan is a small **local sync agent** — a Node script running on the Tally PC that pulls this report on a schedule and POSTs it to a CRM API endpoint (e.g. `POST /api/stock/sync` with an API key). That's the next build step after the TDL is verified.
+### a) Manual upload (works today, no setup)
+Export the report as XML (open report → Alt+E → Current → XML), then in the CRM
+go to **Sales Orders → Stock from Tally → Upload Tally XML** and pick the file.
+
+If the Tally machine is a remote/hosted session that blocks copying files out:
+open the exported XML in **Notepad on the remote machine**, Ctrl+A → Ctrl+C,
+then on your own PC paste into Notepad and save as `MickysStock.xml` — the text
+clipboard usually works even when file copy is blocked.
+
+### b) Automatic push from Tally (the "Sync to CRM" button)
+The TDL defines a button on the report (right-hand button bar, shortcut
+**Alt+Z**) that HTTP-POSTs the report straight to the CRM — works from
+hosted/cloud Tally too because it's an outbound HTTPS call, like e-invoicing.
+
+One-time setup:
+1. In `mickys-stock.tdl`, edit the `MickysSyncURL` formula: replace
+   `YOUR-BACKEND-URL` with the CRM backend host (the Railway domain). The
+   `key=` value is the shared secret — leave it as generated.
+2. On Railway, add the environment variable `TALLY_SYNC_KEY` set to that same
+   key value, and redeploy.
+3. Reload the TDL in Tally (quit & reopen Tally, or F1 → TDLs & AddOns).
+4. Open **Mickys Stock Export**, set the period if needed (F2), press
+   **Alt+Z**. The CRM's Stock page will show the new "last synced" time
+   (source: Tally push).
+
+Rotating the key: generate a new random string, update both the Railway
+variable and the TDL URL.
