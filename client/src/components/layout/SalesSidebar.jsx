@@ -1,65 +1,33 @@
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { cn, getInitials } from '@/lib/utils';
-import { ROLES, ROLE_LABELS } from '@/lib/constants';
-import {
-  LayoutDashboard,
-  Contact,
-  Tags,
-  Ship,
-  Users,
-  ScrollText,
-  ClipboardList,
-  CalendarClock,
-  FileSpreadsheet,
-  ReceiptText,
-  X,
-} from 'lucide-react';
+import { ROLE_LABELS } from '@/lib/constants';
+import { LayoutDashboard, Boxes, ReceiptText, ArrowLeftRight, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 
+/**
+ * Sidebar for the Sales Order module — deliberately separate from the main
+ * CRM sidebar: this section has its own navigation universe, with a single
+ * escape hatch back to the leads CRM.
+ */
 const NAV_SECTIONS = [
   {
-    label: 'Overview',
+    label: 'Sales Orders',
     items: [
-      { to: '/', label: 'Dashboard', icon: LayoutDashboard, roles: ['*'] },
-      { to: '/leads', label: 'Leads & Kits', icon: Contact, roles: ['*'] },
-      { to: '/follow-ups', label: 'Follow-ups', icon: CalendarClock, roles: ['*'] },
-      { to: '/reports', label: 'Reports', icon: FileSpreadsheet, roles: ['*'] },
-      { to: '/my-records', label: 'My Records', icon: ClipboardList, roles: [ROLES.SALES_EXEC, ROLES.PR_MANAGER] },
+      { to: '/sales', label: 'Overview', icon: LayoutDashboard, end: true },
+      { to: '/sales/stock', label: 'Stock from Tally', icon: Boxes },
+      { to: '/sales/orders', label: 'Sales Orders', icon: ReceiptText },
     ],
   },
   {
-    label: 'Catalogue',
-    items: [
-      { to: '/rate-master', label: 'Rate Master', icon: Tags, roles: [ROLES.ADMIN] },
-      { to: '/export', label: 'Export Settings', icon: Ship, roles: [ROLES.ADMIN] },
-    ],
-  },
-  {
-    label: 'Modules',
-    items: [
-      // Opens the separate Sales Order dashboard (its own sidebar & pages).
-      { to: '/sales', label: 'Sales Orders', icon: ReceiptText, roles: [ROLES.ADMIN] },
-    ],
-  },
-  {
-    label: 'Administration',
-    items: [
-      { to: '/lead-tracker', label: 'Lead Tracker', icon: ClipboardList, roles: [ROLES.ADMIN] },
-      { to: '/users', label: 'Users', icon: Users, roles: [ROLES.ADMIN] },
-      { to: '/activity-logs', label: 'Activity Logs', icon: ScrollText, roles: [ROLES.ADMIN] },
-    ],
+    label: 'Switch',
+    items: [{ to: '/', label: 'Back to Leads CRM', icon: ArrowLeftRight, end: true }],
   },
 ];
 
-export default function Sidebar({ open, onClose }) {
+export default function SalesSidebar({ open, onClose }) {
   const { user } = useAuth();
-
-  const sections = NAV_SECTIONS.map((s) => ({
-    ...s,
-    items: s.items.filter((i) => i.roles.includes('*') || i.roles.includes(user?.role)),
-  })).filter((s) => s.items.length > 0);
 
   return (
     <>
@@ -81,7 +49,7 @@ export default function Sidebar({ open, onClose }) {
             <div>
               <p className="font-display font-bold text-xl leading-none tracking-tight">Micky&rsquo;s</p>
               <p className="text-[10px] uppercase tracking-[0.18em] text-sidebar-muted leading-tight mt-1">
-                Sales CRM
+                Sales Orders
               </p>
             </div>
           </div>
@@ -97,17 +65,17 @@ export default function Sidebar({ open, onClose }) {
 
         {/* Navigation */}
         <nav className="sidebar-scroll flex-1 overflow-y-auto py-5 px-3 space-y-6">
-          {sections.map((section) => (
+          {NAV_SECTIONS.map((section) => (
             <div key={section.label}>
               <p className="px-3 mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-sidebar-muted">
                 {section.label}
               </p>
               <div className="space-y-1">
-                {section.items.map(({ to, label, icon: Icon }) => (
+                {section.items.map(({ to, label, icon: Icon, end }) => (
                   <NavLink
                     key={to}
                     to={to}
-                    end={to === '/'}
+                    end={end}
                     onClick={onClose}
                     className={({ isActive }) =>
                       cn(

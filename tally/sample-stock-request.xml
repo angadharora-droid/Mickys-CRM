@@ -1,0 +1,22 @@
+<ENVELOPE>
+    <HEADER>
+        <VERSION>1</VERSION>
+        <TALLYREQUEST>Export</TALLYREQUEST>
+        <TYPE>Data</TYPE>
+        <ID>MickysStockReport</ID>
+    </HEADER>
+    <BODY>
+        <DESC>
+            <STATICVARIABLES>
+                <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+                <!-- Opening figures are "as on" SVFROMDATE, closing figures "as on" SVTODATE.
+                     For current stock, set SVTODATE to today. -->
+                <SVFROMDATE TYPE="Date">1-Apr-2026</SVFROMDATE>
+                <SVTODATE TYPE="Date">13-Aug-2026</SVTODATE>
+                <!-- Optional: only needed if more than one company is open in Tally.
+                <SVCURRENTCOMPANY>Mickys</SVCURRENTCOMPANY>
+                -->
+            </STATICVARIABLES>
+        </DESC>
+    </BODY>
+</ENVELOPE>

@@ -30,6 +30,9 @@ app.use(
 
 // Body parsers with explicit ceilings to limit payload/parameter-pollution abuse.
 app.use(express.json({ limit: '2mb' }));
+// Raw XML bodies for the Tally stock push (POST /api/stock/sync). ~600 stock
+// items is ~0.5MB; 5mb leaves headroom for catalogue growth.
+app.use(express.text({ type: ['text/xml', 'application/xml'], limit: '5mb' }));
 app.use(express.urlencoded({ extended: false, limit: '1mb', parameterLimit: 100 }));
 app.use(cookieParser());
 app.use(mongoSanitize);

@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { ROLES } from '@/lib/constants';
 import AppLayout from '@/components/layout/AppLayout';
+import SalesLayout from '@/components/layout/SalesLayout';
 import ProtectedRoute from '@/components/layout/ProtectedRoute';
 
 import Login from '@/pages/Login';
@@ -18,6 +19,9 @@ import UsersPage from '@/pages/users/Users';
 import ActivityLogs from '@/pages/ActivityLogs';
 import ChangePassword from '@/pages/ChangePassword';
 import EmailSettings from '@/pages/EmailSettings';
+import SalesOverview from '@/pages/sales/SalesOverview';
+import StockList from '@/pages/sales/StockList';
+import SalesOrders from '@/pages/sales/SalesOrders';
 import NotFound from '@/pages/NotFound';
 
 export default function App() {
@@ -97,6 +101,19 @@ export default function App() {
         />
         <Route path="/change-password" element={<ChangePassword />} />
         <Route path="/email-settings" element={<EmailSettings />} />
+      </Route>
+
+      {/* Sales Order module — its own shell with a separate sidebar/nav */}
+      <Route
+        element={
+          <ProtectedRoute roles={[ROLES.ADMIN]}>
+            <SalesLayout />
+          </ProtectedRoute>
+        }
+      >
+        <Route path="/sales" element={<SalesOverview />} />
+        <Route path="/sales/stock" element={<StockList />} />
+        <Route path="/sales/orders" element={<SalesOrders />} />
       </Route>
 
       <Route path="/404" element={<NotFound />} />

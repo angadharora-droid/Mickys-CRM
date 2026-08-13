@@ -18,6 +18,7 @@ const exportKit = require('../controllers/export.controller');
 const pushCtrl = require('../controllers/push.controller');
 const notifications = require('../controllers/notification.controller');
 const reports = require('../controllers/report.controller');
+const stock = require('../controllers/stock.controller');
 
 const router = express.Router();
 
@@ -102,6 +103,14 @@ router.put('/export/exchange-rates', authenticate, authorize(ADMIN), validate(v.
 // Live shipment preview used by the lead export step. Generation itself runs
 // through the lead pipeline (PUT /leads/:id/export-config → generated kit).
 router.post('/export/rate-card/preview', authenticate, validate(v.exportRateCardSchema), exportKit.previewRateCard);
+
+// ---------- Sales Order module: Tally stock mirror ----------
+// Sync accepts the Mickys Stock Export XML either from a signed-in admin
+// (manual upload) or from the Tally-side agent presenting X-Tally-Key.
+router.post('/stock/sync', stock.tallyKeyOrAdmin, stock.syncStock);
+router.get('/stock', authenticate, authorize(ADMIN), stock.listStock);
+router.get('/stock/groups', authenticate, authorize(ADMIN), stock.listGroups);
+router.get('/stock/summary', authenticate, authorize(ADMIN), stock.stockSummary);
 
 // ---------- In-app notifications (the header bell) ----------
 router.get('/notifications', authenticate, notifications.listNotifications);
