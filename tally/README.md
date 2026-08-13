@@ -74,9 +74,18 @@ open the exported XML in **Notepad on the remote machine**, Ctrl+A → Ctrl+C,
 then on your own PC paste into Notepad and save as `MickysStock.xml` — the text
 clipboard usually works even when file copy is blocked.
 
-### b) Automatic push from Tally (the "Sync to CRM" button)
+### b) Automatic push from Tally (hands-free + button)
+
+The TDL also registers a **Load Company event**: every time the company is
+opened in Tally, the stock report is pushed to the CRM automatically — no
+keypress needed. It's guarded by company name (CENTRE POINT FOODS PRIVATE
+LIMITED) so other companies never sync. The button below is for mid-day
+refreshes.
+
+### The "Sync to CRM" button
 The TDL defines a button on the report (right-hand button bar, shortcut
-**Alt+Z**) that HTTP-POSTs the report straight to the CRM — works from
+**Ctrl+F10**; Alt+Z is reserved by TallyPrime's Exchange menu) that
+HTTP-POSTs the report straight to the CRM — works from
 hosted/cloud Tally too because it's an outbound HTTPS call, like e-invoicing.
 
 One-time setup:
@@ -87,7 +96,8 @@ One-time setup:
    key value, and redeploy.
 3. Reload the TDL in Tally (quit & reopen Tally, or F1 → TDLs & AddOns).
 4. Open **Mickys Stock Export**, set the period if needed (F2), press
-   **Alt+Z**. The CRM's Stock page will show the new "last synced" time
+   **Ctrl+F10** (or click "Sync to CRM" in the right-hand button bar). The
+   CRM's Stock page will show the new "last synced" time
    (source: Tally push).
 
 Rotating the key: generate a new random string, update both the Railway

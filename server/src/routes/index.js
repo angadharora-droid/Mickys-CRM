@@ -97,6 +97,8 @@ router.post('/export/countries', authenticate, authorize(ADMIN), validate(v.expo
 router.put('/export/countries/:id', authenticate, authorize(ADMIN), validate(v.exportCountrySchema.partial()), exportKit.updateCountry);
 router.delete('/export/countries/:id', authenticate, authorize(ADMIN), exportKit.deleteCountry);
 // Daily-synced exchange rates; refresh/override is admin-only.
+router.get('/export/fob-items', authenticate, exportKit.listFobItems);
+
 router.get('/export/exchange-rates', authenticate, exportKit.getExchangeRates);
 router.post('/export/exchange-rates/refresh', authenticate, authorize(ADMIN), exportKit.refreshExchangeRates);
 router.put('/export/exchange-rates', authenticate, authorize(ADMIN), validate(v.exchangeRatesSchema), exportKit.updateExchangeRates);

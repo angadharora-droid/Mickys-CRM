@@ -72,7 +72,7 @@ const rateLineSchema = new mongoose.Schema(
  */
 const exportConfigSchema = new mongoose.Schema(
   {
-    rateType: { type: String, enum: ['distributor', 'institution'], default: 'distributor' },
+    rateType: { type: String, enum: ['distributor', 'institution', 'fob'], default: 'distributor' },
     loadingType: { type: String, enum: ['full', 'part'], default: 'full' },
     containerSize: { type: String, enum: ['', 'ft20', 'ft40'], default: 'ft20' },
     currency: { type: String, enum: ['USD', 'EUR', 'GBP', 'INR'], default: 'USD' },

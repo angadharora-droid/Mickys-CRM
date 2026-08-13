@@ -92,6 +92,17 @@ const updateExchangeRates = asyncHandler(async (req, res) => {
   res.json({ success: true, data: doc });
 });
 
+// ---------------- FOB cost master ----------------
+
+// GET /api/export/fob-items?variant=ft20|ft40|ton5 — the active FOB cost items
+// priced under that load option's standard mixed-load assumptions. Backs the
+// product picker of the export step's FOB rate type.
+const listFobItems = asyncHandler(async (req, res) => {
+  const variant = ['ft20', 'ft40', 'ton5'].includes(req.query.variant) ? req.query.variant : 'ft20';
+  const data = await exportKit.listFobItems(variant);
+  res.json({ success: true, data });
+});
+
 // ---------------- Rate card preview ----------------
 
 // POST /api/export/rate-card/preview — computed card as JSON. The live preview
@@ -111,5 +122,6 @@ module.exports = {
   getExchangeRates,
   refreshExchangeRates,
   updateExchangeRates,
+  listFobItems,
   previewRateCard,
 };

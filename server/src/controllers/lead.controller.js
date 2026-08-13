@@ -711,8 +711,48 @@ const confirmExportConfig = asyncHandler(async (req, res) => {
   // Resolve + validate every line against the backing master. Weights default
   // to the parsed pack size; a rate override is bounded by MRP like the
   // domestic kits and logged the same way.
-  const resolved = await exportKitService.resolveLines(rateType, lines);
   const edits = [];
+  if (rateType === 'fob') {
+    // FOB lines price off the cost master + standard mixed-load assumptions;
+    // there is no MRP bound, and exports are zero-rated so gst stays 0. The
+    // computed standard price doubles as the reference for deviation tracking.
+    const settings = await Setting.getGlobal();
+    const resolved = await exportKitService.resolveFobLines(
+      lines,
+      settings.export?.fob,
+      exportKitService.fobVariantKey(loadingType, containerSize)
+    );
+    lead.rates = resolved.map((l) => {
+      const netRate = round2(l.baseRateInr);
+      if (netRate !== l.standardRateInr) {
+        edits.push({ productName: l.productName, field: 'netRate', from: l.standardRateInr, to: netRate, by: req.user._id });
+      }
+      const deviationPct =
+        l.standardRateInr > 0 && netRate < l.standardRateInr
+          ? round2(((l.standardRateInr - netRate) / l.standardRateInr) * 100)
+          : 0;
+      return {
+        rateItemId: l.rateItemId,
+        sku: l.sku,
+        productName: l.productName,
+        packSize: l.packSize,
+        category: l.category || '',
+        included: true,
+        mrp: l.standardRateInr,
+        basic: 0,
+        dsp: 0,
+        standardNetRate: l.standardRateInr,
+        netRate,
+        suggestiveMargin: 0,
+        gst: 0,
+        netInclGst: netRate,
+        deviationPct,
+        qty: l.qty,
+        unitWeightKg: l.unitWeightKg || 0,
+      };
+    });
+  } else {
+  const resolved = await exportKitService.resolveLines(rateType, lines);
   lead.rates = resolved.map((l) => {
     const item = l.item;
     const netRate = round2(l.baseRateInr);
@@ -747,6 +787,7 @@ const confirmExportConfig = asyncHandler(async (req, res) => {
       unitWeightKg: l.unitWeightKg || 0,
     };
   });
+  }
 
   lead.exportConfig = {
     rateType,
@@ -774,7 +815,9 @@ const confirmExportConfig = asyncHandler(async (req, res) => {
     from, to: 'rates_confirmed', changedBy: req.user._id,
     note:
       `Export shipment: ${country.name} · ` +
-      `${loadingType === 'full' ? `full load (${card.config.container?.label || containerSize})` : 'part load'} · ` +
+      `${rateType === 'fob'
+        ? `FOB (${card.config.fob?.label || 'standard mixed load'})`
+        : loadingType === 'full' ? `full load (${card.config.container?.label || containerSize})` : 'part load'} · ` +
       `${lead.rates.length} product(s) · ${currency}`,
   });
   await lead.save();
