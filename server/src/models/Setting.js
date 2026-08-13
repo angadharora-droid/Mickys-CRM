@@ -80,7 +80,7 @@ const settingSchema = new mongoose.Schema(
           'Prices are FOB Nhava Sheva, Incoterms® 2020 — ocean freight and insurance are quoted separately based on destination port and booking date.',
           'Rates are based on one standard mixed-load consignment with approximately 18 MT saleable payload per FCL.',
           'Minimum commercial order: one mixed-load FCL, subject to minimum SKU quantities.',
-          'Rates are valid for 15 days and subject to exchange-rate and statutory-cost changes.',
+          'Rates are valid for 48 hours from the card date only.',
           'The final proforma invoice may be adjusted if actual container utilisation is materially below the standard payload.',
           'Exports are zero-rated under GST (supply under LUT); prices exclude destination-country duties, taxes and clearance charges.',
           'Subject to Nagpur jurisdiction.',
@@ -92,8 +92,7 @@ const settingSchema = new mongoose.Schema(
         default: [
           "Rates are quoted per pack and include the shipment's apportioned logistics as itemised on this card.",
           'Exports are zero-rated under GST (supply under LUT); prices exclude destination-country duties, taxes and clearance charges.',
-          'Rates are indicative until confirmed by proforma invoice and are valid for 15 days from the card date.',
-          'Exchange rate as printed on this card; final invoicing at the rate prevailing on the invoice date.',
+          'Rates are indicative until confirmed by proforma invoice and are valid for 48 hours from the card date.',
           'Subject to Nagpur jurisdiction.',
         ].join('\n'),
       },

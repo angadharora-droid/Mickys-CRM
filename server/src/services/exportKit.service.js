@@ -648,7 +648,7 @@ function newPage(doc, label) {
 
 /** Two-column labelled facts card describing the shipment configuration. */
 function shipmentCard(doc, y, card) {
-  const { config, fx, summary } = card;
+  const { config, summary } = card;
   const W = contentWidth(doc);
   const rows = [
     ['Rate Type', config.rateType === 'institution' ? 'Institution Rate' : 'Distributor Rate'],
@@ -660,7 +660,6 @@ function shipmentCard(doc, y, card) {
     ['CIR (Insurance)', `${config.country.cirPercent}% of goods value`],
     ['Shipment Weight', summary.totalWeightKg === null ? 'Not available' : `${summary.totalWeightKg.toLocaleString('en-IN')} kg`],
     ['Currency', config.currency],
-    ['Exchange Rate', config.currency === 'INR' ? '—' : `1 ${config.currency} = Rs. ${fx.inrPerUnit}  (as of ${fmtDate(fx.fetchedAt)})`],
   ];
   const colW = W / 2 - 12;
   const rowH = 26;
@@ -785,7 +784,7 @@ function totalsBlock(doc, y, card, footerLabel) {
 
 /** Facts card for the FOB card: the standard mixed-load pricing basis. */
 function fobBasisCard(doc, y, card) {
-  const { config, fx } = card;
+  const { config } = card;
   const a = config.fob;
   const W = contentWidth(doc);
   const rows = [
@@ -801,7 +800,6 @@ function fobBasisCard(doc, y, card) {
       ? [['Destination', config.country.code ? `${config.country.name} (${config.country.code})` : config.country.name]]
       : []),
     ['Currency', config.currency],
-    ['Exchange Rate', config.currency === 'INR' ? '—' : `1 ${config.currency} = Rs. ${fx.inrPerUnit}  (as of ${fmtDate(fx.fetchedAt)})`],
   ];
   const colW = W / 2 - 12;
   const rowH = 26;
