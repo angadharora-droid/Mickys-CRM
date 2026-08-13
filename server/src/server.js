@@ -7,6 +7,7 @@ const { startDailyReport } = require('./services/dailyReport.service');
 const { backfillLeadStates } = require('./scripts/backfill-states');
 const { backfillMetaUsage } = require('./scripts/backfill-meta-usage');
 const { ensureFobCatalogue } = require('./scripts/ensure-fob-catalogue');
+const { updateRateCardTerms } = require('./scripts/update-rate-card-terms');
 
 async function main() {
   try {
@@ -35,6 +36,11 @@ async function main() {
     ensureFobCatalogue()
       .then((n) => n && console.log(`[fob] seeded ${n} FOB cost item(s)`))
       .catch((err) => console.error('[fob] catalogue seed failed:', err.message));
+    // Rate-card terms changed (no exchange-rate clause, 48-hour validity):
+    // rewrite the old default clauses still stored in settings / lead terms.
+    updateRateCardTerms()
+      .then((n) => n && console.log(`[terms] rewrote rate-card terms on ${n} document(s)`))
+      .catch((err) => console.error('[terms] terms update failed:', err.message));
   } catch (err) {
     console.error('[server] failed to start:', err.message);
     process.exit(1);
