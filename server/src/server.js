@@ -6,6 +6,7 @@ const { startFxSync } = require('./services/fx.service');
 const { startDailyReport } = require('./services/dailyReport.service');
 const { backfillLeadStates } = require('./scripts/backfill-states');
 const { backfillMetaUsage } = require('./scripts/backfill-meta-usage');
+const { ensureFobCatalogue } = require('./scripts/ensure-fob-catalogue');
 
 async function main() {
   try {
@@ -29,6 +30,11 @@ async function main() {
     backfillMetaUsage()
       .then((n) => n && console.log(`[usage] backfilled dailyUsage on ${n} Meta lead(s)`))
       .catch((err) => console.error('[usage] backfill failed:', err.message));
+    // First run only: load the FOB cost master (export kit) from the workbook
+    // transcription, since the manual seed script is kept local-only.
+    ensureFobCatalogue()
+      .then((n) => n && console.log(`[fob] seeded ${n} FOB cost item(s)`))
+      .catch((err) => console.error('[fob] catalogue seed failed:', err.message));
   } catch (err) {
     console.error('[server] failed to start:', err.message);
     process.exit(1);
