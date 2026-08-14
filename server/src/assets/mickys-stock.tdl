@@ -62,10 +62,19 @@
 ;; ---- Hands-free daily sync -------------------------------------------
 ;; Fires the same HTTP push automatically every time this company is
 ;; opened in Tally, so the CRM gets fresh stock each morning without
-;; anyone pressing anything. Guarded by company name so opening any other
-;; company never pushes its data to the CRM.
+;; anyone pressing anything. Events invoke a function (CALL) rather than
+;; running HTTP Post directly - the direct form works on buttons but can
+;; silently do nothing in an event context. The guard matches only the
+;; first 12 characters of the company name ("CENTRE POINT") so wording
+;; differences like PVT LTD vs PRIVATE LIMITED never break it, while
+;; other companies still never push their data to the CRM.
+[Function: MickysPushToCrm]
+    00 : HTTP Post : @@MickysSyncURL : ASCII : MickysStockReport
+
+;; Both 0- and 1-based positions are checked because $$StringPart's start
+;; index differs across releases - either match passes the guard.
 [System: Events]
-    MickysAutoSync : Load Company : ##SVCurrentCompany = "CENTRE POINT FOODS PRIVATE LIMITED" : HTTP Post : @@MickysSyncURL : ASCII : MickysStockReport
+    MickysAutoSync : Load Company : ($$StringPart:##SVCurrentCompany:0:12 = "CENTRE POINT") OR ($$StringPart:##SVCurrentCompany:1:12 = "CENTRE POINT") : CALL : MickysPushToCrm
 
 ;; --------------------------- Report shell ----------------------------
 [Report: MickysStockReport]
