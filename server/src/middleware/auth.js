@@ -34,4 +34,18 @@ const authorize = (...roles) => (req, _res, next) => {
   next();
 };
 
-module.exports = { authenticate, authorize };
+/**
+ * Module-assignment guard: requireModule('sales_orders'). Admins bypass;
+ * accounts with no assignments fall back to the Leads CRM (legacy default).
+ */
+const requireModule = (name) => (req, _res, next) => {
+  if (!req.user) return next(ApiError.unauthorized());
+  if (req.user.role === 'admin') return next();
+  const modules = req.user.modules?.length ? req.user.modules : ['leads'];
+  if (!modules.includes(name)) {
+    return next(ApiError.forbidden('This module is not assigned to you'));
+  }
+  next();
+};
+
+module.exports = { authenticate, authorize, requireModule };

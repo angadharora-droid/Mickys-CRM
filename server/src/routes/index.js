@@ -1,6 +1,6 @@
 const express = require('express');
 
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, authorize, requireModule } = require('../middleware/auth');
 const { loginLimiter, authLimiter, generateLimiter, emailLimiter } = require('../middleware/security');
 const validate = require('../middleware/validate');
 const upload = require('../middleware/upload');
@@ -27,6 +27,14 @@ const router = express.Router();
 const ADMIN = 'admin';
 const EXEC = 'sales_exec';
 const PR = 'pr_manager';
+
+// ---------- Module assignments ----------
+// Non-admin users only reach the app sections assigned on their account
+// (User.modules). The Leads CRM groups are gated here by prefix; the sales
+// module is gated per-route further down because /stock/sync and /stock/tdl
+// must stay reachable with the Tally key (no JWT).
+router.use(['/leads', '/follow-ups', '/reports', '/dashboard'], authenticate, requireModule('leads'));
+const SALES_MODULE = requireModule('sales_orders');
 
 // ---------- Auth ----------
 router.post('/auth/login', loginLimiter, validate(v.loginSchema), auth.login);
@@ -115,31 +123,31 @@ router.post('/export/rate-card/preview', authenticate, validate(v.exportRateCard
 router.post('/stock/sync', stock.tallyKeyOrAdmin, stock.syncStock);
 // TallyPrime loads its TDL from this URL (key-gated, key injected on serve).
 router.get('/stock/tdl', stock.tallyKeyOrAdmin, stock.serveTdl);
-router.get('/stock', authenticate, authorize(ADMIN, EXEC), stock.listStock);
-router.get('/stock/daily', authenticate, authorize(ADMIN, EXEC), stock.dailyStock);
-router.get('/stock/vendors', authenticate, authorize(ADMIN, EXEC), stock.listVendors);
-router.get('/stock/customers', authenticate, authorize(ADMIN, EXEC), stock.listCustomers);
-router.get('/stock/groups', authenticate, authorize(ADMIN, EXEC), stock.listGroups);
-router.get('/stock/summary', authenticate, authorize(ADMIN, EXEC), stock.stockSummary);
+router.get('/stock', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, stock.listStock);
+router.get('/stock/daily', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, stock.dailyStock);
+router.get('/stock/vendors', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, stock.listVendors);
+router.get('/stock/customers', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, stock.listCustomers);
+router.get('/stock/groups', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, stock.listGroups);
+router.get('/stock/summary', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, stock.stockSummary);
 
 // ---------- Sales Order module: orders ----------
 // Admins manage all orders; execs create orders and manage their own.
 // Deleting is admin-only.
-router.post('/sales-orders', authenticate, authorize(ADMIN, EXEC), validate(v.salesOrderSchema), salesOrders.createSalesOrder);
-router.get('/sales-orders', authenticate, authorize(ADMIN, EXEC), salesOrders.listSalesOrders);
-router.get('/sales-orders/:id', authenticate, authorize(ADMIN, EXEC), salesOrders.getSalesOrder);
-router.get('/sales-orders/:id/pdf', authenticate, authorize(ADMIN, EXEC), salesOrders.salesOrderPdf);
-router.put('/sales-orders/:id', authenticate, authorize(ADMIN, EXEC), validate(v.salesOrderSchema), salesOrders.updateSalesOrder);
-router.put('/sales-orders/:id/status', authenticate, authorize(ADMIN, EXEC), validate(v.salesOrderStatusSchema), salesOrders.updateStatus);
+router.post('/sales-orders', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, validate(v.salesOrderSchema), salesOrders.createSalesOrder);
+router.get('/sales-orders', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, salesOrders.listSalesOrders);
+router.get('/sales-orders/:id', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, salesOrders.getSalesOrder);
+router.get('/sales-orders/:id/pdf', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, salesOrders.salesOrderPdf);
+router.put('/sales-orders/:id', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, validate(v.salesOrderSchema), salesOrders.updateSalesOrder);
+router.put('/sales-orders/:id/status', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, validate(v.salesOrderStatusSchema), salesOrders.updateStatus);
 router.delete('/sales-orders/:id', authenticate, authorize(ADMIN), salesOrders.deleteSalesOrder);
 
 // ---------- Sales Order module: appointed customers (rate freeze) ----------
 // A delivered lead can be appointed as a customer with the kit's emailed
 // rates frozen; their sales orders then only contain those items/rates.
-router.post('/sales-customers', authenticate, authorize(ADMIN, EXEC), validate(v.appointedCustomerCreateSchema), salesCustomers.createCustomer);
-router.get('/sales-customers', authenticate, authorize(ADMIN, EXEC), salesCustomers.listCustomers);
-router.get('/sales-customers/:id', authenticate, authorize(ADMIN, EXEC), salesCustomers.getCustomer);
-router.put('/sales-customers/:id', authenticate, authorize(ADMIN, EXEC), validate(v.appointedCustomerSchema), salesCustomers.updateCustomer);
+router.post('/sales-customers', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, validate(v.appointedCustomerCreateSchema), salesCustomers.createCustomer);
+router.get('/sales-customers', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, salesCustomers.listCustomers);
+router.get('/sales-customers/:id', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, salesCustomers.getCustomer);
+router.put('/sales-customers/:id', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, validate(v.appointedCustomerSchema), salesCustomers.updateCustomer);
 router.delete('/sales-customers/:id', authenticate, authorize(ADMIN), salesCustomers.deleteCustomer);
 
 // ---------- In-app notifications (the header bell) ----------

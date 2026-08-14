@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { cn, getInitials } from '@/lib/utils';
-import { ROLE_LABELS } from '@/lib/constants';
+import { ROLE_LABELS, MODULES, hasModule } from '@/lib/constants';
 import { LayoutDashboard, Boxes, ReceiptText, UserCheck, ArrowLeftRight, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -29,6 +29,12 @@ const NAV_SECTIONS = [
 
 export default function SalesSidebar({ open, onClose }) {
   const { user } = useAuth();
+
+  // The escape hatch back to the leads CRM only shows for users who can
+  // actually enter it (module assignment).
+  const sections = NAV_SECTIONS.filter(
+    (s) => s.label !== 'Switch' || hasModule(user, MODULES.LEADS)
+  );
 
   return (
     <>
@@ -66,7 +72,7 @@ export default function SalesSidebar({ open, onClose }) {
 
         {/* Navigation */}
         <nav className="sidebar-scroll flex-1 overflow-y-auto py-5 px-3 space-y-6">
-          {NAV_SECTIONS.map((section) => (
+          {sections.map((section) => (
             <div key={section.label}>
               <p className="px-3 mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-sidebar-muted">
                 {section.label}

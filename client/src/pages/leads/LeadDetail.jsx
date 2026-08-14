@@ -13,6 +13,8 @@ import {
   DEFAULT_DISTRIBUTOR_AGREEMENT_TERMS,
   FIXED_KIT_CC,
   LEAD_OPTIONAL_FIELDS,
+  MODULES,
+  hasModule,
 } from '@/lib/constants';
 import { useAuth } from '@/context/AuthContext';
 import { cn, formatCurrency, formatDate, formatDateTime, formatBytes } from '@/lib/utils';
@@ -815,7 +817,7 @@ export default function LeadDetail() {
 
       {/* Kit delivered → the lead can be appointed as a rate-frozen customer
           in the Sales Order module (admin + sales execs). */}
-      {lead.status === 'delivered' && user?.role !== 'pr_manager' && (
+      {lead.status === 'delivered' && user?.role !== 'pr_manager' && hasModule(user, MODULES.SALES_ORDERS) && (
         <Card className="border-emerald-300 bg-emerald-50/60">
           <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4">
             <div className="flex items-center gap-3">

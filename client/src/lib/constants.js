@@ -16,6 +16,30 @@ export const ROLE_OPTIONS = [
   { value: 'pr_manager', label: 'PR Manager' },
 ];
 
+// App sections a user can be assigned to (User.modules). Admins bypass
+// assignments entirely; accounts without any keep the legacy Leads access.
+export const MODULES = {
+  LEADS: 'leads',
+  SALES_ORDERS: 'sales_orders',
+  INVOICING: 'invoicing',
+  DISPATCH: 'dispatch',
+};
+
+export const MODULE_OPTIONS = [
+  { value: 'leads', label: 'Leads CRM' },
+  { value: 'sales_orders', label: 'Sales Order Generation' },
+  { value: 'invoicing', label: 'Invoice Generation (coming soon)' },
+  { value: 'dispatch', label: 'Dispatch (coming soon)' },
+];
+
+/** Does this user have access to a module? Admins always do. */
+export const hasModule = (user, moduleName) => {
+  if (!user) return false;
+  if (user.role === ROLES.ADMIN) return true;
+  const assigned = user.modules?.length ? user.modules : [MODULES.LEADS];
+  return assigned.includes(moduleName);
+};
+
 export const LEAD_STATUSES = ['new', 'kit_selected', 'rates_confirmed', 'generated', 'delivered'];
 
 export const STATUS_LABELS = {
