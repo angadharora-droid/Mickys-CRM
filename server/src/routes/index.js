@@ -19,6 +19,7 @@ const pushCtrl = require('../controllers/push.controller');
 const notifications = require('../controllers/notification.controller');
 const reports = require('../controllers/report.controller');
 const stock = require('../controllers/stock.controller');
+const salesOrders = require('../controllers/salesOrder.controller');
 
 const router = express.Router();
 
@@ -109,13 +110,25 @@ router.post('/export/rate-card/preview', authenticate, validate(v.exportRateCard
 // ---------- Sales Order module: Tally stock mirror ----------
 // Sync accepts the Mickys Stock Export XML either from a signed-in admin
 // (manual upload) or from the Tally-side agent presenting X-Tally-Key.
+// Reads are open to sales execs too — they build orders from this data.
 router.post('/stock/sync', stock.tallyKeyOrAdmin, stock.syncStock);
-router.get('/stock', authenticate, authorize(ADMIN), stock.listStock);
-router.get('/stock/daily', authenticate, authorize(ADMIN), stock.dailyStock);
-router.get('/stock/vendors', authenticate, authorize(ADMIN), stock.listVendors);
-router.get('/stock/customers', authenticate, authorize(ADMIN), stock.listCustomers);
-router.get('/stock/groups', authenticate, authorize(ADMIN), stock.listGroups);
-router.get('/stock/summary', authenticate, authorize(ADMIN), stock.stockSummary);
+router.get('/stock', authenticate, authorize(ADMIN, EXEC), stock.listStock);
+router.get('/stock/daily', authenticate, authorize(ADMIN, EXEC), stock.dailyStock);
+router.get('/stock/vendors', authenticate, authorize(ADMIN, EXEC), stock.listVendors);
+router.get('/stock/customers', authenticate, authorize(ADMIN, EXEC), stock.listCustomers);
+router.get('/stock/groups', authenticate, authorize(ADMIN, EXEC), stock.listGroups);
+router.get('/stock/summary', authenticate, authorize(ADMIN, EXEC), stock.stockSummary);
+
+// ---------- Sales Order module: orders ----------
+// Admins manage all orders; execs create orders and manage their own.
+// Deleting is admin-only.
+router.post('/sales-orders', authenticate, authorize(ADMIN, EXEC), validate(v.salesOrderSchema), salesOrders.createSalesOrder);
+router.get('/sales-orders', authenticate, authorize(ADMIN, EXEC), salesOrders.listSalesOrders);
+router.get('/sales-orders/:id', authenticate, authorize(ADMIN, EXEC), salesOrders.getSalesOrder);
+router.get('/sales-orders/:id/pdf', authenticate, authorize(ADMIN, EXEC), salesOrders.salesOrderPdf);
+router.put('/sales-orders/:id', authenticate, authorize(ADMIN, EXEC), validate(v.salesOrderSchema), salesOrders.updateSalesOrder);
+router.put('/sales-orders/:id/status', authenticate, authorize(ADMIN, EXEC), validate(v.salesOrderStatusSchema), salesOrders.updateStatus);
+router.delete('/sales-orders/:id', authenticate, authorize(ADMIN), salesOrders.deleteSalesOrder);
 
 // ---------- In-app notifications (the header bell) ----------
 router.get('/notifications', authenticate, notifications.listNotifications);

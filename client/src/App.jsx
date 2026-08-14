@@ -106,7 +106,7 @@ export default function App() {
       {/* Sales Order module — its own shell with a separate sidebar/nav */}
       <Route
         element={
-          <ProtectedRoute roles={[ROLES.ADMIN]}>
+          <ProtectedRoute roles={[ROLES.ADMIN, ROLES.SALES_EXEC]}>
             <SalesLayout />
           </ProtectedRoute>
         }
