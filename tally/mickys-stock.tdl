@@ -8,6 +8,8 @@
 ;;    * For every stock item it returns: group, category, base unit,
 ;;      opening qty/rate/value, inward qty/value, outward qty/value,
 ;;      closing qty/rate/value, standard cost and standard price.
+;;    * It also returns every vendor (ledgers under Sundry Creditors,
+;;      sub-groups included) as <VENDOR> elements: name and group.
 ;;    * Opening figures respect SVFROMDATE and closing figures respect
 ;;      SVTODATE sent in the request, so the same report also answers
 ;;      "stock as on <date>".
@@ -57,7 +59,7 @@
     Title : "Mickys Stock Export"
 
 [Form: MickysStockForm]
-    Parts   : MickysStockPart
+    Parts   : MickysStockPart, MickysVendorPart
     Buttons : MickysSyncBtn
     XMLTag  : "MICKYSSTOCK"
 
@@ -168,3 +170,32 @@
     Fetch : OpeningBalance, OpeningRate, OpeningValue
     Fetch : ClosingBalance, ClosingRate, ClosingValue
     Fetch : StandardCost, StandardPrice
+
+;; ------------------------ Vendors (suppliers) -------------------------
+;; Every ledger under Sundry Creditors (sub-groups included) -> one
+;; <VENDOR> element with name and group. "Sundry Creditors" is one of
+;; Tally's built-in groups, so this needs no per-company configuration.
+[Part: MickysVendorPart]
+    Lines    : MickysVendorLine
+    Repeat   : MickysVendorLine : MickysVendors
+    Scrolled : Vertical
+
+[Line: MickysVendorLine]
+    Fields : MVName, MVGroup
+    XMLTag : "VENDOR"
+
+[Field: MVName]
+    Type   : String
+    Set as : $Name
+    XMLTag : "NAME"
+
+[Field: MVGroup]
+    Type   : String
+    Set as : $Parent
+    XMLTag : "GROUP"
+
+[Collection: MickysVendors]
+    Type       : Ledger
+    Child Of   : "Sundry Creditors"
+    Belongs To : Yes
+    Fetch      : Name, Parent

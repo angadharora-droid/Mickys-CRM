@@ -3,8 +3,10 @@ const asyncHandler = require('../utils/asyncHandler');
 const ApiError = require('../utils/ApiError');
 const env = require('../config/env');
 const StockItem = require('../models/StockItem');
+const StockSnapshot = require('../models/StockSnapshot');
 const StockSyncLog = require('../models/StockSyncLog');
-const { parseTallyStockXml } = require('../services/tallyStock.service');
+const Vendor = require('../models/Vendor');
+const { parseTallyStockXml, parseTallyVendors } = require('../services/tallyStock.service');
 const { getPagination, buildMeta } = require('../utils/pagination');
 const { logActivity } = require('../services/activity.service');
 const { searchRegex } = require('../utils/sanitize');
@@ -33,6 +35,26 @@ const tallyKeyOrAdmin = (req, res, next) => {
   });
 };
 
+/**
+ * Only Semi-Finished and Finished goods belong in the CRM — raw material,
+ * packing material and every other Tally group is dropped at sync time.
+ * Matched loosely (any group/category containing "finished", any casing) so
+ * "Finished Goods", "FINISHED GOODS", "Semi Finished" and "Semi-Finished
+ * Goods" all pass without depending on the exact wording in Tally.
+ */
+const SYNCED_GROUPS = /finished/i;
+
+/** Business date in IST (the Tally PC's timezone), e.g. "2026-08-14". */
+const istDateKey = (d) =>
+  new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(d);
+
+/** "2026-08-14" -> "2026-08-15" */
+const nextDateKey = (key) => {
+  const d = new Date(`${key}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+};
+
 // POST /api/stock/sync — body: raw XML (text/xml) or JSON { xml }
 const syncStock = asyncHandler(async (req, res) => {
   const xml = typeof req.body === 'string' ? req.body : req.body?.xml;
@@ -40,10 +62,19 @@ const syncStock = asyncHandler(async (req, res) => {
     throw ApiError.badRequest('No Tally XML provided');
   }
 
-  const items = parseTallyStockXml(xml);
-  if (!items.length) {
+  const parsed = parseTallyStockXml(xml);
+  if (!parsed.length) {
     throw ApiError.badRequest(
       'No stock items found in the XML — make sure this is the "Mickys Stock Export" file exported from Tally'
+    );
+  }
+
+  const items = parsed.filter(
+    (item) => SYNCED_GROUPS.test(item.group) || SYNCED_GROUPS.test(item.category)
+  );
+  if (!items.length) {
+    throw ApiError.badRequest(
+      'The XML parsed fine, but no items belong to a Semi Finished or Finished stock group — the CRM only syncs those groups. Check the stock group names in Tally.'
     );
   }
 
@@ -64,9 +95,63 @@ const syncStock = asyncHandler(async (req, res) => {
     $or: [{ syncedAt: { $lt: syncedAt } }, { syncedAt: null }],
   });
 
+  // Day-wise register: one snapshot per item per IST day. The first sync of
+  // the day freezes dayOpen* (opening position); later syncs only refresh the
+  // last-known position. Items that vanish from Tally mid-day drop out of
+  // today's snapshot too.
+  const dateKey = istDateKey(syncedAt);
+  await StockSnapshot.bulkWrite(
+    items.map((item) => ({
+      updateOne: {
+        filter: { date: dateKey, name: item.name },
+        update: {
+          $set: {
+            group: item.group,
+            category: item.category,
+            baseUnits: item.baseUnits,
+            qty: item.closingQty,
+            rate: item.closingRate,
+            value: item.closingValue,
+            lastSyncAt: syncedAt,
+          },
+          $setOnInsert: {
+            dayOpenQty: item.closingQty,
+            dayOpenRate: item.closingRate,
+            dayOpenValue: item.closingValue,
+            firstSyncAt: syncedAt,
+          },
+        },
+        upsert: true,
+      },
+    })),
+    { ordered: false }
+  );
+  await StockSnapshot.deleteMany({ date: dateKey, lastSyncAt: { $lt: syncedAt } });
+
+  // Vendors ride along in the same XML (updated TDL only) — mirror them the
+  // same way as stock, but leave the collection untouched when the export has
+  // no <VENDOR> blocks (older TDL still loaded in Tally).
+  const vendors = parseTallyVendors(xml);
+  if (vendors.length) {
+    await Vendor.bulkWrite(
+      vendors.map((v) => ({
+        updateOne: {
+          filter: { name: v.name },
+          update: { $set: { ...v, syncedAt } },
+          upsert: true,
+        },
+      })),
+      { ordered: false }
+    );
+    await Vendor.deleteMany({
+      $or: [{ syncedAt: { $lt: syncedAt } }, { syncedAt: null }],
+    });
+  }
+
   const log = await StockSyncLog.create({
     itemCount: items.length,
     removedCount: removed.deletedCount || 0,
+    vendorCount: vendors.length,
     source: req.tallyPush ? 'push' : 'upload',
     syncedBy: req.user?._id,
   });
@@ -78,21 +163,32 @@ const syncStock = asyncHandler(async (req, res) => {
     entityId: log._id,
     details:
       `Synced ${items.length} stock items from Tally (${req.tallyPush ? 'Tally push' : 'manual upload'})` +
+      (vendors.length ? ` and ${vendors.length} vendors` : '') +
+      (parsed.length > items.length
+        ? `; skipped ${parsed.length - items.length} outside Semi Finished/Finished groups`
+        : '') +
       (removed.deletedCount ? `; removed ${removed.deletedCount} no longer in Tally` : ''),
     ip: req.ip,
   });
 
   // Tally's HTTP Post action expects an XML response body; the dashboard
   // upload gets the usual JSON envelope.
+  const summary =
+    `${items.length} stock items` + (vendors.length ? ` and ${vendors.length} vendors` : '');
   if (req.tallyPush) {
     return res
       .type('text/xml')
-      .send(`<RESPONSE><STATUS>1</STATUS><MESSAGE>Synced ${items.length} stock items to Mickys CRM</MESSAGE></RESPONSE>`);
+      .send(`<RESPONSE><STATUS>1</STATUS><MESSAGE>Synced ${summary} to Mickys CRM</MESSAGE></RESPONSE>`);
   }
   res.json({
     success: true,
-    message: `Synced ${items.length} stock items`,
-    data: { itemCount: items.length, removedCount: removed.deletedCount || 0, syncedAt },
+    message: `Synced ${summary}`,
+    data: {
+      itemCount: items.length,
+      vendorCount: vendors.length,
+      removedCount: removed.deletedCount || 0,
+      syncedAt,
+    },
   });
 });
 
@@ -112,6 +208,52 @@ const listStock = asyncHandler(async (req, res) => {
     StockItem.countDocuments(filter),
   ]);
   res.json({ success: true, data: items, meta: buildMeta(total, page, limit) });
+});
+
+// GET /api/stock/daily?date=YYYY-MM-DD — day-wise opening/closing register.
+// Opening = position at the day's first sync (morning auto-push); closing =
+// next day's opening when that snapshot exists (settled), else the day's
+// last-sync position (still provisional).
+const dailyStock = asyncHandler(async (req, res) => {
+  const dates = (await StockSnapshot.distinct('date')).sort().reverse();
+  if (!dates.length) {
+    return res.json({ success: true, data: { date: null, dates: [], items: [] } });
+  }
+
+  const date = dates.includes(req.query.date) ? req.query.date : dates[0];
+  const [docs, nextDocs] = await Promise.all([
+    StockSnapshot.find({ date }).sort({ name: 1 }).lean(),
+    StockSnapshot.find({ date: nextDateKey(date) }).lean(),
+  ]);
+  const nextByName = new Map(nextDocs.map((d) => [d.name, d]));
+
+  const items = docs.map((d) => {
+    const next = nextByName.get(d.name);
+    return {
+      name: d.name,
+      group: d.group,
+      category: d.category,
+      baseUnits: d.baseUnits,
+      openingQty: d.dayOpenQty,
+      openingValue: d.dayOpenValue,
+      closingQty: next ? next.dayOpenQty : d.qty,
+      closingValue: next ? next.dayOpenValue : d.value,
+      settled: Boolean(next),
+    };
+  });
+
+  res.json({ success: true, data: { date, dates: dates.slice(0, 90), items } });
+});
+
+// GET /api/stock/vendors?search=
+const listVendors = asyncHandler(async (req, res) => {
+  const filter = {};
+  if (req.query.search) {
+    const rx = searchRegex(req.query.search);
+    filter.$or = [{ name: rx }, { group: rx }];
+  }
+  const vendors = await Vendor.find(filter).sort({ name: 1 }).limit(1000);
+  res.json({ success: true, data: vendors });
 });
 
 // GET /api/stock/groups
@@ -166,4 +308,12 @@ const stockSummary = asyncHandler(async (_req, res) => {
   });
 });
 
-module.exports = { tallyKeyOrAdmin, syncStock, listStock, listGroups, stockSummary };
+module.exports = {
+  tallyKeyOrAdmin,
+  syncStock,
+  listStock,
+  dailyStock,
+  listVendors,
+  listGroups,
+  stockSummary,
+};
