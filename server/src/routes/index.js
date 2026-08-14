@@ -113,6 +113,7 @@ router.post('/stock/sync', stock.tallyKeyOrAdmin, stock.syncStock);
 router.get('/stock', authenticate, authorize(ADMIN), stock.listStock);
 router.get('/stock/daily', authenticate, authorize(ADMIN), stock.dailyStock);
 router.get('/stock/vendors', authenticate, authorize(ADMIN), stock.listVendors);
+router.get('/stock/customers', authenticate, authorize(ADMIN), stock.listCustomers);
 router.get('/stock/groups', authenticate, authorize(ADMIN), stock.listGroups);
 router.get('/stock/summary', authenticate, authorize(ADMIN), stock.stockSummary);
 

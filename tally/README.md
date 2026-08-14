@@ -2,7 +2,7 @@
 
 Files here:
 
-- `mickys-stock.tdl` — the TDL to load into Tally Prime. Defines report `MickysStockReport` (opening / inward / outward / closing stock per item, plus group, category, unit, standard cost/price — and every vendor, i.e. ledgers under Sundry Creditors).
+- `mickys-stock.tdl` — the TDL to load into Tally Prime. Defines report `MickysStockReport` (opening / inward / outward / closing stock per item, plus group, category, unit, standard cost/price — and every vendor & customer, i.e. ledgers under Sundry Creditors / Sundry Debtors).
 - `sample-stock-request.xml` — the request envelope the CRM backend POSTs to Tally to pull that report.
 
 ## 1. One-time Tally setup (on the PC running Tally Prime)
@@ -51,13 +51,18 @@ The response contains one `<STOCKITEM>` element per item:
 </STOCKITEM>
 ```
 
-followed by one `<VENDOR>` element per ledger under Sundry Creditors:
+followed by one `<VENDOR>` element per ledger under Sundry Creditors and one
+`<CUSTOMER>` element per ledger under Sundry Debtors:
 
 ```xml
 <VENDOR>
   <NAME>Shree Traders</NAME>
   <GROUP>Sundry Creditors</GROUP>
 </VENDOR>
+<CUSTOMER>
+  <NAME>Hotel Blue Orchid</NAME>
+  <GROUP>Sundry Debtors</GROUP>
+</CUSTOMER>
 ```
 
 ## 3. Format notes (implemented in server/src/services/tallyStock.service.js)
@@ -89,10 +94,10 @@ Two ways, both hitting `POST /api/stock/sync` on the backend:
 > last sync of the day, marked provisional). For an exact same-day closing,
 > press **Ctrl+F10** after the day's last entry.
 
-> **Vendors.** The same export carries every ledger under Sundry Creditors;
-> the CRM mirrors them into the **Vendors** tab. They start appearing once
-> the updated `mickys-stock.tdl` is loaded on the Tally PC (quit & reopen
-> Tally after replacing the file).
+> **Vendors & customers.** The same export carries every ledger under
+> Sundry Creditors (→ **Vendors** tab) and Sundry Debtors (→ **Customers**
+> tab). They start appearing once the updated `mickys-stock.tdl` is loaded
+> on the Tally PC (quit & reopen Tally after replacing the file).
 
 ### a) Manual upload (works today, no setup)
 Export the report as XML (open report → Alt+E → Current → XML), then in the CRM
@@ -131,3 +136,37 @@ One-time setup:
 
 Rotating the key: generate a new random string, update both the Railway
 variable and the TDL URL.
+
+## 5. Hosted Tally (Spectra "App Anywhere") — gotchas & troubleshooting
+
+Our Tally runs on a hosted multi-user server, which changes how TDLs behave:
+
+**The TDL entry keeps disappearing / other users don't see it.** The Manage
+Local TDLs setting is saved into each Windows user's *own* virtualized
+profile, and the hosting provider resets those profiles during maintenance —
+so the entry survives only for the user who added it, and only until the next
+reset. A file sitting on one user's Desktop is also unreadable to the others.
+Fixes, best first:
+
+1. **Ask Spectra support to install the TDL centrally** (same as they do for
+   e-invoicing TDLs): put `mickys-stock.tdl` in a permanent server folder
+   (e.g. `C:\Tally\TDL\`) and register it in the central Tally configuration
+   so it loads for every user and survives resets. This is the proper fix.
+2. Otherwise keep ONE copy in a shared folder all users can open (e.g. the
+   published `EXPORTFiscal` or `TALLYBACKUP` folder) and add it via
+   F1 → TDLs & AddOns → F4 in each user's session, pointing at that path.
+3. Per-user copies work but every future TDL update must be re-pasted into
+   each copy — avoid if possible.
+
+**Auto-push isn't firing.** Check in this order:
+
+1. Is the TDL loaded at all? "Mickys Stock Export" must appear in Gateway of
+   Tally (see above — the entry may have been reset away).
+2. Press **Ctrl+F10** on the report. Success response → backend and key are
+   fine. Unauthorized/error → `TALLY_SYNC_KEY` on Railway is missing or
+   doesn't match the `key=` in `MickysSyncURL`.
+3. The event fires only when the company is **opened**. A hosted session that
+   keeps the company open 24×7 never re-fires it — the first user to open
+   the company each morning triggers the day's push. Repeat opens/pushes the
+   same day are harmless (the CRM just refreshes; the first push of the day
+   becomes that day's opening in the Day-wise register).
