@@ -112,6 +112,8 @@ router.post('/export/rate-card/preview', authenticate, validate(v.exportRateCard
 // (manual upload) or from the Tally-side agent presenting X-Tally-Key.
 // Reads are open to sales execs too — they build orders from this data.
 router.post('/stock/sync', stock.tallyKeyOrAdmin, stock.syncStock);
+// TallyPrime loads its TDL from this URL (key-gated, key injected on serve).
+router.get('/stock/tdl', stock.tallyKeyOrAdmin, stock.serveTdl);
 router.get('/stock', authenticate, authorize(ADMIN, EXEC), stock.listStock);
 router.get('/stock/daily', authenticate, authorize(ADMIN, EXEC), stock.dailyStock);
 router.get('/stock/vendors', authenticate, authorize(ADMIN, EXEC), stock.listVendors);

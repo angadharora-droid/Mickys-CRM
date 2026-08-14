@@ -1,4 +1,6 @@
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const asyncHandler = require('../utils/asyncHandler');
 const ApiError = require('../utils/ApiError');
 const env = require('../config/env');
@@ -228,6 +230,22 @@ const listStock = asyncHandler(async (req, res) => {
   res.json({ success: true, data: items, meta: buildMeta(total, page, limit) });
 });
 
+// GET /api/stock/tdl?key= — serves the current Mickys Stock Export TDL with
+// the real sync key substituted in. TallyPrime loads its TDL straight from
+// this URL (Manage Local TDLs accepts an http(s) path), so deploying the CRM
+// also rolls out TDL changes — no file copying onto the Tally machine.
+const TDL_TEMPLATE_PATH = path.join(__dirname, '..', 'assets', 'mickys-stock.tdl');
+const serveTdl = asyncHandler(async (req, res) => {
+  if (!env.tallySyncKey) {
+    throw ApiError.badRequest('TALLY_SYNC_KEY is not configured on the server');
+  }
+  const template = await fs.promises.readFile(TDL_TEMPLATE_PATH, 'utf8');
+  const body = template.replace(/\{\{TALLY_SYNC_KEY\}\}/g, env.tallySyncKey);
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.setHeader('Content-Disposition', 'inline; filename="mickys-stock.tdl"');
+  res.send(body);
+});
+
 // GET /api/stock/daily?date=YYYY-MM-DD — day-wise opening/closing register.
 // Opening = position at the day's first sync (morning auto-push); closing =
 // next day's opening when that snapshot exists (settled), else the day's
@@ -332,6 +350,7 @@ const stockSummary = asyncHandler(async (_req, res) => {
 module.exports = {
   tallyKeyOrAdmin,
   syncStock,
+  serveTdl,
   listStock,
   dailyStock,
   listVendors,
