@@ -18,6 +18,7 @@ const TAG_NAMES = [
   'INWARDQTY', 'INWARDVALUE', 'OUTWARDQTY', 'OUTWARDVALUE',
   'CLOSINGQTY', 'CLOSINGRATE', 'CLOSINGVALUE',
   'STANDARDCOST', 'STANDARDPRICE',
+  'LASTSALEPRICE', 'LASTPURCHASECOST',
 ];
 
 /** Marks Tally's reserved names ("Primary", "Not Applicable"). */
@@ -74,7 +75,7 @@ function parseTallyStockXml(xml) {
     const name = cleanName(raw.NAME);
     if (!name) continue;
 
-    byName.set(name, {
+    const item = {
       name,
       group: cleanName(raw.GROUP),
       category: cleanName(raw.CATEGORY),
@@ -91,7 +92,20 @@ function parseTallyStockXml(xml) {
       closingValue: toAmount(raw.CLOSINGVALUE),
       standardCost: toNumber(raw.STANDARDCOST),
       standardPrice: toNumber(raw.STANDARDPRICE),
-    });
+      lastSalePrice: toNumber(raw.LASTSALEPRICE),
+      lastPurchaseCost: toNumber(raw.LASTPURCHASECOST),
+    };
+
+    // Tally sometimes exports an empty rate tag even when qty and value are
+    // both present — derive the per-unit rate so consumers always get one.
+    if (!item.closingRate && item.closingQty > 0 && item.closingValue > 0) {
+      item.closingRate = Math.round((item.closingValue / item.closingQty) * 100) / 100;
+    }
+    if (!item.openingRate && item.openingQty > 0 && item.openingValue > 0) {
+      item.openingRate = Math.round((item.openingValue / item.openingQty) * 100) / 100;
+    }
+
+    byName.set(name, item);
   }
 
   return [...byName.values()];

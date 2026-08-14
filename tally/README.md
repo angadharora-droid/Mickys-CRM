@@ -9,13 +9,17 @@ Files:
 ## 1. One-time Tally setup (on the PC running Tally Prime)
 
 1. **Enable the XML gateway:** F1 (Help) → Settings → Connectivity → Client/Server configuration → set **"TallyPrime acts as" = Both** (leave "Enable ODBC" = No; keep the port it shows — 9001 in our setup). This setting is per-machine: do it only on the one PC the sync will talk to; other users' Tally installs are unaffected.
-2. **Load the TDL from the CRM (preferred):** F1 (Help) → TDLs & AddOns → press **F4** (Manage Local TDLs) → set "Load selected TDL files on startup" to **Yes** → enter this URL as the TDL path → **Ctrl+A** to save:
+2. **Get the TDL file from the CRM:** open this URL in a browser (replace `<TALLY_SYNC_KEY>` with the real key — same value as the Railway variable):
 
    ```
    https://api.mickys-crm.centrepointgroup.in/api/stock/tdl?key=<TALLY_SYNC_KEY>
    ```
 
-   (replace `<TALLY_SYNC_KEY>` with the real key — same value as the Railway variable). Tally re-fetches the TDL from the CRM on every start, so **deploying the CRM backend automatically rolls out TDL updates** — no more copying files onto the Tally machine. Fallback if the Tally release refuses URL paths: save the served file locally and point the path at the file.
+   It always serves the **latest** TDL with the sync key already filled in — this is the single source of truth; never hand-edit copies. Save it to a folder every Tally user can read (on the hosted VM: select-all → copy in the browser, paste into Notepad in the VM session, save as e.g. `TALLYBACKUP\mickys-stock.tdl`).
+
+   > TallyPrime's Manage Local TDLs screen only accepts **local file paths** — it rejects URLs with "Incorrect File/Folder Path!" (confirmed on our release), so the URL is the download source, not the load path.
+
+   **Load it:** F1 (Help) → TDLs & AddOns → press **F4** (Manage Local TDLs) → set "Load selected TDL files on startup" to **Yes** → enter the file's full path → **Ctrl+A** to save. Restart Tally. After any future CRM TDL update, re-download from the URL and overwrite the file.
 3. Keep the company **open** in Tally (the gateway only serves loaded companies).
 4. Sanity check: **"Mickys Stock Export"** should now appear in Gateway of Tally — open it to see the data on screen.
 
@@ -81,6 +85,11 @@ Confirmed against a real export from TallyPrime 7.0 (Gold):
 - Quantities include the unit (`360.00 KG`), rates the `/unit` suffix (`78.00/KG`).
 - Reserved names come flagged with a `&#4;` control char (`&#4; Primary`, `&#4; Not Applicable`) → treated as "no group/category".
 - Validation per item: `closing = opening + inward − outward`.
+- Tally may export **empty rate tags** even when qty and value are present —
+  the parser then derives the rate as `value ÷ qty`.
+- `LASTSALEPRICE` / `LASTPURCHASECOST` carry the rate of the item's most
+  recent sale/purchase voucher. The sales order form prefills the rate as:
+  standard price → last sale price → closing (valuation) rate.
 
 ## 4. Getting it into the CRM
 
@@ -153,18 +162,19 @@ profile, and the hosting provider resets those profiles during maintenance —
 so the entry survives only for the user who added it, and only until the next
 reset. Fixes, best first:
 
-1. **Ask Spectra support to register the TDL URL centrally** (same as they
-   deploy e-invoicing TDLs): add
-   `https://api.mickys-crm.centrepointgroup.in/api/stock/tdl?key=<TALLY_SYNC_KEY>`
-   as a TDL path in the central Tally configuration so it loads for every
-   user and survives resets. No file needs to be placed on the server at
-   all, and updates arrive automatically. This is the proper fix.
-2. Otherwise add that URL via F1 → TDLs & AddOns → F4 in each user's session.
-   Re-add after a profile reset (it's one URL to retype, not a file to
-   re-transfer).
-3. File-based loading still works as a fallback (one copy in a shared folder
-   like `EXPORTFiscal`/`TALLYBACKUP`), but updates then need manual copying —
-   avoid if possible.
+1. **Ask Spectra support to install the TDL centrally** (same as they deploy
+   e-invoicing TDLs): download it from
+   `https://api.mickys-crm.centrepointgroup.in/api/stock/tdl?key=<TALLY_SYNC_KEY>`,
+   place it in a permanent server folder (e.g. `C:\Tally\TDL\`) and register
+   it in the central Tally configuration (`tally.ini`) so it loads for every
+   user and survives profile resets. Worth also asking them to try
+   `TDL = <that URL>` directly in `tally.ini` — the F4 screen rejects URLs,
+   but the ini file may accept one; if it works, TDL updates become fully
+   automatic.
+2. Otherwise keep ONE copy in a shared folder all users can open
+   (`EXPORTFiscal`/`TALLYBACKUP`) and point each user's F4 entry at that
+   path. After a CRM TDL update, re-download from the URL and overwrite the
+   file once — every user picks it up on their next Tally start.
 
 **Auto-push isn't firing.** Check in this order:
 

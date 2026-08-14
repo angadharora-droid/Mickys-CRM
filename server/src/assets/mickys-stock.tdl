@@ -16,20 +16,25 @@
 ;;      SVTODATE sent in the request, so the same report also answers
 ;;      "stock as on <date>".
 ;;
-;;  How to load in Tally Prime (URL method - preferred, auto-updates):
-;;    In Tally Prime: F1 (Help) > TDLs & AddOns > F4 (Manage Local TDLs)
-;;    > "Load selected TDL files on startup" = Yes > enter this URL as
-;;    the TDL path > Ctrl+A to save:
+;;  How to get the current file (always up to date, key filled in):
+;;    Open this URL in any browser and save/copy the text:
 ;;      https://api.mickys-crm.centrepointgroup.in/api/stock/tdl?key=<TALLY_SYNC_KEY>
-;;    Tally fetches the latest TDL from the CRM backend on every start,
-;;    so deploying the CRM also updates the TDL - no file copying.
-;;    (Fallback: save this file locally with the real key filled in and
-;;    point the TDL path at the file, as before.)
+;;    (TallyPrime's Manage Local TDLs screen only accepts local file
+;;    paths - it rejects URLs - so the URL is the download source, not
+;;    the load path.)
+;;
+;;  How to load in Tally Prime:
+;;    1. Save the file from the URL above to a folder every Tally user
+;;       can read (on the hosted VM: paste via Notepad into a shared
+;;       folder, e.g. TALLYBACKUP\mickys-stock.tdl).
+;;    2. F1 (Help) > TDLs & AddOns > F4 (Manage Local TDLs) > "Load
+;;       selected TDL files on startup" = Yes > enter the file's full
+;;       path > Ctrl+A to save. Restart Tally.
 ;;
 ;;  NOTE: the repo copy of this file is a template - the CRM backend
 ;;  fills the sync-key placeholder in MickysSyncURL when serving it.
-;;  The template is not loadable as-is; use the URL above (or fill the
-;;  key in by hand).
+;;  The template is not loadable as-is; download from the URL above
+;;  (or fill the key in by hand).
 ;;
 ;;  How to query it:
 ;;    POST tally/sample-stock-request.xml to http://<tally-pc>:9001
@@ -85,6 +90,7 @@
     Fields : MSOutwardQty, MSOutwardValue
     Fields : MSClosingQty, MSClosingRate, MSClosingValue
     Fields : MSStdCost, MSStdPrice
+    Fields : MSLastSaleRate, MSLastPurchaseRate
     XMLTag : "STOCKITEM"
 
 ;; ----------------------------- Fields --------------------------------
@@ -172,6 +178,20 @@
     Set as : $StandardPrice
     XMLTag : "STANDARDPRICE"
 
+;; Last actual transaction rates (from vouchers) - the practical selling
+;; price / purchase cost even when standard rates are not maintained in
+;; the item master. If a release doesn't expose these methods they just
+;; export empty - the report still loads.
+[Field: MSLastSaleRate]
+    Type   : Rate
+    Set as : $LastSalePrice
+    XMLTag : "LASTSALEPRICE"
+
+[Field: MSLastPurchaseRate]
+    Type   : Rate
+    Set as : $LastPurchaseCost
+    XMLTag : "LASTPURCHASECOST"
+
 ;; --------------------------- Collection ------------------------------
 [Collection: MickysStockItems]
     Type  : Stock Item
@@ -179,6 +199,7 @@
     Fetch : OpeningBalance, OpeningRate, OpeningValue
     Fetch : ClosingBalance, ClosingRate, ClosingValue
     Fetch : StandardCost, StandardPrice
+    Fetch : LastSalePrice, LastPurchaseCost
 
 ;; ------------------------ Vendors (suppliers) -------------------------
 ;; Every ledger under Sundry Creditors (sub-groups included) -> one
