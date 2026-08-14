@@ -96,7 +96,9 @@ function OrderDialog({ open, onClose, order, onSaved }) {
         name: s.name,
         baseUnits: s.baseUnits,
         qty: '',
-        rate: String(s.standardPrice || s.closingRate || ''),
+        // Selling-rate prefill: maintained standard price, else the rate of
+        // the item's last sales voucher, else the stock valuation rate.
+        rate: String(s.standardPrice || s.lastSalePrice || s.closingRate || ''),
         available: s.closingQty,
       },
     ]);

@@ -379,6 +379,7 @@ export default function StockList() {
                       <TableHead className="text-right hidden sm:table-cell">Inward</TableHead>
                       <TableHead className="text-right hidden sm:table-cell">Outward</TableHead>
                       <TableHead className="text-right">Closing</TableHead>
+                      <TableHead className="text-right hidden lg:table-cell">Rate</TableHead>
                       <TableHead className="text-right hidden md:table-cell">Value</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -403,6 +404,11 @@ export default function StockList() {
                         </TableCell>
                         <TableCell className="text-right tabular-nums font-semibold">
                           {qty(item.closingQty, item.baseUnits)}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums hidden lg:table-cell">
+                          {item.closingRate
+                            ? `${formatCurrency(item.closingRate)}${item.baseUnits ? `/${item.baseUnits}` : ''}`
+                            : '—'}
                         </TableCell>
                         <TableCell className="text-right tabular-nums hidden md:table-cell">
                           {formatCurrency(item.closingValue)}

@@ -26,6 +26,10 @@ const stockItemSchema = new mongoose.Schema(
     closingValue: { type: Number, default: 0 },
     standardCost: { type: Number, default: 0 },
     standardPrice: { type: Number, default: 0 },
+    // Rates from the item's most recent sale/purchase voucher — the
+    // practical selling price when standard rates aren't maintained.
+    lastSalePrice: { type: Number, default: 0 },
+    lastPurchaseCost: { type: Number, default: 0 },
 
     syncedAt: { type: Date, index: true },
   },
