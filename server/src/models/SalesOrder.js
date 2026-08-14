@@ -13,6 +13,9 @@ const salesOrderSchema = new mongoose.Schema(
   {
     number: { type: String, required: true, unique: true }, // SO-2026-0001
     customerName: { type: String, required: true, trim: true, index: true },
+    // Set when the order is for an appointed (rate-frozen) customer — their
+    // frozen list restricts items and dictates rates.
+    customer: { type: mongoose.Schema.Types.ObjectId, ref: 'AppointedCustomer' },
     items: [
       {
         name: { type: String, required: true, trim: true },

@@ -107,19 +107,40 @@ function renderSalesOrderPdf(order, exec) {
       pageFooter(doc);
       let y = 104;
 
-      // Customer / order info card
-      doc.roundedRect(M, y, CW, 66, 6).fill(LIGHT);
+      // Customer / order info card. Appointed customers carry full details
+      // (all stored in CAPS); plain orders just show the name.
+      const cust = order.customer && order.customer.companyName ? order.customer : null;
+      const custLines = cust
+        ? [
+            cust.address,
+            cust.gstin ? `GSTIN: ${cust.gstin}` : null,
+            cust.mobile ? `Mob: ${cust.mobile}` : null,
+            cust.email || null,
+          ].filter(Boolean)
+        : [];
+      const cardH = Math.max(66, 44 + custLines.length * 11 + 10);
+      doc.roundedRect(M, y, CW, cardH, 6).fill(LIGHT);
       const half = CW / 2 - 10;
       doc.fill(SLATE).font('Helvetica-Bold').fontSize(8).text('CUSTOMER', M + 12, y + 10);
       doc.font('Helvetica-Bold').fontSize(13).fill(MAROON).text(order.customerName, M + 12, y + 22, { width: half });
+      doc.font('Helvetica').fontSize(8.5).fill(SLATE);
+      let cy = y + 42;
+      for (const line of custLines) {
+        doc.text(line, M + 12, cy, { width: half });
+        cy += 11;
+      }
       const rx = M + CW / 2 + 10;
       doc.font('Helvetica-Bold').fontSize(8).fill(SLATE).text('ORDER DETAILS', rx, y + 10);
       doc.font('Helvetica').fontSize(9).fill(INK);
       doc.text(`Order No: ${order.number}`, rx, y + 22, { width: half });
       doc.text(`Order Date: ${fmtDate(order.createdAt)}`, rx, y + 34, { width: half });
       doc.text(`Booked By: ${exec?.name || '-'}${exec?.phone ? ` · ${exec.phone}` : ''}`, rx, y + 46, { width: half });
+      if (cust) {
+        doc.font('Helvetica-Oblique').fontSize(7.5).fill(MAROON)
+          .text('Rates as per frozen price list', rx, y + 58, { width: half });
+      }
       doc.fillColor(INK);
-      y += 66 + 16;
+      y += cardH + 16;
 
       // Items table
       y = tableHeader(doc, y);

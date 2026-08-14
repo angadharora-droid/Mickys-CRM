@@ -2,7 +2,7 @@ import { NavLink } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { cn, getInitials } from '@/lib/utils';
 import { ROLE_LABELS } from '@/lib/constants';
-import { LayoutDashboard, Boxes, ReceiptText, ArrowLeftRight, X } from 'lucide-react';
+import { LayoutDashboard, Boxes, ReceiptText, UserCheck, ArrowLeftRight, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 
@@ -18,6 +18,7 @@ const NAV_SECTIONS = [
       { to: '/sales', label: 'Overview', icon: LayoutDashboard, end: true },
       { to: '/sales/stock', label: 'Stock from Tally', icon: Boxes },
       { to: '/sales/orders', label: 'Sales Orders', icon: ReceiptText },
+      { to: '/sales/customers', label: 'Customers', icon: UserCheck },
     ],
   },
   {

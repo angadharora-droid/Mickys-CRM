@@ -22,6 +22,7 @@ import EmailSettings from '@/pages/EmailSettings';
 import SalesOverview from '@/pages/sales/SalesOverview';
 import StockList from '@/pages/sales/StockList';
 import SalesOrders from '@/pages/sales/SalesOrders';
+import SalesCustomers, { SalesCustomerForm } from '@/pages/sales/SalesCustomers';
 import NotFound from '@/pages/NotFound';
 
 export default function App() {
@@ -114,6 +115,9 @@ export default function App() {
         <Route path="/sales" element={<SalesOverview />} />
         <Route path="/sales/stock" element={<StockList />} />
         <Route path="/sales/orders" element={<SalesOrders />} />
+        <Route path="/sales/customers" element={<SalesCustomers />} />
+        <Route path="/sales/customers/new" element={<SalesCustomerForm />} />
+        <Route path="/sales/customers/:id" element={<SalesCustomerForm />} />
       </Route>
 
       <Route path="/404" element={<NotFound />} />

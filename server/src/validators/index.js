@@ -405,10 +405,33 @@ const pushUnsubscribeSchema = z.object({
   endpoint: z.string().url().max(1000),
 });
 
+// ---------- Appointed customers (rate freeze) ----------
+// All details are stored in CAPS by the model. The five header fields are the
+// "important" ones; GSTIN stays optional for unregistered buyers.
+const appointedCustomerSchema = z.object({
+  companyName: z.string().trim().min(2).max(200),
+  email: z.string().trim().email().max(200),
+  gstin: z.string().trim().max(20).optional().or(z.literal('')),
+  mobile: z.string().trim().min(7).max(20),
+  address: z.string().trim().min(3).max(500),
+  leadId: objectId.optional(),
+  items: z
+    .array(
+      z.object({
+        sku: z.string().trim().max(40).optional().or(z.literal('')),
+        name: z.string().trim().min(1).max(200),
+        packSize: z.string().trim().max(60).optional().or(z.literal('')),
+        rate: z.number().min(0),
+      })
+    )
+    .min(1, 'Keep at least one item in the frozen rate list'),
+});
+
 // ---------- Sales orders ----------
 // Amounts are recomputed server-side; the client only sends qty and rate.
 const salesOrderSchema = z.object({
   customerName: z.string().trim().min(2).max(200),
+  customerId: objectId.optional(), // appointed customer → frozen list enforced
   items: z
     .array(
       z.object({
@@ -462,4 +485,5 @@ module.exports = {
   pushUnsubscribeSchema,
   salesOrderSchema,
   salesOrderStatusSchema,
+  appointedCustomerSchema,
 };
