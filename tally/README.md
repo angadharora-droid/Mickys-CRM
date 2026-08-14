@@ -1,14 +1,21 @@
 # Tally Prime → Mickys CRM: Stock Export
 
-Files here:
+Files:
 
-- `mickys-stock.tdl` — the TDL to load into Tally Prime. Defines report `MickysStockReport` (opening / inward / outward / closing stock per item, plus group, category, unit, standard cost/price — and every vendor & customer, i.e. ledgers under Sundry Creditors / Sundry Debtors).
+- `../server/src/assets/mickys-stock.tdl` — the TDL **template** (the sync key appears as `{{TALLY_SYNC_KEY}}`). The backend serves it, key filled in, at
+  `https://api.mickys-crm.centrepointgroup.in/api/stock/tdl?key=<TALLY_SYNC_KEY>` — Tally loads it straight from that URL. Defines report `MickysStockReport` (opening / inward / outward / closing stock per item, plus group, category, unit, standard cost/price — and every vendor & customer, i.e. ledgers under Sundry Creditors / Sundry Debtors).
 - `sample-stock-request.xml` — the request envelope the CRM backend POSTs to Tally to pull that report.
 
 ## 1. One-time Tally setup (on the PC running Tally Prime)
 
 1. **Enable the XML gateway:** F1 (Help) → Settings → Connectivity → Client/Server configuration → set **"TallyPrime acts as" = Both** (leave "Enable ODBC" = No; keep the port it shows — 9001 in our setup). This setting is per-machine: do it only on the one PC the sync will talk to; other users' Tally installs are unaffected.
-2. **Load the TDL:** F1 (Help) → TDLs & AddOns → press **F4** (Manage Local TDLs) → set "Load selected TDL files on startup" to **Yes** → enter the full path to `mickys-stock.tdl` → **Ctrl+A** to save. Tally will show it as loaded.
+2. **Load the TDL from the CRM (preferred):** F1 (Help) → TDLs & AddOns → press **F4** (Manage Local TDLs) → set "Load selected TDL files on startup" to **Yes** → enter this URL as the TDL path → **Ctrl+A** to save:
+
+   ```
+   https://api.mickys-crm.centrepointgroup.in/api/stock/tdl?key=<TALLY_SYNC_KEY>
+   ```
+
+   (replace `<TALLY_SYNC_KEY>` with the real key — same value as the Railway variable). Tally re-fetches the TDL from the CRM on every start, so **deploying the CRM backend automatically rolls out TDL updates** — no more copying files onto the Tally machine. Fallback if the Tally release refuses URL paths: save the served file locally and point the path at the file.
 3. Keep the company **open** in Tally (the gateway only serves loaded companies).
 4. Sanity check: **"Mickys Stock Export"** should now appear in Gateway of Tally — open it to see the data on screen.
 
@@ -123,19 +130,18 @@ HTTP-POSTs the report straight to the CRM — works from
 hosted/cloud Tally too because it's an outbound HTTPS call, like e-invoicing.
 
 One-time setup:
-1. In `mickys-stock.tdl`, edit the `MickysSyncURL` formula: replace
-   `YOUR-BACKEND-URL` with the CRM backend host (the Railway domain). The
-   `key=` value is the shared secret — leave it as generated.
-2. On Railway, add the environment variable `TALLY_SYNC_KEY` set to that same
-   key value, and redeploy.
-3. Reload the TDL in Tally (quit & reopen Tally, or F1 → TDLs & AddOns).
-4. Open **Mickys Stock Export**, set the period if needed (F2), press
+1. On Railway, set the environment variable `TALLY_SYNC_KEY` (done — the
+   served TDL picks it up automatically; the template never holds the key).
+2. Load the TDL via the URL (section 1, step 2).
+3. Open **Mickys Stock Export**, set the period if needed (F2), press
    **Ctrl+F10** (or click "Sync to CRM" in the right-hand button bar). The
    CRM's Stock page will show the new "last synced" time
    (source: Tally push).
 
-Rotating the key: generate a new random string, update both the Railway
-variable and the TDL URL.
+Rotating the key: generate a new random string, update the Railway variable,
+then update the `key=` in the TDL URL configured in Tally — both the served
+file's sync URL and the download gate use the env value, so nothing else
+changes.
 
 ## 5. Hosted Tally (Spectra "App Anywhere") — gotchas & troubleshooting
 
@@ -145,18 +151,20 @@ Our Tally runs on a hosted multi-user server, which changes how TDLs behave:
 Local TDLs setting is saved into each Windows user's *own* virtualized
 profile, and the hosting provider resets those profiles during maintenance —
 so the entry survives only for the user who added it, and only until the next
-reset. A file sitting on one user's Desktop is also unreadable to the others.
-Fixes, best first:
+reset. Fixes, best first:
 
-1. **Ask Spectra support to install the TDL centrally** (same as they do for
-   e-invoicing TDLs): put `mickys-stock.tdl` in a permanent server folder
-   (e.g. `C:\Tally\TDL\`) and register it in the central Tally configuration
-   so it loads for every user and survives resets. This is the proper fix.
-2. Otherwise keep ONE copy in a shared folder all users can open (e.g. the
-   published `EXPORTFiscal` or `TALLYBACKUP` folder) and add it via
-   F1 → TDLs & AddOns → F4 in each user's session, pointing at that path.
-3. Per-user copies work but every future TDL update must be re-pasted into
-   each copy — avoid if possible.
+1. **Ask Spectra support to register the TDL URL centrally** (same as they
+   deploy e-invoicing TDLs): add
+   `https://api.mickys-crm.centrepointgroup.in/api/stock/tdl?key=<TALLY_SYNC_KEY>`
+   as a TDL path in the central Tally configuration so it loads for every
+   user and survives resets. No file needs to be placed on the server at
+   all, and updates arrive automatically. This is the proper fix.
+2. Otherwise add that URL via F1 → TDLs & AddOns → F4 in each user's session.
+   Re-add after a profile reset (it's one URL to retype, not a file to
+   re-transfer).
+3. File-based loading still works as a fallback (one copy in a shared folder
+   like `EXPORTFiscal`/`TALLYBACKUP`), but updates then need manual copying —
+   avoid if possible.
 
 **Auto-push isn't firing.** Check in this order:
 
