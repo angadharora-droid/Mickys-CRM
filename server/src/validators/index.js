@@ -405,6 +405,26 @@ const pushUnsubscribeSchema = z.object({
   endpoint: z.string().url().max(1000),
 });
 
+// ---------- Sales orders ----------
+// Amounts are recomputed server-side; the client only sends qty and rate.
+const salesOrderSchema = z.object({
+  customerName: z.string().trim().min(2).max(200),
+  items: z
+    .array(
+      z.object({
+        name: z.string().trim().min(1).max(200),
+        qty: z.number().positive(),
+        rate: z.number().min(0),
+      })
+    )
+    .min(1, 'Add at least one item'),
+  notes: z.string().max(2000).optional().or(z.literal('')),
+});
+
+const salesOrderStatusSchema = z.object({
+  status: z.enum(['open', 'dispatched', 'cancelled']),
+});
+
 module.exports = {
   objectId,
   BUSINESS_TYPES,
@@ -440,4 +460,6 @@ module.exports = {
   exportConfirmSchema,
   pushSubscribeSchema,
   pushUnsubscribeSchema,
+  salesOrderSchema,
+  salesOrderStatusSchema,
 };

@@ -40,7 +40,7 @@ const NAV_SECTIONS = [
     label: 'Modules',
     items: [
       // Opens the separate Sales Order dashboard (its own sidebar & pages).
-      { to: '/sales', label: 'Sales Orders', icon: ReceiptText, roles: [ROLES.ADMIN] },
+      { to: '/sales', label: 'Sales Orders', icon: ReceiptText, roles: [ROLES.ADMIN, ROLES.SALES_EXEC] },
     ],
   },
   {
