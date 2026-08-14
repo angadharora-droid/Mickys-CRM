@@ -8,8 +8,10 @@
 ;;    * For every stock item it returns: group, category, base unit,
 ;;      opening qty/rate/value, inward qty/value, outward qty/value,
 ;;      closing qty/rate/value, standard cost and standard price.
-;;    * It also returns every vendor (ledgers under Sundry Creditors,
-;;      sub-groups included) as <VENDOR> elements: name and group.
+;;    * It also returns every vendor (ledgers under Sundry Creditors)
+;;      as <VENDOR> elements and every customer (ledgers under Sundry
+;;      Debtors) as <CUSTOMER> elements: name and group, sub-groups
+;;      included.
 ;;    * Opening figures respect SVFROMDATE and closing figures respect
 ;;      SVTODATE sent in the request, so the same report also answers
 ;;      "stock as on <date>".
@@ -59,7 +61,7 @@
     Title : "Mickys Stock Export"
 
 [Form: MickysStockForm]
-    Parts   : MickysStockPart, MickysVendorPart
+    Parts   : MickysStockPart, MickysVendorPart, MickysCustomerPart
     Buttons : MickysSyncBtn
     XMLTag  : "MICKYSSTOCK"
 
@@ -197,5 +199,34 @@
 [Collection: MickysVendors]
     Type       : Ledger
     Child Of   : "Sundry Creditors"
+    Belongs To : Yes
+    Fetch      : Name, Parent
+
+;; ------------------------ Customers (buyers) --------------------------
+;; Every ledger under Sundry Debtors (sub-groups included) -> one
+;; <CUSTOMER> element with name and group. "Sundry Debtors" is also a
+;; built-in group, so no per-company configuration needed.
+[Part: MickysCustomerPart]
+    Lines    : MickysCustomerLine
+    Repeat   : MickysCustomerLine : MickysCustomers
+    Scrolled : Vertical
+
+[Line: MickysCustomerLine]
+    Fields : MCName, MCGroup
+    XMLTag : "CUSTOMER"
+
+[Field: MCName]
+    Type   : String
+    Set as : $Name
+    XMLTag : "NAME"
+
+[Field: MCGroup]
+    Type   : String
+    Set as : $Parent
+    XMLTag : "GROUP"
+
+[Collection: MickysCustomers]
+    Type       : Ledger
+    Child Of   : "Sundry Debtors"
     Belongs To : Yes
     Fetch      : Name, Parent

@@ -2,11 +2,16 @@ const crypto = require('crypto');
 const asyncHandler = require('../utils/asyncHandler');
 const ApiError = require('../utils/ApiError');
 const env = require('../config/env');
+const Customer = require('../models/Customer');
 const StockItem = require('../models/StockItem');
 const StockSnapshot = require('../models/StockSnapshot');
 const StockSyncLog = require('../models/StockSyncLog');
 const Vendor = require('../models/Vendor');
-const { parseTallyStockXml, parseTallyVendors } = require('../services/tallyStock.service');
+const {
+  parseTallyStockXml,
+  parseTallyVendors,
+  parseTallyCustomers,
+} = require('../services/tallyStock.service');
 const { getPagination, buildMeta } = require('../utils/pagination');
 const { logActivity } = require('../services/activity.service');
 const { searchRegex } = require('../utils/sanitize');
@@ -128,30 +133,36 @@ const syncStock = asyncHandler(async (req, res) => {
   );
   await StockSnapshot.deleteMany({ date: dateKey, lastSyncAt: { $lt: syncedAt } });
 
-  // Vendors ride along in the same XML (updated TDL only) — mirror them the
-  // same way as stock, but leave the collection untouched when the export has
-  // no <VENDOR> blocks (older TDL still loaded in Tally).
-  const vendors = parseTallyVendors(xml);
-  if (vendors.length) {
-    await Vendor.bulkWrite(
-      vendors.map((v) => ({
+  // Vendors (Sundry Creditors) and customers (Sundry Debtors) ride along in
+  // the same XML (updated TDL only) — mirrored the same way as stock, but a
+  // list absent from the export (older TDL still loaded in Tally) leaves its
+  // collection untouched.
+  const mirrorLedgers = async (Model, ledgers) => {
+    if (!ledgers.length) return;
+    await Model.bulkWrite(
+      ledgers.map((l) => ({
         updateOne: {
-          filter: { name: v.name },
-          update: { $set: { ...v, syncedAt } },
+          filter: { name: l.name },
+          update: { $set: { ...l, syncedAt } },
           upsert: true,
         },
       })),
       { ordered: false }
     );
-    await Vendor.deleteMany({
+    await Model.deleteMany({
       $or: [{ syncedAt: { $lt: syncedAt } }, { syncedAt: null }],
     });
-  }
+  };
+  const vendors = parseTallyVendors(xml);
+  const customers = parseTallyCustomers(xml);
+  await mirrorLedgers(Vendor, vendors);
+  await mirrorLedgers(Customer, customers);
 
   const log = await StockSyncLog.create({
     itemCount: items.length,
     removedCount: removed.deletedCount || 0,
     vendorCount: vendors.length,
+    customerCount: customers.length,
     source: req.tallyPush ? 'push' : 'upload',
     syncedBy: req.user?._id,
   });
@@ -163,7 +174,8 @@ const syncStock = asyncHandler(async (req, res) => {
     entityId: log._id,
     details:
       `Synced ${items.length} stock items from Tally (${req.tallyPush ? 'Tally push' : 'manual upload'})` +
-      (vendors.length ? ` and ${vendors.length} vendors` : '') +
+      (vendors.length ? `, ${vendors.length} vendors` : '') +
+      (customers.length ? `, ${customers.length} customers` : '') +
       (parsed.length > items.length
         ? `; skipped ${parsed.length - items.length} outside Semi Finished/Finished groups`
         : '') +
@@ -173,8 +185,13 @@ const syncStock = asyncHandler(async (req, res) => {
 
   // Tally's HTTP Post action expects an XML response body; the dashboard
   // upload gets the usual JSON envelope.
-  const summary =
-    `${items.length} stock items` + (vendors.length ? ` and ${vendors.length} vendors` : '');
+  const summary = [
+    `${items.length} stock items`,
+    vendors.length ? `${vendors.length} vendors` : '',
+    customers.length ? `${customers.length} customers` : '',
+  ]
+    .filter(Boolean)
+    .join(', ');
   if (req.tallyPush) {
     return res
       .type('text/xml')
@@ -186,6 +203,7 @@ const syncStock = asyncHandler(async (req, res) => {
     data: {
       itemCount: items.length,
       vendorCount: vendors.length,
+      customerCount: customers.length,
       removedCount: removed.deletedCount || 0,
       syncedAt,
     },
@@ -245,16 +263,19 @@ const dailyStock = asyncHandler(async (req, res) => {
   res.json({ success: true, data: { date, dates: dates.slice(0, 90), items } });
 });
 
-// GET /api/stock/vendors?search=
-const listVendors = asyncHandler(async (req, res) => {
-  const filter = {};
-  if (req.query.search) {
-    const rx = searchRegex(req.query.search);
-    filter.$or = [{ name: rx }, { group: rx }];
-  }
-  const vendors = await Vendor.find(filter).sort({ name: 1 }).limit(1000);
-  res.json({ success: true, data: vendors });
-});
+// GET /api/stock/vendors?search= and GET /api/stock/customers?search=
+const listLedgerMirror = (Model) =>
+  asyncHandler(async (req, res) => {
+    const filter = {};
+    if (req.query.search) {
+      const rx = searchRegex(req.query.search);
+      filter.$or = [{ name: rx }, { group: rx }];
+    }
+    const ledgers = await Model.find(filter).sort({ name: 1 }).limit(1000);
+    res.json({ success: true, data: ledgers });
+  });
+const listVendors = listLedgerMirror(Vendor);
+const listCustomers = listLedgerMirror(Customer);
 
 // GET /api/stock/groups
 const listGroups = asyncHandler(async (_req, res) => {
@@ -314,6 +335,7 @@ module.exports = {
   listStock,
   dailyStock,
   listVendors,
+  listCustomers,
   listGroups,
   stockSummary,
 };

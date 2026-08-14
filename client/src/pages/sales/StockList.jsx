@@ -15,7 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { Search, Boxes, Upload, Loader2, CalendarDays, Truck } from 'lucide-react';
+import { Search, Boxes, Upload, Loader2, CalendarDays, Truck, Users } from 'lucide-react';
 
 const ALL = '__all__';
 
@@ -151,34 +151,38 @@ function DailyView() {
   );
 }
 
-/** Vendors (Sundry Creditors ledgers) mirrored from Tally. */
-function VendorsView() {
-  const [vendors, setVendors] = useState(null);
+/**
+ * Vendors (Sundry Creditors) / customers (Sundry Debtors) mirrored from
+ * Tally — same shape, so one view serves both tabs.
+ */
+function LedgerView({ endpoint, icon, singular, plural, tallyGroup }) {
+  const Icon = icon;
+  const [ledgers, setLedgers] = useState(null);
   const [search, setSearch] = useState('');
 
   useEffect(() => {
-    api.get('/stock/vendors')
-      .then((res) => setVendors(res.data.data))
-      .catch((err) => { toast.error(apiError(err)); setVendors([]); });
-  }, []);
+    api.get(endpoint)
+      .then((res) => setLedgers(res.data.data))
+      .catch((err) => { toast.error(apiError(err)); setLedgers([]); });
+  }, [endpoint]);
 
-  if (vendors === null) return <Card><TableSkeleton rows={10} /></Card>;
+  if (ledgers === null) return <Card><TableSkeleton rows={10} /></Card>;
 
-  if (vendors.length === 0) {
+  if (ledgers.length === 0) {
     return (
       <Card>
         <EmptyState
-          icon={Truck}
-          title="No vendors synced yet"
-          description="Vendors come from the ledgers under Sundry Creditors in Tally. Load the updated mickys-stock.tdl on the Tally PC, then sync again to bring them in."
+          icon={Icon}
+          title={`No ${plural} synced yet`}
+          description={`${plural[0].toUpperCase()}${plural.slice(1)} come from the ledgers under ${tallyGroup} in Tally. Load the updated mickys-stock.tdl on the Tally PC, then sync again to bring them in.`}
         />
       </Card>
     );
   }
 
   const q = search.trim().toLowerCase();
-  const filtered = vendors.filter(
-    (v) => !q || v.name.toLowerCase().includes(q) || (v.group || '').toLowerCase().includes(q)
+  const filtered = ledgers.filter(
+    (l) => !q || l.name.toLowerCase().includes(q) || (l.group || '').toLowerCase().includes(q)
   );
 
   return (
@@ -187,7 +191,7 @@ function VendorsView() {
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Search vendors…"
+            placeholder={`Search ${plural}…`}
             className="pl-9"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -197,24 +201,24 @@ function VendorsView() {
 
       <Card>
         {filtered.length === 0 ? (
-          <EmptyState icon={Truck} title="No matching vendors" description="Try a different search." />
+          <EmptyState icon={Icon} title={`No matching ${plural}`} description="Try a different search." />
         ) : (
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Vendor</TableHead>
+                <TableHead>{singular}</TableHead>
                 <TableHead className="hidden sm:table-cell">Group</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filtered.map((v) => (
-                <TableRow key={v._id}>
+              {filtered.map((l) => (
+                <TableRow key={l._id}>
                   <TableCell>
-                    <p className="font-medium leading-tight">{v.name}</p>
-                    <p className="text-xs text-muted-foreground sm:hidden mt-0.5">{v.group || '—'}</p>
+                    <p className="font-medium leading-tight">{l.name}</p>
+                    <p className="text-xs text-muted-foreground sm:hidden mt-0.5">{l.group || '—'}</p>
                   </TableCell>
                   <TableCell className="hidden sm:table-cell">
-                    <Badge variant="secondary">{v.group || '—'}</Badge>
+                    <Badge variant="secondary">{l.group || '—'}</Badge>
                   </TableCell>
                 </TableRow>
               ))}
@@ -319,6 +323,7 @@ export default function StockList() {
           <TabsTrigger value="live">Live stock</TabsTrigger>
           <TabsTrigger value="daily">Day-wise</TabsTrigger>
           <TabsTrigger value="vendors">Vendors</TabsTrigger>
+          <TabsTrigger value="customers">Customers</TabsTrigger>
         </TabsList>
 
         <TabsContent value="live">
@@ -417,7 +422,23 @@ export default function StockList() {
         </TabsContent>
 
         <TabsContent value="vendors">
-          <VendorsView />
+          <LedgerView
+            endpoint="/stock/vendors"
+            icon={Truck}
+            singular="Vendor"
+            plural="vendors"
+            tallyGroup="Sundry Creditors"
+          />
+        </TabsContent>
+
+        <TabsContent value="customers">
+          <LedgerView
+            endpoint="/stock/customers"
+            icon={Users}
+            singular="Customer"
+            plural="customers"
+            tallyGroup="Sundry Debtors"
+          />
         </TabsContent>
       </Tabs>
     </div>

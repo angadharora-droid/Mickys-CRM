@@ -98,15 +98,15 @@ function parseTallyStockXml(xml) {
 }
 
 /**
- * Parses the <VENDOR> elements (ledgers under Sundry Creditors) that the
- * updated TDL appends after the stock items. Older TDL versions don't send
- * them — callers should treat an empty result as "vendors not in this export"
- * rather than "no vendors exist".
+ * Parses ledger elements (<VENDOR> = Sundry Creditors, <CUSTOMER> = Sundry
+ * Debtors) that the updated TDL appends after the stock items. Older TDL
+ * versions don't send them — callers should treat an empty result as "not in
+ * this export" rather than "none exist".
  */
-function parseTallyVendors(xml) {
-  if (typeof xml !== 'string' || !xml.includes('<VENDOR>')) return [];
+function parseLedgers(xml, tag) {
+  if (typeof xml !== 'string' || !xml.includes(`<${tag}>`)) return [];
 
-  const blocks = xml.match(/<VENDOR>[\s\S]*?<\/VENDOR>/g) || [];
+  const blocks = xml.match(new RegExp(`<${tag}>[\\s\\S]*?</${tag}>`, 'g')) || [];
   const byName = new Map();
 
   for (const block of blocks) {
@@ -118,4 +118,7 @@ function parseTallyVendors(xml) {
   return [...byName.values()];
 }
 
-module.exports = { parseTallyStockXml, parseTallyVendors };
+const parseTallyVendors = (xml) => parseLedgers(xml, 'VENDOR');
+const parseTallyCustomers = (xml) => parseLedgers(xml, 'CUSTOMER');
+
+module.exports = { parseTallyStockXml, parseTallyVendors, parseTallyCustomers };
