@@ -25,6 +25,7 @@ async function buildItems(items) {
     const s = byName.get(i.name);
     return {
       name: i.name,
+      packSize: i.packSize || '',
       baseUnits: s?.baseUnits || '',
       qty: i.qty,
       rate: i.rate,
@@ -56,6 +57,7 @@ async function applyFrozenCustomer(customerId, items) {
     }
     it.name = f.name;
     it.rate = f.rate;
+    it.packSize = f.packSize;
   }
   return appointed;
 }
