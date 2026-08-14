@@ -219,8 +219,14 @@ const listStock = asyncHandler(async (req, res) => {
   if (req.query.group) filter.group = req.query.group;
   if (req.query.inStock === 'true') filter.closingQty = { $gt: 0 };
   if (req.query.search) {
-    const rx = searchRegex(req.query.search);
-    filter.$or = [{ name: rx }, { group: rx }, { category: rx }];
+    // Word-order-independent search: every typed word must appear somewhere
+    // in name/group/category, so "chicken 1kg" finds "CP Chicken Nuggets
+    // 1kg" even though the words aren't adjacent.
+    const terms = String(req.query.search).trim().split(/\s+/).slice(0, 6);
+    filter.$and = terms.map((t) => {
+      const rx = searchRegex(t);
+      return { $or: [{ name: rx }, { group: rx }, { category: rx }] };
+    });
   }
 
   const [items, total] = await Promise.all([

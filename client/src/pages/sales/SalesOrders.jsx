@@ -21,7 +21,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import {
-  Search, ReceiptText, Plus, Download, Pencil, Trash2, Loader2, X,
+  Search, ReceiptText, Plus, Download, Pencil, Trash2, Loader2, X, Eye, ExternalLink,
 } from 'lucide-react';
 
 const ALL = '__all__';
@@ -38,6 +38,25 @@ const qty = (n, unit) => {
   return unit ? `${s} ${unit}` : s;
 };
 
+/** Every word of the query must appear in the text, in any order. */
+const matchesAllWords = (text, query) => {
+  const t = text.toLowerCase();
+  return query.toLowerCase().split(/\s+/).filter(Boolean).every((w) => t.includes(w));
+};
+
+/** Names starting with the query rank above mid-word matches. */
+const rankByPrefix = (list, query, getName) => {
+  const q = query.trim().toLowerCase();
+  if (!q) return list;
+  return [...list].sort(
+    (a, b) =>
+      Number(getName(b).toLowerCase().startsWith(q)) - Number(getName(a).toLowerCase().startsWith(q))
+  );
+};
+
+/** The rate the order line would be prefilled with. */
+const prefillRate = (s) => s.standardPrice || s.lastSalePrice || s.closingRate || 0;
+
 /**
  * Create/edit dialog — customer from Tally, items from live stock.
  * Keyboard flow mimics Tally voucher entry: Enter advances customer → item →
@@ -51,7 +70,10 @@ function OrderDialog({ open, onClose, order, onSaved }) {
   const [customerFocus, setCustomerFocus] = useState(false);
   const [customerHl, setCustomerHl] = useState(0);
   const [itemSearch, setItemSearch] = useState('');
+  const [itemFocus, setItemFocus] = useState(false);
   const [itemHl, setItemHl] = useState(0);
+  const [defaultStock, setDefaultStock] = useState([]); // in-stock list shown before typing
+  const itemNav = useRef(false); // true once ↑/↓ used on the current list
   const [lines, setLines] = useState([]);
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
@@ -73,6 +95,11 @@ function OrderDialog({ open, onClose, order, onSaved }) {
     setItemSearch('');
     setStock([]);
     api.get('/stock/customers').then((r) => setCustomers(r.data.data)).catch(() => {});
+    // Tally shows the item list as soon as you land on the field — preload
+    // the top in-stock items for the before-you-type list.
+    api.get('/stock', { params: { inStock: 'true', limit: 20 } })
+      .then((r) => setDefaultStock(r.data.data))
+      .catch(() => {});
     // Land on the customer field, like opening a fresh voucher in Tally.
     setTimeout(() => customerRef.current?.focus(), 80);
   }, [open, order]);
@@ -92,19 +119,23 @@ function OrderDialog({ open, onClose, order, onSaved }) {
   }, [open, itemSearch]);
 
   const customerMatches = useMemo(() => {
-    const q = customerName.trim().toLowerCase();
-    if (!q) return customers.slice(0, 8);
-    return customers.filter((c) => c.name.toLowerCase().includes(q)).slice(0, 8);
+    const q = customerName.trim();
+    if (!q) return customers.slice(0, 10);
+    const hits = customers.filter((c) => matchesAllWords(`${c.name} ${c.group || ''}`, q));
+    return rankByPrefix(hits, q, (c) => c.name).slice(0, 10);
   }, [customers, customerName]);
 
-  const itemMatches = useMemo(
-    () => stock.filter((s) => !lines.some((l) => l.name === s.name)).slice(0, 8),
-    [stock, lines]
-  );
+  // Typed query → server results; empty query + focused field → the
+  // preloaded in-stock list (Tally shows the item list before you type).
+  const itemMatches = useMemo(() => {
+    const q = itemSearch.trim();
+    const base = q ? rankByPrefix(stock, q, (s) => s.name) : itemFocus ? defaultStock : [];
+    return base.filter((s) => !lines.some((l) => l.name === s.name)).slice(0, 20);
+  }, [stock, defaultStock, itemFocus, itemSearch, lines]);
 
   // Keep list highlights in range as the matches change under them.
   useEffect(() => { setCustomerHl(0); }, [customerName, customers]);
-  useEffect(() => { setItemHl(0); }, [itemSearch, stock]);
+  useEffect(() => { setItemHl(0); itemNav.current = false; }, [itemSearch, stock]);
 
   const focusField = (key) => setTimeout(() => fieldRefs.current[key]?.focus(), 0);
 
@@ -130,11 +161,12 @@ function OrderDialog({ open, onClose, order, onSaved }) {
         qty: '',
         // Selling-rate prefill: maintained standard price, else the rate of
         // the item's last sales voucher, else the stock valuation rate.
-        rate: String(s.standardPrice || s.lastSalePrice || s.closingRate || ''),
+        rate: String(prefillRate(s) || ''),
         available: s.closingQty,
       },
     ]);
     setItemSearch('');
+    itemNav.current = false;
     focusField(`qty-${idx}`); // Tally flow: item → qty
   };
 
@@ -166,7 +198,7 @@ function OrderDialog({ open, onClose, order, onSaved }) {
     }
   };
 
-  const suggestionsOpen = itemSearch.trim().length > 0 || (customerFocus && customerMatches.length > 0);
+  const suggestionsOpen = itemMatches.length > 0 || (customerFocus && customerMatches.length > 0);
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -178,6 +210,7 @@ function OrderDialog({ open, onClose, order, onSaved }) {
           if (suggestionsOpen) {
             e.preventDefault();
             setItemSearch('');
+            setItemFocus(false);
             setCustomerFocus(false);
           }
         }}
@@ -247,14 +280,22 @@ function OrderDialog({ open, onClose, order, onSaved }) {
                 className="pl-9"
                 value={itemSearch}
                 onChange={(e) => setItemSearch(e.target.value)}
+                onFocus={() => { setItemFocus(true); itemNav.current = false; }}
+                onBlur={() => setTimeout(() => setItemFocus(false), 150)}
                 onKeyDown={(e) => {
-                  if (itemMatches.length > 0) moveHl(e, itemHl, setItemHl, itemMatches.length);
+                  if (itemMatches.length > 0) {
+                    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') itemNav.current = true;
+                    moveHl(e, itemHl, setItemHl, itemMatches.length);
+                  }
                   if (e.key === 'Enter') {
                     e.preventDefault();
-                    if (itemMatches.length > 0) addLine(itemMatches[itemHl]);
-                    // Enter on a blank item line ends the items section,
-                    // like Tally's End of List → move on to narration.
-                    else if (!itemSearch.trim()) notesRef.current?.focus();
+                    // Blank field + plain Enter = Tally's End of List → notes.
+                    // A typed query or an arrowed-to row means "add this item".
+                    if (itemMatches.length > 0 && (itemSearch.trim() || itemNav.current)) {
+                      addLine(itemMatches[itemHl]);
+                    } else if (!itemSearch.trim()) {
+                      notesRef.current?.focus();
+                    }
                   }
                 }}
               />
@@ -271,8 +312,15 @@ function OrderDialog({ open, onClose, order, onSaved }) {
                     onMouseEnter={() => setItemHl(i)}
                   >
                     <span className="truncate">{s.name}</span>
-                    <span className={`text-xs ml-2 shrink-0 ${s.closingQty > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                      {qty(s.closingQty, s.baseUnits)} in stock
+                    <span className="ml-2 shrink-0 text-right">
+                      <span className={`block text-xs ${s.closingQty > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                        {qty(s.closingQty, s.baseUnits)} in stock
+                      </span>
+                      {prefillRate(s) > 0 && (
+                        <span className="block text-[11px] text-muted-foreground">
+                          {formatCurrency(prefillRate(s))}{s.baseUnits ? `/${s.baseUnits}` : ''}
+                        </span>
+                      )}
                     </span>
                   </button>
                 ))}
@@ -330,7 +378,21 @@ function OrderDialog({ open, onClose, order, onSaved }) {
           {/* Notes + total */}
           <div>
             <p className="text-sm font-medium mb-1.5">Notes (optional)</p>
-            <Textarea ref={notesRef} rows={2} placeholder="Delivery instructions, payment terms…" value={notes} onChange={(e) => setNotes(e.target.value)} />
+            <Textarea
+              ref={notesRef}
+              rows={2}
+              placeholder="Delivery instructions, payment terms…"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              // Tally flow: Enter on the narration accepts the voucher.
+              // Shift+Enter still inserts a line break for longer notes.
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  if (!saving) save();
+                }
+              }}
+            />
           </div>
           <div className="flex items-center justify-between rounded-lg bg-muted px-4 py-3">
             <p className="text-sm font-medium">Total</p>
@@ -339,7 +401,7 @@ function OrderDialog({ open, onClose, order, onSaved }) {
         </div>
 
         <p className="hidden sm:block text-[11px] text-muted-foreground text-center">
-          Enter: next field · ↑↓: choose from list · Esc: back · <span className="font-medium">Ctrl+A: save</span>
+          Enter: next field (saves from Notes) · Shift+Enter: new line · ↑↓: choose from list · Esc: back · <span className="font-medium">Ctrl+A: save</span>
         </p>
         <DialogFooter className="mt-2">
           <Button variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>
@@ -364,6 +426,7 @@ export default function SalesOrders() {
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState(ALL);
   const [dialog, setDialog] = useState({ open: false, order: null });
+  const [previewFile, setPreviewFile] = useState(null); // { url, filename }
 
   const canManage = (o) => isAdmin || String(o.createdBy?._id || o.createdBy) === String(user?._id || '');
 
@@ -402,6 +465,27 @@ export default function SalesOrders() {
     } catch (err) {
       toast.error(apiError(err));
     }
+  };
+
+  const previewPdf = async (o) => {
+    try {
+      const res = await api.get(`/sales-orders/${o._id}/pdf`, { responseType: 'blob' });
+      const blobUrl = URL.createObjectURL(res.data);
+      setPreviewFile((current) => {
+        if (current?.url) URL.revokeObjectURL(current.url);
+        return { url: blobUrl, filename: `${o.number}.pdf` };
+      });
+    } catch (err) {
+      toast.error(apiError(err));
+    }
+  };
+
+  const closePreview = (open) => {
+    if (open) return;
+    setPreviewFile((current) => {
+      if (current?.url) URL.revokeObjectURL(current.url);
+      return null;
+    });
   };
 
   const changeStatus = async (o, next) => {
@@ -518,6 +602,9 @@ export default function SalesOrders() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1">
+                        <Button variant="ghost" size="icon" className="h-8 w-8" title="Preview PDF" onClick={() => previewPdf(o)}>
+                          <Eye className="h-4 w-4" />
+                        </Button>
                         <Button variant="ghost" size="icon" className="h-8 w-8" title="Download PDF" onClick={() => downloadPdf(o)}>
                           <Download className="h-4 w-4" />
                         </Button>
@@ -548,6 +635,31 @@ export default function SalesOrders() {
         onClose={() => setDialog({ open: false, order: null })}
         onSaved={fetchOrders}
       />
+
+      <Dialog open={Boolean(previewFile)} onOpenChange={closePreview}>
+        <DialogContent className="max-w-5xl p-0">
+          <DialogHeader className="px-5 pt-5">
+            <DialogTitle className="truncate pr-8">{previewFile?.filename || 'PDF Preview'}</DialogTitle>
+            {previewFile?.url && (
+              <a
+                href={previewFile.url}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex w-fit items-center gap-1 text-xs text-primary hover:underline"
+              >
+                <ExternalLink className="h-3.5 w-3.5" /> Open in new tab
+              </a>
+            )}
+          </DialogHeader>
+          {previewFile?.url && (
+            <iframe
+              title={previewFile.filename}
+              src={previewFile.url}
+              className="h-[75vh] w-full rounded-b-2xl border-0"
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
