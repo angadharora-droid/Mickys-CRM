@@ -432,6 +432,9 @@ const appointedCustomerSchema = z.object({
       })
     )
     .min(1, 'Keep at least one item in the frozen rate list'),
+  // Commercial terms frozen alongside the rates (same shape as the lead's
+  // editable kit terms, minus the distributor agreement rows).
+  terms: customTermsSchema.omit({ agreementTermsAndConditions: true }).optional(),
 });
 
 // Creation is only allowed from a delivered lead — leadId is mandatory.
