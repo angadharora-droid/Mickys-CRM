@@ -1,5 +1,7 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/context/AuthContext';
+import { MODULES, hasModule } from '@/lib/constants';
 import { LayoutDashboard, Boxes, ReceiptText, UserCheck, ArrowLeftRight } from 'lucide-react';
 
 /**
@@ -15,10 +17,12 @@ const tabClass = ({ isActive }) =>
 
 export default function SalesMobileNav() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const showCrmTab = hasModule(user, MODULES.LEADS);
 
   return (
     <nav className="lg:hidden fixed inset-x-0 bottom-0 z-40 border-t border-border bg-card/95 backdrop-blur-md shadow-nav pb-safe">
-      <div className="grid grid-cols-5 h-16">
+      <div className={cn('grid h-16', showCrmTab ? 'grid-cols-5' : 'grid-cols-4')}>
         <NavLink to="/sales" end className={tabClass}>
           {({ isActive }) => (
             <>
@@ -63,17 +67,19 @@ export default function SalesMobileNav() {
           )}
         </NavLink>
 
-        <button
-          type="button"
-          onClick={() => navigate('/')}
-          className="flex flex-col items-center justify-center gap-1 text-[11px] font-medium text-muted-foreground hover:text-foreground transition-colors"
-          aria-label="Back to Leads CRM"
-        >
-          <span className="flex h-7 items-center">
-            <ArrowLeftRight className="h-[22px] w-[22px]" />
-          </span>
-          CRM
-        </button>
+        {showCrmTab && (
+          <button
+            type="button"
+            onClick={() => navigate('/')}
+            className="flex flex-col items-center justify-center gap-1 text-[11px] font-medium text-muted-foreground hover:text-foreground transition-colors"
+            aria-label="Back to Leads CRM"
+          >
+            <span className="flex h-7 items-center">
+              <ArrowLeftRight className="h-[22px] w-[22px]" />
+            </span>
+            CRM
+          </button>
+        )}
       </div>
     </nav>
   );

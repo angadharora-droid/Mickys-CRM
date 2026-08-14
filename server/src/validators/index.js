@@ -56,6 +56,11 @@ const createUserBase = z.object({
   name: z.string().min(2),
   email: z.string().email(),
   role: z.enum(['admin', 'sales_exec', 'pr_manager']),
+  // Module assignments — which app sections the user can access.
+  modules: z
+    .array(z.enum(['leads', 'sales_orders', 'invoicing', 'dispatch']))
+    .min(1, 'Assign at least one module')
+    .optional(),
   employeeCode: z.string().min(1).max(20).optional().or(z.literal('')),
   phone: z.string().max(20).optional().or(z.literal('')),
   password: z.string().min(4, PASSWORD_RULE_MESSAGE),

@@ -5,7 +5,8 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import api, { apiError } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
-import { ROLE_LABELS, ROLE_OPTIONS } from '@/lib/constants';
+import { ROLE_LABELS, ROLE_OPTIONS, MODULE_OPTIONS } from '@/lib/constants';
+import { Checkbox } from '@/components/ui/checkbox';
 import { formatDateTime, getInitials } from '@/lib/utils';
 import PageHeader from '@/components/shared/PageHeader';
 import Pagination from '@/components/shared/Pagination';
@@ -37,6 +38,7 @@ const schema = z
     // Required on create, optional on edit — enforced in onSubmit since the
     // same form serves both modes.
     password: z.string().optional().or(z.literal('')),
+    modules: z.array(z.string()).min(1, 'Assign at least one module'),
   })
   .superRefine((d, ctx) => {
     // Mirrors the server rule: 8+ characters for everyone, except admin
@@ -50,7 +52,10 @@ const schema = z
     });
   });
 
-const EMPTY = { name: '', email: '', role: 'sales_exec', employeeCode: '', phone: '', password: '' };
+const EMPTY = { name: '', email: '', role: 'sales_exec', employeeCode: '', phone: '', password: '', modules: ['leads'] };
+
+/** Short module names for the table (full labels live in MODULE_OPTIONS). */
+const MODULE_SHORT = { leads: 'Leads', sales_orders: 'Sales Orders', invoicing: 'Invoicing', dispatch: 'Dispatch' };
 const ALL = '__all__';
 
 export default function Users() {
@@ -113,6 +118,7 @@ export default function Users() {
     reset({
       name: u.name, email: u.email, role: u.role,
       employeeCode: u.employeeCode || '', phone: u.phone || '', password: '',
+      modules: u.modules?.length ? u.modules : ['leads'],
     });
     setDialogOpen(true);
   };
@@ -248,6 +254,11 @@ export default function Users() {
                     </TableCell>
                     <TableCell>
                       <Badge variant="outline">{ROLE_LABELS[u.role]}</Badge>
+                      <p className="text-[11px] text-muted-foreground mt-1">
+                        {u.role === 'admin'
+                          ? 'All modules'
+                          : (u.modules?.length ? u.modules : ['leads']).map((m) => MODULE_SHORT[m] || m).join(', ')}
+                      </p>
                     </TableCell>
                     <TableCell className="hidden sm:table-cell font-mono text-xs">{u.employeeCode || '—'}</TableCell>
                     <TableCell className="hidden lg:table-cell text-xs">{u.lastLoginAt ? formatDateTime(u.lastLoginAt) : 'Never'}</TableCell>
@@ -350,6 +361,39 @@ export default function Users() {
                     Admin accounts may use a 4 or 6 digit PIN instead of a text password.
                   </p>
                 )}
+              </div>
+              {/* Module assignments — the user sees only the sections ticked
+                  here. Admin accounts always see everything. */}
+              <div className="space-y-2 sm:col-span-2">
+                <Label>Module access *</Label>
+                {formRole === 'admin' ? (
+                  <p className="text-sm text-muted-foreground">Admins have access to all modules.</p>
+                ) : (
+                  <Controller
+                    control={control}
+                    name="modules"
+                    render={({ field }) => (
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        {MODULE_OPTIONS.map((m) => (
+                          <label key={m.value} className="flex items-center gap-2 rounded-lg border p-2.5 text-sm cursor-pointer">
+                            <Checkbox
+                              checked={field.value?.includes(m.value)}
+                              onCheckedChange={(checked) =>
+                                field.onChange(
+                                  checked
+                                    ? [...(field.value || []), m.value]
+                                    : (field.value || []).filter((v) => v !== m.value)
+                                )
+                              }
+                            />
+                            {m.label}
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                  />
+                )}
+                {errors.modules && <p className="text-sm text-destructive">{errors.modules.message}</p>}
               </div>
             </div>
             <DialogFooter>

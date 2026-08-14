@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { cn, getInitials } from '@/lib/utils';
-import { ROLES, ROLE_LABELS } from '@/lib/constants';
+import { ROLES, ROLE_LABELS, MODULES, hasModule } from '@/lib/constants';
 import {
   LayoutDashboard,
   Contact,
@@ -22,11 +22,11 @@ const NAV_SECTIONS = [
   {
     label: 'Overview',
     items: [
-      { to: '/', label: 'Dashboard', icon: LayoutDashboard, roles: ['*'] },
-      { to: '/leads', label: 'Leads & Kits', icon: Contact, roles: ['*'] },
-      { to: '/follow-ups', label: 'Follow-ups', icon: CalendarClock, roles: ['*'] },
-      { to: '/reports', label: 'Reports', icon: FileSpreadsheet, roles: ['*'] },
-      { to: '/my-records', label: 'My Records', icon: ClipboardList, roles: [ROLES.SALES_EXEC, ROLES.PR_MANAGER] },
+      { to: '/', label: 'Dashboard', icon: LayoutDashboard, roles: ['*'], module: MODULES.LEADS },
+      { to: '/leads', label: 'Leads & Kits', icon: Contact, roles: ['*'], module: MODULES.LEADS },
+      { to: '/follow-ups', label: 'Follow-ups', icon: CalendarClock, roles: ['*'], module: MODULES.LEADS },
+      { to: '/reports', label: 'Reports', icon: FileSpreadsheet, roles: ['*'], module: MODULES.LEADS },
+      { to: '/my-records', label: 'My Records', icon: ClipboardList, roles: [ROLES.SALES_EXEC, ROLES.PR_MANAGER], module: MODULES.LEADS },
     ],
   },
   {
@@ -40,7 +40,7 @@ const NAV_SECTIONS = [
     label: 'Modules',
     items: [
       // Opens the separate Sales Order dashboard (its own sidebar & pages).
-      { to: '/sales', label: 'Sales Orders', icon: ReceiptText, roles: [ROLES.ADMIN, ROLES.SALES_EXEC] },
+      { to: '/sales', label: 'Sales Orders', icon: ReceiptText, roles: [ROLES.ADMIN, ROLES.SALES_EXEC], module: MODULES.SALES_ORDERS },
     ],
   },
   {
@@ -58,7 +58,11 @@ export default function Sidebar({ open, onClose }) {
 
   const sections = NAV_SECTIONS.map((s) => ({
     ...s,
-    items: s.items.filter((i) => i.roles.includes('*') || i.roles.includes(user?.role)),
+    items: s.items.filter(
+      (i) =>
+        (i.roles.includes('*') || i.roles.includes(user?.role)) &&
+        (!i.module || hasModule(user, i.module))
+    ),
   })).filter((s) => s.items.length > 0);
 
   return (

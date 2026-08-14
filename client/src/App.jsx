@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
-import { ROLES } from '@/lib/constants';
+import { ROLES, MODULES, hasModule } from '@/lib/constants';
+import { useAuth } from '@/context/AuthContext';
 import AppLayout from '@/components/layout/AppLayout';
 import SalesLayout from '@/components/layout/SalesLayout';
 import ProtectedRoute from '@/components/layout/ProtectedRoute';
@@ -25,6 +26,14 @@ import SalesOrders from '@/pages/sales/SalesOrders';
 import SalesCustomers, { SalesCustomerForm } from '@/pages/sales/SalesCustomers';
 import NotFound from '@/pages/NotFound';
 
+/** "/" is the Leads dashboard — users without the Leads module land on their
+ *  own module's home instead. */
+function LeadsHome() {
+  const { user } = useAuth();
+  if (user && !hasModule(user, MODULES.LEADS)) return <Navigate to="/sales" replace />;
+  return <Dashboard />;
+}
+
 export default function App() {
   return (
     <Routes>
@@ -37,7 +46,7 @@ export default function App() {
           </ProtectedRoute>
         }
       >
-        <Route path="/" element={<Dashboard />} />
+        <Route path="/" element={<LeadsHome />} />
 
         <Route path="/leads" element={<LeadList />} />
         <Route
@@ -104,10 +113,11 @@ export default function App() {
         <Route path="/email-settings" element={<EmailSettings />} />
       </Route>
 
-      {/* Sales Order module — its own shell with a separate sidebar/nav */}
+      {/* Sales Order module — its own shell with a separate sidebar/nav.
+          Requires the sales_orders module assignment (admins bypass). */}
       <Route
         element={
-          <ProtectedRoute roles={[ROLES.ADMIN, ROLES.SALES_EXEC]}>
+          <ProtectedRoute roles={[ROLES.ADMIN, ROLES.SALES_EXEC]} module={MODULES.SALES_ORDERS}>
             <SalesLayout />
           </ProtectedRoute>
         }

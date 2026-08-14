@@ -4,6 +4,11 @@ const crypto = require('crypto');
 
 const ROLES = ['admin', 'sales_exec', 'pr_manager'];
 
+// App sections a user can be assigned to. Admins see everything regardless;
+// everyone else only reaches the modules listed on their account.
+// 'invoicing' and 'dispatch' are reserved for the upcoming modules.
+const MODULES = ['leads', 'sales_orders', 'invoicing', 'dispatch'];
+
 // bcrypt work factor. 12 is a sensible 2020s default; the cost is embedded in
 // each hash, so raising it doesn't invalidate passwords hashed at a lower cost.
 const BCRYPT_ROUNDS = 12;
@@ -35,6 +40,9 @@ const userSchema = new mongoose.Schema(
       index: true,
     },
     role: { type: String, enum: ROLES, required: true, index: true },
+    // Module assignments (see MODULES). Legacy/blank accounts default to the
+    // Leads CRM so existing users keep working unchanged.
+    modules: { type: [String], enum: MODULES, default: ['leads'] },
     employeeCode: { type: String, trim: true, uppercase: true },
     phone: { type: String, trim: true },
     // Floor of 4 covers admin PINs; the role-aware rule (8+ chars for everyone,
@@ -82,4 +90,5 @@ userSchema.methods.toJSON = function () {
 
 const User = mongoose.model('User', userSchema);
 User.ROLES = ROLES;
+User.MODULES = MODULES;
 module.exports = User;
