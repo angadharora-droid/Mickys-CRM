@@ -22,8 +22,9 @@ const frozenItemSchema = new mongoose.Schema(
 const appointedCustomerSchema = new mongoose.Schema(
   {
     companyName: { type: String, required: true, trim: true, uppercase: true, unique: true },
-    email: { type: String, trim: true, uppercase: true, default: '' },
-    gstin: { type: String, trim: true, uppercase: true, default: '' },
+    // Email is the one detail kept lowercase — it's an address, not a label.
+    email: { type: String, trim: true, lowercase: true, default: '' },
+    gstin: { type: String, required: true, trim: true, uppercase: true },
     mobile: { type: String, trim: true, default: '' },
     address: { type: String, trim: true, uppercase: true, default: '' },
 

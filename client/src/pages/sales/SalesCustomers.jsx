@@ -57,7 +57,7 @@ export function SalesCustomerForm() {
           const lead = data.data;
           setForm({
             companyName: caps(lead.businessName || ''),
-            email: caps(lead.email || ''),
+            email: (lead.email || '').toLowerCase(),
             gstin: caps(lead.gstin || ''),
             mobile: lead.mobileNumber || '',
             address: caps([lead.address, lead.city, lead.state].filter(Boolean).join(', ')),
@@ -132,11 +132,16 @@ export function SalesCustomerForm() {
           </div>
           <div>
             <p className="text-sm font-medium mb-1.5">Email *</p>
-            <Input className="uppercase" value={form.email} onChange={(e) => setField('email', e.target.value)} />
+            <Input
+              type="email"
+              inputMode="email"
+              value={form.email}
+              onChange={(e) => setForm((f) => ({ ...f, email: e.target.value.toLowerCase() }))}
+            />
           </div>
           <div>
-            <p className="text-sm font-medium mb-1.5">GSTIN</p>
-            <Input className="uppercase" value={form.gstin} onChange={(e) => setField('gstin', e.target.value)} />
+            <p className="text-sm font-medium mb-1.5">GSTIN *</p>
+            <Input className="uppercase" maxLength={15} placeholder="15-character GSTIN" value={form.gstin} onChange={(e) => setField('gstin', e.target.value)} />
           </div>
           <div>
             <p className="text-sm font-medium mb-1.5">Mobile *</p>

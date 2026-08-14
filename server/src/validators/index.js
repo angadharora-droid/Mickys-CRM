@@ -406,12 +406,15 @@ const pushUnsubscribeSchema = z.object({
 });
 
 // ---------- Appointed customers (rate freeze) ----------
-// All details are stored in CAPS by the model. The five header fields are the
-// "important" ones; GSTIN stays optional for unregistered buyers.
+// All details are stored in CAPS by the model except email (lowercase).
+// Company, email, GSTIN, mobile and address are all required.
 const appointedCustomerSchema = z.object({
   companyName: z.string().trim().min(2).max(200),
   email: z.string().trim().email().max(200),
-  gstin: z.string().trim().max(20).optional().or(z.literal('')),
+  gstin: z
+    .string()
+    .trim()
+    .regex(/^[0-9A-Za-z]{15}$/, 'GSTIN must be the 15-character number'),
   mobile: z.string().trim().min(7).max(20),
   address: z.string().trim().min(3).max(500),
   leadId: objectId.optional(),
