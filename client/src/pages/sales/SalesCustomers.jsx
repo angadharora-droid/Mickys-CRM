@@ -105,6 +105,23 @@ export function SalesCustomerForm() {
     }
   };
 
+  // Customers are appointed only from delivered leads — a bare /new URL has
+  // nothing to freeze, so point back at the Leads CRM.
+  if (!id && !leadId) {
+    return (
+      <div>
+        <PageHeader title="Appoint as customer" description="Customers are appointed only from delivered leads" />
+        <Card>
+          <EmptyState
+            icon={UserCheck}
+            title="Start from a delivered lead"
+            description='Open a delivered lead in the Leads CRM and click "Appoint as Customer" — the company details and the emailed kit rates come across automatically.'
+          />
+        </Card>
+      </div>
+    );
+  }
+
   if (loading) return <Card><TableSkeleton rows={8} /></Card>;
 
   return (
@@ -250,11 +267,7 @@ export default function SalesCustomers() {
 
   return (
     <div>
-      <PageHeader title="Customers" description="Appointed customers with frozen rate lists — orders use only these items and rates">
-        <Button onClick={() => navigate('/sales/customers/new')}>
-          <Plus className="h-4 w-4" /> New customer
-        </Button>
-      </PageHeader>
+      <PageHeader title="Customers" description="Appointed from delivered leads with frozen rate lists — orders use only these items and rates" />
 
       <Card className="p-4 mb-4">
         <div className="relative">

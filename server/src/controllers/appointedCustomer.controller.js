@@ -1,6 +1,7 @@
 const asyncHandler = require('../utils/asyncHandler');
 const ApiError = require('../utils/ApiError');
 const AppointedCustomer = require('../models/AppointedCustomer');
+const Lead = require('../models/Lead');
 const { logActivity } = require('../services/activity.service');
 const { searchRegex } = require('../utils/sanitize');
 
@@ -18,11 +19,20 @@ const pickBody = (body) => ({
   })),
 });
 
-// POST /api/sales-customers — appoint (freeze rates)
+// POST /api/sales-customers — appoint (freeze rates).
+// Customers can ONLY be created from a delivered lead — never from scratch.
 const createCustomer = asyncHandler(async (req, res) => {
-  const existing = await AppointedCustomer.findOne({
-    companyName: String(req.body.companyName).trim().toUpperCase(),
-  });
+  const lead = await Lead.findById(req.body.leadId);
+  if (!lead) throw ApiError.badRequest('Customers can only be appointed from a lead');
+  if (lead.status !== 'delivered') {
+    throw ApiError.badRequest('The kit must be delivered before this lead can be appointed as a customer');
+  }
+
+  const [byLead, byName] = await Promise.all([
+    AppointedCustomer.findOne({ lead: lead._id }),
+    AppointedCustomer.findOne({ companyName: String(req.body.companyName).trim().toUpperCase() }),
+  ]);
+  const existing = byLead || byName;
   if (existing) {
     throw ApiError.badRequest(
       `${existing.companyName} is already appointed — open it from the Customers page to edit the frozen rates`
@@ -31,7 +41,7 @@ const createCustomer = asyncHandler(async (req, res) => {
 
   const customer = await AppointedCustomer.create({
     ...pickBody(req.body),
-    lead: req.body.leadId || undefined,
+    lead: lead._id,
     frozenAt: new Date(),
     appointedBy: req.user._id,
   });

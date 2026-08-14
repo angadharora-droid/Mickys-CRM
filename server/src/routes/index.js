@@ -136,7 +136,7 @@ router.delete('/sales-orders/:id', authenticate, authorize(ADMIN), salesOrders.d
 // ---------- Sales Order module: appointed customers (rate freeze) ----------
 // A delivered lead can be appointed as a customer with the kit's emailed
 // rates frozen; their sales orders then only contain those items/rates.
-router.post('/sales-customers', authenticate, authorize(ADMIN, EXEC), validate(v.appointedCustomerSchema), salesCustomers.createCustomer);
+router.post('/sales-customers', authenticate, authorize(ADMIN, EXEC), validate(v.appointedCustomerCreateSchema), salesCustomers.createCustomer);
 router.get('/sales-customers', authenticate, authorize(ADMIN, EXEC), salesCustomers.listCustomers);
 router.get('/sales-customers/:id', authenticate, authorize(ADMIN, EXEC), salesCustomers.getCustomer);
 router.put('/sales-customers/:id', authenticate, authorize(ADMIN, EXEC), validate(v.appointedCustomerSchema), salesCustomers.updateCustomer);
