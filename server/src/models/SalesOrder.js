@@ -19,6 +19,9 @@ const salesOrderSchema = new mongoose.Schema(
     items: [
       {
         name: { type: String, required: true, trim: true },
+        // Pack weight from the appointed customer's frozen list (e.g. "1 KG");
+        // plain Tally-ledger orders have no weight source and leave it blank.
+        packSize: { type: String, trim: true, default: '' },
         baseUnits: { type: String, trim: true, default: '' },
         qty: { type: Number, required: true, min: 0 },
         rate: { type: Number, default: 0, min: 0 },

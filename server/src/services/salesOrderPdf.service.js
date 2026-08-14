@@ -56,20 +56,32 @@ function newPage(doc) {
 const bottomLimit = (doc) => doc.page.height - 70;
 
 // Item table column widths (content width is 515 on A4 with 40pt margins).
-const COLS = [
-  { key: 'idx', label: '#', w: 24, align: 'left' },
-  { key: 'name', label: 'ITEM', w: 231, align: 'left' },
-  { key: 'qty', label: 'QTY', w: 90, align: 'right' },
-  { key: 'rate', label: 'RATE', w: 80, align: 'right' },
-  { key: 'amount', label: 'AMOUNT', w: 90, align: 'right' },
-];
+// The WEIGHT column appears only when a line carries a pack weight (frozen-list
+// orders); plain Tally-ledger orders have no weight source and skip it.
+const colsFor = (hasWeight) =>
+  hasWeight
+    ? [
+        { key: 'idx', label: '#', w: 24, align: 'left' },
+        { key: 'name', label: 'ITEM', w: 171, align: 'left' },
+        { key: 'weight', label: 'WEIGHT', w: 70, align: 'right' },
+        { key: 'qty', label: 'QTY', w: 80, align: 'right' },
+        { key: 'rate', label: 'RATE', w: 80, align: 'right' },
+        { key: 'amount', label: 'AMOUNT', w: 90, align: 'right' },
+      ]
+    : [
+        { key: 'idx', label: '#', w: 24, align: 'left' },
+        { key: 'name', label: 'ITEM', w: 231, align: 'left' },
+        { key: 'qty', label: 'QTY', w: 90, align: 'right' },
+        { key: 'rate', label: 'RATE', w: 80, align: 'right' },
+        { key: 'amount', label: 'AMOUNT', w: 90, align: 'right' },
+      ];
 
-function tableHeader(doc, y) {
+function tableHeader(doc, y, cols) {
   const W = doc.page.width - 2 * M;
   doc.rect(M, y, W, 18).fill(MAROON);
   let x = M + 6;
   doc.font('Helvetica-Bold').fontSize(8).fill('#ffffff');
-  for (const c of COLS) {
+  for (const c of cols) {
     doc.text(c.label, x, y + 5, { width: c.w - 10, align: c.align });
     x += c.w;
   }
@@ -130,39 +142,39 @@ function renderSalesOrderPdf(order, exec) {
         cy += 11;
       }
       const rx = M + CW / 2 + 10;
-      doc.font('Helvetica-Bold').fontSize(8).fill(SLATE).text('ORDER DETAILS', rx, y + 10);
+      doc.font('Helvetica-Bold').fontSize(8).fill(SLATE).text('SALES ORDER DETAILS', rx, y + 10);
       doc.font('Helvetica').fontSize(9).fill(INK);
       doc.text(`Order No: ${order.number}`, rx, y + 22, { width: half });
       doc.text(`Order Date: ${fmtDate(order.createdAt)}`, rx, y + 34, { width: half });
       doc.text(`Booked By: ${exec?.name || '-'}${exec?.phone ? ` · ${exec.phone}` : ''}`, rx, y + 46, { width: half });
-      if (cust) {
-        doc.font('Helvetica-Oblique').fontSize(7.5).fill(MAROON)
-          .text('Rates as per frozen price list', rx, y + 58, { width: half });
-      }
       doc.fillColor(INK);
       y += cardH + 16;
 
       // Items table
-      y = tableHeader(doc, y);
+      const cols = colsFor((order.items || []).some((i) => i.packSize));
+      const nameCol = cols.find((c) => c.key === 'name');
+      const amountCol = cols[cols.length - 1];
+      y = tableHeader(doc, y, cols);
       doc.font('Helvetica').fontSize(9);
       (order.items || []).forEach((item, i) => {
-        const nameH = doc.heightOfString(item.name, { width: COLS[1].w - 10 });
+        const nameH = doc.heightOfString(item.name, { width: nameCol.w - 10 });
         const rowH = Math.max(18, nameH + 8);
         if (y + rowH > bottomLimit(doc)) {
           y = newPage(doc);
-          y = tableHeader(doc, y);
+          y = tableHeader(doc, y, cols);
         }
         if (i % 2 === 1) doc.rect(M, y, CW, rowH).fill(LIGHT);
         doc.fillColor(INK).font('Helvetica').fontSize(9);
         const cells = {
           idx: String(i + 1),
           name: item.name,
+          weight: item.packSize || '',
           qty: qtyText(item.qty, item.baseUnits),
           rate: inr2(item.rate),
           amount: inr2(item.amount),
         };
         let x = M + 6;
-        for (const c of COLS) {
+        for (const c of cols) {
           doc.text(cells[c.key], x, y + 5, { width: c.w - 10, align: c.align });
           x += c.w;
         }
@@ -174,8 +186,8 @@ function renderSalesOrderPdf(order, exec) {
       if (y + 26 > bottomLimit(doc)) y = newPage(doc);
       doc.rect(M, y, CW, 22).fill(GOLD);
       doc.font('Helvetica-Bold').fontSize(10).fill(MAROON);
-      doc.text('TOTAL', M + 6, y + 6, { width: CW - COLS[4].w - 12, align: 'right' });
-      doc.text(inr2(order.total), M + CW - COLS[4].w + 2, y + 6, { width: COLS[4].w - 12, align: 'right' });
+      doc.text('TOTAL', M + 6, y + 6, { width: CW - amountCol.w - 12, align: 'right' });
+      doc.text(inr2(order.total), M + CW - amountCol.w + 2, y + 6, { width: amountCol.w - 12, align: 'right' });
       doc.fillColor(INK);
       y += 22 + 14;
 
