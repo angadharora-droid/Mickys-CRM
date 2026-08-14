@@ -18,7 +18,7 @@
 ;;
 ;;  How to get the current file (always up to date, key filled in):
 ;;    Open this URL in any browser and save/copy the text:
-;;      https://api.mickys-crm.centrepointgroup.in/api/stock/tdl?key=<TALLY_SYNC_KEY>
+;;      https://api.mickys-crm.centrepointgroup.in/api/stock/tdl?key=31a80f69783d9fb21e74b5b31ddc059bbcf83c4184d76769
 ;;    (TallyPrime's Manage Local TDLs screen only accepts local file
 ;;    paths - it rejects URLs - so the URL is the download source, not
 ;;    the load path.)
