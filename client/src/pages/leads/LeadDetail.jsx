@@ -827,7 +827,7 @@ export default function LeadDetail() {
               <div>
                 <p className="font-semibold">Kit delivered — appoint as customer?</p>
                 <p className="text-xs text-muted-foreground">
-                  Freezes the emailed kit rates as their price list; their sales orders will use only those items and rates.
+                  Freezes the emailed kit rates &amp; terms as their price list; their sales orders will use only those items and rates.
                 </p>
               </div>
             </div>

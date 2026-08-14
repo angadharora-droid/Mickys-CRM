@@ -188,6 +188,40 @@ function renderSalesOrderPdf(order, exec) {
         y += doc.heightOfString(order.notes, { width: CW }) + 14;
       }
 
+      // Frozen commercial terms — appointed customers only (frozen alongside
+      // their rate list at appointment time).
+      const terms = cust?.terms || {};
+      const headline = [
+        terms.paymentTerms ? `Payment Terms: ${terms.paymentTerms}` : null,
+        terms.creditPeriod ? `Credit Period: ${terms.creditPeriod}` : null,
+      ].filter(Boolean);
+      const clauses = (terms.termsAndConditions || '')
+        .split('\n')
+        .map((l) => l.trim())
+        .filter(Boolean);
+      if (headline.length || clauses.length) {
+        if (y + 40 > bottomLimit(doc)) y = newPage(doc);
+        doc.font('Helvetica-Bold').fontSize(9).fill(MAROON).text('Terms & Conditions', M, y);
+        y += 13;
+        for (const line of headline) {
+          doc.font('Helvetica-Bold').fontSize(8.5).fill(INK);
+          const h = doc.heightOfString(line, { width: CW });
+          if (y + h > bottomLimit(doc)) y = newPage(doc);
+          doc.text(line, M, y, { width: CW });
+          y += h + 2;
+        }
+        clauses.forEach((clause, i) => {
+          doc.font('Helvetica').fontSize(8).fill(SLATE);
+          const text = `${i + 1}. ${clause}`;
+          const h = doc.heightOfString(text, { width: CW });
+          if (y + h > bottomLimit(doc)) y = newPage(doc);
+          doc.text(text, M, y, { width: CW });
+          y += h + 2;
+        });
+        doc.fillColor(INK);
+        y += 12;
+      }
+
       // Signature block
       if (y + 78 > bottomLimit(doc)) y = newPage(doc);
       const colW = CW / 2 - 16;

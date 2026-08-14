@@ -198,7 +198,7 @@ const deleteSalesOrder = asyncHandler(async (req, res) => {
 const salesOrderPdf = asyncHandler(async (req, res) => {
   const order = await SalesOrder.findById(req.params.id)
     .populate('createdBy', 'name phone')
-    .populate('customer', 'companyName email gstin mobile address');
+    .populate('customer', 'companyName email gstin mobile address terms');
   if (!order) throw ApiError.notFound('Sales order not found');
 
   const buffer = await renderSalesOrderPdf(order, order.createdBy);

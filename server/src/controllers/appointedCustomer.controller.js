@@ -17,6 +17,11 @@ const pickBody = (body) => ({
     packSize: i.packSize || '',
     rate: i.rate,
   })),
+  terms: {
+    paymentTerms: body.terms?.paymentTerms || '',
+    creditPeriod: body.terms?.creditPeriod || '',
+    termsAndConditions: body.terms?.termsAndConditions || '',
+  },
 });
 
 // POST /api/sales-customers — appoint (freeze rates).
@@ -39,8 +44,18 @@ const createCustomer = asyncHandler(async (req, res) => {
     );
   }
 
+  const data = pickBody(req.body);
+  // Request without terms (older client) → freeze what the kit itself said.
+  if (!req.body.terms) {
+    data.terms = {
+      paymentTerms: lead.customTerms?.paymentTerms || '',
+      creditPeriod: lead.customTerms?.creditPeriod || '',
+      termsAndConditions: lead.customTerms?.termsAndConditions || '',
+    };
+  }
+
   const customer = await AppointedCustomer.create({
-    ...pickBody(req.body),
+    ...data,
     lead: lead._id,
     frozenAt: new Date(),
     appointedBy: req.user._id,
@@ -51,13 +66,13 @@ const createCustomer = asyncHandler(async (req, res) => {
     action: 'CUSTOMER_APPOINTED',
     entity: 'AppointedCustomer',
     entityId: customer._id,
-    details: `Appointed ${customer.companyName} as customer with ${customer.items.length} frozen rates`,
+    details: `Appointed ${customer.companyName} as customer with ${customer.items.length} frozen rates & terms`,
     ip: req.ip,
   });
 
   res.status(201).json({
     success: true,
-    message: `${customer.companyName} appointed — rates frozen`,
+    message: `${customer.companyName} appointed — rates & terms frozen`,
     data: customer,
   });
 });
@@ -89,7 +104,10 @@ const updateCustomer = asyncHandler(async (req, res) => {
   const customer = await AppointedCustomer.findById(req.params.id);
   if (!customer) throw ApiError.notFound('Customer not found');
 
-  Object.assign(customer, pickBody(req.body));
+  const data = pickBody(req.body);
+  // A terms-less update (older client) keeps the frozen terms untouched.
+  if (!req.body.terms) delete data.terms;
+  Object.assign(customer, data);
   customer.frozenAt = new Date();
   await customer.save();
 
@@ -98,11 +116,11 @@ const updateCustomer = asyncHandler(async (req, res) => {
     action: 'CUSTOMER_RATES_REFROZEN',
     entity: 'AppointedCustomer',
     entityId: customer._id,
-    details: `Updated ${customer.companyName} — ${customer.items.length} rates re-frozen`,
+    details: `Updated ${customer.companyName} — ${customer.items.length} rates & terms re-frozen`,
     ip: req.ip,
   });
 
-  res.json({ success: true, message: `${customer.companyName} updated — rates re-frozen`, data: customer });
+  res.json({ success: true, message: `${customer.companyName} updated — rates & terms re-frozen`, data: customer });
 });
 
 // DELETE /api/sales-customers/:id — admin only (route-gated)

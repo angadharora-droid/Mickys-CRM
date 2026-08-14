@@ -3,7 +3,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import api, { apiError } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
-import { ROLES } from '@/lib/constants';
+import { ROLES, DEFAULT_KIT_TERMS } from '@/lib/constants';
 import { formatDateTime } from '@/lib/utils';
 import PageHeader from '@/components/shared/PageHeader';
 import EmptyState from '@/components/shared/EmptyState';
@@ -33,6 +33,7 @@ export function SalesCustomerForm() {
 
   const [form, setForm] = useState({ companyName: '', email: '', gstin: '', mobile: '', address: '' });
   const [items, setItems] = useState([]);
+  const [terms, setTerms] = useState({ paymentTerms: '', creditPeriod: '', termsAndConditions: '' });
   const [frozenAt, setFrozenAt] = useState(null);
   const [loading, setLoading] = useState(Boolean(id || leadId));
   const [saving, setSaving] = useState(false);
@@ -47,6 +48,11 @@ export function SalesCustomerForm() {
           const c = data.data;
           setForm({ companyName: c.companyName, email: c.email, gstin: c.gstin, mobile: c.mobile, address: c.address });
           setItems(c.items.map((i) => ({ ...i, rate: String(i.rate) })));
+          setTerms({
+            paymentTerms: c.terms?.paymentTerms || '',
+            creditPeriod: c.terms?.creditPeriod || '',
+            termsAndConditions: c.terms?.termsAndConditions || '',
+          });
           setFrozenAt(c.frozenAt);
         })
         .catch((err) => toast.error(apiError(err)))
@@ -74,6 +80,15 @@ export function SalesCustomerForm() {
                 rate: String(r.netRate ?? ''),
               }))
           );
+          // The commercial terms the kit went out with — the lead's edited
+          // values, else the standard kit-type T&C (same fallback the kit
+          // documents themselves use).
+          setTerms({
+            paymentTerms: lead.customTerms?.paymentTerms || '',
+            creditPeriod: lead.customTerms?.creditPeriod || '',
+            termsAndConditions:
+              lead.customTerms?.termsAndConditions || (DEFAULT_KIT_TERMS[lead.kitType] || []).join('\n'),
+          });
         })
         .catch((err) => toast.error(apiError(err)))
         .finally(() => setLoading(false));
@@ -89,6 +104,7 @@ export function SalesCustomerForm() {
       items: items
         .filter((i) => i.name.trim())
         .map((i) => ({ sku: i.sku, name: i.name, packSize: i.packSize, rate: Number(i.rate) || 0 })),
+      terms,
     };
     if (!body.items.length) return toast.error('Keep at least one item in the rate list');
     setSaving(true);
@@ -130,14 +146,14 @@ export function SalesCustomerForm() {
         title={id ? 'Edit customer' : 'Appoint as customer'}
         description={
           id
-            ? `Rates frozen ${frozenAt ? formatDateTime(frozenAt) : ''} — saving freezes them again`
-            : 'Review the details and the emailed kit rates, then freeze them'
+            ? `Rates & terms frozen ${frozenAt ? formatDateTime(frozenAt) : ''} — saving freezes them again`
+            : 'Review the details, the emailed kit rates and the terms, then freeze them'
         }
       >
         <Button variant="outline" onClick={() => navigate('/sales/customers')}>Cancel</Button>
         <Button onClick={save} disabled={saving}>
           {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Snowflake className="h-4 w-4" />}
-          {id ? 'Save & re-freeze rates' : 'Freeze rates & appoint'}
+          {id ? 'Save & re-freeze' : 'Freeze & appoint'}
         </Button>
       </PageHeader>
 
@@ -228,6 +244,37 @@ export function SalesCustomerForm() {
         )}
         <p className="px-4 py-3 text-xs text-muted-foreground border-t">
           Sales orders for this customer can contain <span className="font-medium">only these items at these rates</span>.
+        </p>
+      </Card>
+
+      <Card className="p-4 mt-4">
+        <p className="font-medium mb-3">Frozen terms &amp; conditions</p>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div>
+            <p className="text-sm font-medium mb-1.5">Payment terms</p>
+            <Input
+              value={terms.paymentTerms}
+              onChange={(e) => setTerms((t) => ({ ...t, paymentTerms: e.target.value }))}
+            />
+          </div>
+          <div>
+            <p className="text-sm font-medium mb-1.5">Credit period</p>
+            <Input
+              value={terms.creditPeriod}
+              onChange={(e) => setTerms((t) => ({ ...t, creditPeriod: e.target.value }))}
+            />
+          </div>
+          <div className="sm:col-span-2">
+            <p className="text-sm font-medium mb-1.5">Terms &amp; conditions (one clause per line)</p>
+            <Textarea
+              rows={6}
+              value={terms.termsAndConditions}
+              onChange={(e) => setTerms((t) => ({ ...t, termsAndConditions: e.target.value }))}
+            />
+          </div>
+        </div>
+        <p className="text-xs text-muted-foreground mt-3">
+          Frozen along with the rates and printed on this customer's sales orders.
         </p>
       </Card>
     </div>
