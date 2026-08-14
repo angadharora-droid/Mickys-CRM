@@ -26,7 +26,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import {
-  ChevronDown, ChevronRight, Plus, Search, FilterX, Contact, AlertTriangle, Lock, UserCog, X, Loader2,
+  ChevronDown, ChevronRight, Plus, Search, FilterX, Contact, AlertTriangle, Lock, UserCog, UserCheck, X, Loader2,
 } from 'lucide-react';
 
 const ALL = '__all__';
@@ -528,6 +528,22 @@ export default function LeadList() {
                               <Badge className="bg-amber-100 text-amber-800 hover:bg-amber-100 text-[10px]">
                                 <AlertTriangle className="h-2.5 w-2.5" /> Edited
                               </Badge>
+                            )}
+                            {/* Delivered kit → jump straight to appointing this
+                                lead as a rate-frozen sales-order customer. */}
+                            {lead.status === 'delivered' && user.role !== ROLES.PR_MANAGER && (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-6 px-2 text-[11px] border-emerald-300 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  navigate(`/sales/customers/new?lead=${lead._id}`);
+                                }}
+                              >
+                                <UserCheck className="h-3 w-3" /> Appoint
+                              </Button>
                             )}
                           </div>
                         </TableCell>
