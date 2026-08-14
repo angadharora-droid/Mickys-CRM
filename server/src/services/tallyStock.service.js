@@ -97,4 +97,25 @@ function parseTallyStockXml(xml) {
   return [...byName.values()];
 }
 
-module.exports = { parseTallyStockXml };
+/**
+ * Parses the <VENDOR> elements (ledgers under Sundry Creditors) that the
+ * updated TDL appends after the stock items. Older TDL versions don't send
+ * them — callers should treat an empty result as "vendors not in this export"
+ * rather than "no vendors exist".
+ */
+function parseTallyVendors(xml) {
+  if (typeof xml !== 'string' || !xml.includes('<VENDOR>')) return [];
+
+  const blocks = xml.match(/<VENDOR>[\s\S]*?<\/VENDOR>/g) || [];
+  const byName = new Map();
+
+  for (const block of blocks) {
+    const name = cleanName(tagValue(block, 'NAME'));
+    if (!name) continue;
+    byName.set(name, { name, group: cleanName(tagValue(block, 'GROUP')) });
+  }
+
+  return [...byName.values()];
+}
+
+module.exports = { parseTallyStockXml, parseTallyVendors };

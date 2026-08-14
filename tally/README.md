@@ -2,7 +2,7 @@
 
 Files here:
 
-- `mickys-stock.tdl` — the TDL to load into Tally Prime. Defines report `MickysStockReport` (opening / inward / outward / closing stock per item, plus group, category, unit, standard cost/price).
+- `mickys-stock.tdl` — the TDL to load into Tally Prime. Defines report `MickysStockReport` (opening / inward / outward / closing stock per item, plus group, category, unit, standard cost/price — and every vendor, i.e. ledgers under Sundry Creditors).
 - `sample-stock-request.xml` — the request envelope the CRM backend POSTs to Tally to pull that report.
 
 ## 1. One-time Tally setup (on the PC running Tally Prime)
@@ -51,6 +51,15 @@ The response contains one `<STOCKITEM>` element per item:
 </STOCKITEM>
 ```
 
+followed by one `<VENDOR>` element per ledger under Sundry Creditors:
+
+```xml
+<VENDOR>
+  <NAME>Shree Traders</NAME>
+  <GROUP>Sundry Creditors</GROUP>
+</VENDOR>
+```
+
 ## 3. Format notes (implemented in server/src/services/tallyStock.service.js)
 
 Confirmed against a real export from TallyPrime 7.0 (Gold):
@@ -64,6 +73,26 @@ Confirmed against a real export from TallyPrime 7.0 (Gold):
 ## 4. Getting it into the CRM
 
 Two ways, both hitting `POST /api/stock/sync` on the backend:
+
+> **Only Semi Finished & Finished goods are kept.** The report exports every
+> stock item, but the backend keeps only items whose group or category name
+> contains "Finished" (any casing — covers "Finished Goods", "Semi Finished
+> Goods", "Semi-Finished", …). Raw material, packing material and everything
+> else is skipped, and each sync mirrors Tally, so previously synced items
+> outside those groups are removed from the CRM on the next sync.
+
+> **Day-wise opening/closing history.** Every sync also writes a dated
+> snapshot, so the CRM builds a per-day register (Stock page → **Day-wise**
+> tab). The morning auto-push — it fires when the company is opened, before
+> the day's entries — is recorded as that day's **opening**; the day's
+> **closing** comes from the next morning's push (until then it shows the
+> last sync of the day, marked provisional). For an exact same-day closing,
+> press **Ctrl+F10** after the day's last entry.
+
+> **Vendors.** The same export carries every ledger under Sundry Creditors;
+> the CRM mirrors them into the **Vendors** tab. They start appearing once
+> the updated `mickys-stock.tdl` is loaded on the Tally PC (quit & reopen
+> Tally after replacing the file).
 
 ### a) Manual upload (works today, no setup)
 Export the report as XML (open report → Alt+E → Current → XML), then in the CRM

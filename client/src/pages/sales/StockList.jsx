@@ -11,10 +11,11 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { Search, Boxes, Upload, Loader2 } from 'lucide-react';
+import { Search, Boxes, Upload, Loader2, CalendarDays, Truck } from 'lucide-react';
 
 const ALL = '__all__';
 
@@ -24,6 +25,206 @@ const qty = (n, unit) => {
   const s = Number.isInteger(num) ? num.toLocaleString('en-IN') : num.toLocaleString('en-IN', { maximumFractionDigits: 2 });
   return unit ? `${s} ${unit}` : s;
 };
+
+/** "2026-08-14" -> "Fri, 14 Aug 2026" */
+const dateLabel = (d) =>
+  new Date(`${d}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+
+/** Day-wise opening/closing register built from the daily sync snapshots. */
+function DailyView() {
+  const [data, setData] = useState(null); // { date, dates, items }
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+
+  const fetchDaily = useCallback(async (date) => {
+    setLoading(true);
+    try {
+      const res = await api.get('/stock/daily', { params: date ? { date } : {} });
+      setData(res.data.data);
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { fetchDaily(); }, [fetchDaily]);
+
+  if (loading && !data) return <Card><TableSkeleton rows={10} /></Card>;
+
+  if (!data?.date) {
+    return (
+      <Card>
+        <EmptyState
+          icon={CalendarDays}
+          title="No day-wise history yet"
+          description="It builds up automatically — one snapshot per day, taken from each day's Tally sync. Check back after tomorrow's sync."
+        />
+      </Card>
+    );
+  }
+
+  const q = search.trim().toLowerCase();
+  const items = data.items.filter(
+    (i) => !q || i.name.toLowerCase().includes(q) || (i.group || '').toLowerCase().includes(q)
+  );
+  const provisional = items.some((i) => !i.settled);
+
+  return (
+    <>
+      <Card className="p-4 mb-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Select value={data.date} onValueChange={(v) => fetchDaily(v)}>
+            <SelectTrigger><SelectValue placeholder="Date" /></SelectTrigger>
+            <SelectContent>
+              {data.dates.map((d) => <SelectItem key={d} value={d}>{dateLabel(d)}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search items…"
+              className="pl-9"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+        </div>
+      </Card>
+
+      <Card>
+        {loading ? (
+          <TableSkeleton rows={10} />
+        ) : items.length === 0 ? (
+          <EmptyState icon={CalendarDays} title="No matching items" description="Try a different search." />
+        ) : (
+          <>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Item</TableHead>
+                  <TableHead className="hidden md:table-cell">Group</TableHead>
+                  <TableHead className="text-right">Opening</TableHead>
+                  <TableHead className="text-right">Closing</TableHead>
+                  <TableHead className="text-right hidden sm:table-cell">Change</TableHead>
+                  <TableHead className="text-right hidden lg:table-cell">Closing value</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {items.map((item) => {
+                  const delta = item.closingQty - item.openingQty;
+                  return (
+                    <TableRow key={item.name}>
+                      <TableCell>
+                        <p className="font-medium leading-tight">{item.name}</p>
+                        <p className="text-xs text-muted-foreground md:hidden mt-0.5">{item.group || 'Ungrouped'}</p>
+                      </TableCell>
+                      <TableCell className="hidden md:table-cell">
+                        <Badge variant="secondary">{item.group || 'Ungrouped'}</Badge>
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {qty(item.openingQty, item.baseUnits)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums font-semibold">
+                        {qty(item.closingQty, item.baseUnits)}{!item.settled && ' *'}
+                      </TableCell>
+                      <TableCell className={`text-right tabular-nums hidden sm:table-cell ${delta > 0 ? 'text-emerald-600' : delta < 0 ? 'text-red-600' : 'text-muted-foreground'}`}>
+                        {delta > 0 ? '+' : ''}{qty(delta, item.baseUnits)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums hidden lg:table-cell">
+                        {formatCurrency(item.closingValue)}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+            {provisional && (
+              <p className="px-4 py-3 text-xs text-muted-foreground border-t">
+                * Closing is as of the day's last sync — it settles with the next morning's sync from Tally.
+              </p>
+            )}
+          </>
+        )}
+      </Card>
+    </>
+  );
+}
+
+/** Vendors (Sundry Creditors ledgers) mirrored from Tally. */
+function VendorsView() {
+  const [vendors, setVendors] = useState(null);
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    api.get('/stock/vendors')
+      .then((res) => setVendors(res.data.data))
+      .catch((err) => { toast.error(apiError(err)); setVendors([]); });
+  }, []);
+
+  if (vendors === null) return <Card><TableSkeleton rows={10} /></Card>;
+
+  if (vendors.length === 0) {
+    return (
+      <Card>
+        <EmptyState
+          icon={Truck}
+          title="No vendors synced yet"
+          description="Vendors come from the ledgers under Sundry Creditors in Tally. Load the updated mickys-stock.tdl on the Tally PC, then sync again to bring them in."
+        />
+      </Card>
+    );
+  }
+
+  const q = search.trim().toLowerCase();
+  const filtered = vendors.filter(
+    (v) => !q || v.name.toLowerCase().includes(q) || (v.group || '').toLowerCase().includes(q)
+  );
+
+  return (
+    <>
+      <Card className="p-4 mb-4">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search vendors…"
+            className="pl-9"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+      </Card>
+
+      <Card>
+        {filtered.length === 0 ? (
+          <EmptyState icon={Truck} title="No matching vendors" description="Try a different search." />
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Vendor</TableHead>
+                <TableHead className="hidden sm:table-cell">Group</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filtered.map((v) => (
+                <TableRow key={v._id}>
+                  <TableCell>
+                    <p className="font-medium leading-tight">{v.name}</p>
+                    <p className="text-xs text-muted-foreground sm:hidden mt-0.5">{v.group || '—'}</p>
+                  </TableCell>
+                  <TableCell className="hidden sm:table-cell">
+                    <Badge variant="secondary">{v.group || '—'}</Badge>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </Card>
+    </>
+  );
+}
 
 export default function StockList() {
   const [items, setItems] = useState([]);
@@ -36,6 +237,7 @@ export default function StockList() {
   const [search, setSearch] = useState('');
   const [group, setGroup] = useState(ALL);
   const [stockFilter, setStockFilter] = useState(ALL); // ALL | 'in'
+  const [view, setView] = useState('live');
   const fileRef = useRef(null);
 
   const fetchMetaData = useCallback(async () => {
@@ -112,94 +314,112 @@ export default function StockList() {
         </Button>
       </PageHeader>
 
-      <Card className="p-4 mb-4">
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <div className="relative col-span-2">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search items…"
-              className="pl-9"
-              value={search}
-              onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-            />
-          </div>
-          <Select value={group} onValueChange={(v) => { setGroup(v); setPage(1); }}>
-            <SelectTrigger><SelectValue placeholder="Group" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL}>All groups</SelectItem>
-              {groups.map((g) => <SelectItem key={g} value={g}>{g}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <Select value={stockFilter} onValueChange={(v) => { setStockFilter(v); setPage(1); }}>
-            <SelectTrigger><SelectValue placeholder="Availability" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL}>All items</SelectItem>
-              <SelectItem value="in">In stock only</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      </Card>
+      <Tabs value={view} onValueChange={setView}>
+        <TabsList className="mb-4">
+          <TabsTrigger value="live">Live stock</TabsTrigger>
+          <TabsTrigger value="daily">Day-wise</TabsTrigger>
+          <TabsTrigger value="vendors">Vendors</TabsTrigger>
+        </TabsList>
 
-      <Card>
-        {loading ? (
-          <TableSkeleton rows={10} />
-        ) : items.length === 0 ? (
-          <EmptyState
-            icon={Boxes}
-            title={meta?.total === 0 && !search && group === ALL && stockFilter === ALL ? 'No stock data yet' : 'No matching items'}
-            description={
-              meta?.total === 0 && !search && group === ALL && stockFilter === ALL
-                ? 'Export the report from Tally (Mickys Stock Export → Alt+E → XML) and upload the file here.'
-                : 'Try a different search or filter.'
-            }
-          />
-        ) : (
-          <>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Item</TableHead>
-                  <TableHead className="hidden md:table-cell">Group</TableHead>
-                  <TableHead className="text-right hidden lg:table-cell">Opening</TableHead>
-                  <TableHead className="text-right hidden sm:table-cell">Inward</TableHead>
-                  <TableHead className="text-right hidden sm:table-cell">Outward</TableHead>
-                  <TableHead className="text-right">Closing</TableHead>
-                  <TableHead className="text-right hidden md:table-cell">Value</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {items.map((item) => (
-                  <TableRow key={item._id}>
-                    <TableCell>
-                      <p className="font-medium leading-tight">{item.name}</p>
-                      <p className="text-xs text-muted-foreground md:hidden mt-0.5">{item.group || 'Ungrouped'}</p>
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell">
-                      <Badge variant="secondary">{item.group || 'Ungrouped'}</Badge>
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums hidden lg:table-cell">
-                      {qty(item.openingQty, item.baseUnits)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums hidden sm:table-cell">
-                      {qty(item.inwardQty, item.baseUnits)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums hidden sm:table-cell">
-                      {qty(item.outwardQty, item.baseUnits)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums font-semibold">
-                      {qty(item.closingQty, item.baseUnits)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums hidden md:table-cell">
-                      {formatCurrency(item.closingValue)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-            <Pagination meta={meta} onPageChange={setPage} />
-          </>
-        )}
-      </Card>
+        <TabsContent value="live">
+          <Card className="p-4 mb-4">
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <div className="relative col-span-2">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search items…"
+                  className="pl-9"
+                  value={search}
+                  onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+                />
+              </div>
+              <Select value={group} onValueChange={(v) => { setGroup(v); setPage(1); }}>
+                <SelectTrigger><SelectValue placeholder="Group" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL}>All groups</SelectItem>
+                  {groups.map((g) => <SelectItem key={g} value={g}>{g}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <Select value={stockFilter} onValueChange={(v) => { setStockFilter(v); setPage(1); }}>
+                <SelectTrigger><SelectValue placeholder="Availability" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL}>All items</SelectItem>
+                  <SelectItem value="in">In stock only</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </Card>
+
+          <Card>
+            {loading ? (
+              <TableSkeleton rows={10} />
+            ) : items.length === 0 ? (
+              <EmptyState
+                icon={Boxes}
+                title={meta?.total === 0 && !search && group === ALL && stockFilter === ALL ? 'No stock data yet' : 'No matching items'}
+                description={
+                  meta?.total === 0 && !search && group === ALL && stockFilter === ALL
+                    ? 'Export the report from Tally (Mickys Stock Export → Alt+E → XML) and upload the file here.'
+                    : 'Try a different search or filter.'
+                }
+              />
+            ) : (
+              <>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Item</TableHead>
+                      <TableHead className="hidden md:table-cell">Group</TableHead>
+                      <TableHead className="text-right hidden lg:table-cell">Opening</TableHead>
+                      <TableHead className="text-right hidden sm:table-cell">Inward</TableHead>
+                      <TableHead className="text-right hidden sm:table-cell">Outward</TableHead>
+                      <TableHead className="text-right">Closing</TableHead>
+                      <TableHead className="text-right hidden md:table-cell">Value</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {items.map((item) => (
+                      <TableRow key={item._id}>
+                        <TableCell>
+                          <p className="font-medium leading-tight">{item.name}</p>
+                          <p className="text-xs text-muted-foreground md:hidden mt-0.5">{item.group || 'Ungrouped'}</p>
+                        </TableCell>
+                        <TableCell className="hidden md:table-cell">
+                          <Badge variant="secondary">{item.group || 'Ungrouped'}</Badge>
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums hidden lg:table-cell">
+                          {qty(item.openingQty, item.baseUnits)}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums hidden sm:table-cell">
+                          {qty(item.inwardQty, item.baseUnits)}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums hidden sm:table-cell">
+                          {qty(item.outwardQty, item.baseUnits)}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums font-semibold">
+                          {qty(item.closingQty, item.baseUnits)}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums hidden md:table-cell">
+                          {formatCurrency(item.closingValue)}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                <Pagination meta={meta} onPageChange={setPage} />
+              </>
+            )}
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="daily">
+          <DailyView />
+        </TabsContent>
+
+        <TabsContent value="vendors">
+          <VendorsView />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

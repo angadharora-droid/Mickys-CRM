@@ -111,6 +111,8 @@ router.post('/export/rate-card/preview', authenticate, validate(v.exportRateCard
 // (manual upload) or from the Tally-side agent presenting X-Tally-Key.
 router.post('/stock/sync', stock.tallyKeyOrAdmin, stock.syncStock);
 router.get('/stock', authenticate, authorize(ADMIN), stock.listStock);
+router.get('/stock/daily', authenticate, authorize(ADMIN), stock.dailyStock);
+router.get('/stock/vendors', authenticate, authorize(ADMIN), stock.listVendors);
 router.get('/stock/groups', authenticate, authorize(ADMIN), stock.listGroups);
 router.get('/stock/summary', authenticate, authorize(ADMIN), stock.stockSummary);
 
