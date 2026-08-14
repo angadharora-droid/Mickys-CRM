@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import api, { apiError } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
@@ -38,16 +38,27 @@ const qty = (n, unit) => {
   return unit ? `${s} ${unit}` : s;
 };
 
-/** Create/edit dialog — customer from Tally, items from live stock. */
+/**
+ * Create/edit dialog — customer from Tally, items from live stock.
+ * Keyboard flow mimics Tally voucher entry: Enter advances customer → item →
+ * qty → rate → next item, ↑/↓ move in suggestion lists, Esc backs out of a
+ * list (not the screen), Ctrl+A accepts/saves.
+ */
 function OrderDialog({ open, onClose, order, onSaved }) {
   const [customers, setCustomers] = useState([]);
   const [stock, setStock] = useState([]);
   const [customerName, setCustomerName] = useState('');
   const [customerFocus, setCustomerFocus] = useState(false);
+  const [customerHl, setCustomerHl] = useState(0);
   const [itemSearch, setItemSearch] = useState('');
+  const [itemHl, setItemHl] = useState(0);
   const [lines, setLines] = useState([]);
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
+  const customerRef = useRef(null);
+  const itemRef = useRef(null);
+  const notesRef = useRef(null);
+  const fieldRefs = useRef({}); // "qty-0", "rate-0", …
 
   // Customers load once per dialog open; items are searched server-side.
   useEffect(() => {
@@ -62,6 +73,8 @@ function OrderDialog({ open, onClose, order, onSaved }) {
     setItemSearch('');
     setStock([]);
     api.get('/stock/customers').then((r) => setCustomers(r.data.data)).catch(() => {});
+    // Land on the customer field, like opening a fresh voucher in Tally.
+    setTimeout(() => customerRef.current?.focus(), 80);
   }, [open, order]);
 
   // Debounced stock search against the Tally mirror (list is capped at 100
@@ -89,7 +102,26 @@ function OrderDialog({ open, onClose, order, onSaved }) {
     [stock, lines]
   );
 
+  // Keep list highlights in range as the matches change under them.
+  useEffect(() => { setCustomerHl(0); }, [customerName, customers]);
+  useEffect(() => { setItemHl(0); }, [itemSearch, stock]);
+
+  const focusField = (key) => setTimeout(() => fieldRefs.current[key]?.focus(), 0);
+
+  /** ↑/↓ over a suggestion list; returns the new highlight for Enter to use. */
+  const moveHl = (e, hl, setHl, count) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); setHl((hl + 1) % count); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setHl((hl - 1 + count) % count); }
+  };
+
+  const pickCustomer = (name) => {
+    setCustomerName(name);
+    setCustomerFocus(false);
+    itemRef.current?.focus();
+  };
+
   const addLine = (s) => {
+    const idx = lines.length;
     setLines((prev) => [
       ...prev,
       {
@@ -103,6 +135,7 @@ function OrderDialog({ open, onClose, order, onSaved }) {
       },
     ]);
     setItemSearch('');
+    focusField(`qty-${idx}`); // Tally flow: item → qty
   };
 
   const setLine = (idx, patch) =>
@@ -133,9 +166,29 @@ function OrderDialog({ open, onClose, order, onSaved }) {
     }
   };
 
+  const suggestionsOpen = itemSearch.trim().length > 0 || (customerFocus && customerMatches.length > 0);
+
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-2xl max-h-[92dvh] overflow-y-auto">
+      <DialogContent
+        className="max-w-2xl max-h-[92dvh] overflow-y-auto"
+        // Tally-style Esc: first press backs out of an open list; only a
+        // second press (nothing open) closes the voucher screen.
+        onEscapeKeyDown={(e) => {
+          if (suggestionsOpen) {
+            e.preventDefault();
+            setItemSearch('');
+            setCustomerFocus(false);
+          }
+        }}
+        // Ctrl+A = Accept, exactly like saving a voucher in Tally.
+        onKeyDown={(e) => {
+          if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+            e.preventDefault();
+            if (!saving) save();
+          }
+        }}
+      >
         <DialogHeader>
           <DialogTitle>{order?._id ? `Edit ${order.number}` : 'New sales order'}</DialogTitle>
         </DialogHeader>
@@ -145,20 +198,32 @@ function OrderDialog({ open, onClose, order, onSaved }) {
           <div className="relative">
             <p className="text-sm font-medium mb-1.5">Customer</p>
             <Input
+              ref={customerRef}
               placeholder="Type to search customers…"
               value={customerName}
               onChange={(e) => setCustomerName(e.target.value)}
               onFocus={() => setCustomerFocus(true)}
               onBlur={() => setTimeout(() => setCustomerFocus(false), 150)}
+              onKeyDown={(e) => {
+                const open = customerFocus && customerMatches.length > 0;
+                if (open) moveHl(e, customerHl, setCustomerHl, customerMatches.length);
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  if (open) pickCustomer(customerMatches[customerHl].name);
+                  else itemRef.current?.focus(); // free-typed name → next field
+                }
+              }}
             />
             {customerFocus && customerMatches.length > 0 && (
               <div className="absolute z-50 mt-1 w-full rounded-md border bg-card shadow-lg max-h-56 overflow-y-auto">
-                {customerMatches.map((c) => (
+                {customerMatches.map((c, i) => (
                   <button
                     key={c._id}
                     type="button"
-                    className="w-full text-left px-3 py-2 text-sm hover:bg-muted"
-                    onMouseDown={() => setCustomerName(c.name)}
+                    ref={(el) => { if (i === customerHl) el?.scrollIntoView({ block: 'nearest' }); }}
+                    className={`w-full text-left px-3 py-2 text-sm hover:bg-muted ${i === customerHl ? 'bg-muted' : ''}`}
+                    onMouseDown={() => pickCustomer(c.name)}
+                    onMouseEnter={() => setCustomerHl(i)}
                   >
                     {c.name}
                     {c.group && <span className="text-xs text-muted-foreground ml-2">{c.group}</span>}
@@ -177,20 +242,33 @@ function OrderDialog({ open, onClose, order, onSaved }) {
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
+                ref={itemRef}
                 placeholder="Search stock items…"
                 className="pl-9"
                 value={itemSearch}
                 onChange={(e) => setItemSearch(e.target.value)}
+                onKeyDown={(e) => {
+                  if (itemMatches.length > 0) moveHl(e, itemHl, setItemHl, itemMatches.length);
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if (itemMatches.length > 0) addLine(itemMatches[itemHl]);
+                    // Enter on a blank item line ends the items section,
+                    // like Tally's End of List → move on to narration.
+                    else if (!itemSearch.trim()) notesRef.current?.focus();
+                  }
+                }}
               />
             </div>
             {itemMatches.length > 0 && (
               <div className="absolute z-50 mt-1 w-full rounded-md border bg-card shadow-lg max-h-56 overflow-y-auto">
-                {itemMatches.map((s) => (
+                {itemMatches.map((s, i) => (
                   <button
                     key={s._id}
                     type="button"
-                    className="w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-muted"
+                    ref={(el) => { if (i === itemHl) el?.scrollIntoView({ block: 'nearest' }); }}
+                    className={`w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-muted ${i === itemHl ? 'bg-muted' : ''}`}
                     onMouseDown={() => addLine(s)}
+                    onMouseEnter={() => setItemHl(i)}
                   >
                     <span className="truncate">{s.name}</span>
                     <span className={`text-xs ml-2 shrink-0 ${s.closingQty > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
@@ -221,11 +299,21 @@ function OrderDialog({ open, onClose, order, onSaved }) {
                   <div className="grid grid-cols-3 gap-2 mt-2">
                     <div>
                       <p className="text-[11px] text-muted-foreground mb-1">Qty{l.baseUnits ? ` (${l.baseUnits})` : ''}</p>
-                      <Input type="number" min="0" inputMode="decimal" value={l.qty} onChange={(e) => setLine(i, { qty: e.target.value })} />
+                      <Input
+                        ref={(el) => { fieldRefs.current[`qty-${i}`] = el; }}
+                        type="number" min="0" inputMode="decimal" value={l.qty}
+                        onChange={(e) => setLine(i, { qty: e.target.value })}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); focusField(`rate-${i}`); } }}
+                      />
                     </div>
                     <div>
                       <p className="text-[11px] text-muted-foreground mb-1">Rate (Rs.)</p>
-                      <Input type="number" min="0" inputMode="decimal" value={l.rate} onChange={(e) => setLine(i, { rate: e.target.value })} />
+                      <Input
+                        ref={(el) => { fieldRefs.current[`rate-${i}`] = el; }}
+                        type="number" min="0" inputMode="decimal" value={l.rate}
+                        onChange={(e) => setLine(i, { rate: e.target.value })}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); itemRef.current?.focus(); } }}
+                      />
                     </div>
                     <div>
                       <p className="text-[11px] text-muted-foreground mb-1">Amount</p>
@@ -242,7 +330,7 @@ function OrderDialog({ open, onClose, order, onSaved }) {
           {/* Notes + total */}
           <div>
             <p className="text-sm font-medium mb-1.5">Notes (optional)</p>
-            <Textarea rows={2} placeholder="Delivery instructions, payment terms…" value={notes} onChange={(e) => setNotes(e.target.value)} />
+            <Textarea ref={notesRef} rows={2} placeholder="Delivery instructions, payment terms…" value={notes} onChange={(e) => setNotes(e.target.value)} />
           </div>
           <div className="flex items-center justify-between rounded-lg bg-muted px-4 py-3">
             <p className="text-sm font-medium">Total</p>
@@ -250,6 +338,9 @@ function OrderDialog({ open, onClose, order, onSaved }) {
           </div>
         </div>
 
+        <p className="hidden sm:block text-[11px] text-muted-foreground text-center">
+          Enter: next field · ↑↓: choose from list · Esc: back · <span className="font-medium">Ctrl+A: save</span>
+        </p>
         <DialogFooter className="mt-2">
           <Button variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>
           <Button onClick={save} disabled={saving}>
