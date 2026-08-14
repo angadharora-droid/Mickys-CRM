@@ -1,5 +1,6 @@
 const asyncHandler = require('../utils/asyncHandler');
 const ApiError = require('../utils/ApiError');
+const AppointedCustomer = require('../models/AppointedCustomer');
 const Counter = require('../models/Counter');
 const SalesOrder = require('../models/SalesOrder');
 const StockItem = require('../models/StockItem');
@@ -35,9 +36,34 @@ async function buildItems(items) {
   return { built, total };
 }
 
+/**
+ * Resolves an appointed (rate-frozen) customer when customerId is given and
+ * enforces the freeze: every line must be on the frozen list, and the frozen
+ * rate always wins over whatever rate the client sent.
+ */
+async function applyFrozenCustomer(customerId, items) {
+  if (!customerId) return null;
+  const appointed = await AppointedCustomer.findById(customerId);
+  if (!appointed) throw ApiError.badRequest('Appointed customer not found');
+
+  const frozen = new Map(appointed.items.map((i) => [i.name, i]));
+  for (const it of items) {
+    const f = frozen.get(String(it.name).trim().toUpperCase());
+    if (!f) {
+      throw ApiError.badRequest(
+        `"${it.name}" is not in ${appointed.companyName}'s frozen rate list — orders for this customer can contain only their frozen items`
+      );
+    }
+    it.name = f.name;
+    it.rate = f.rate;
+  }
+  return appointed;
+}
+
 // POST /api/sales-orders
 const createSalesOrder = asyncHandler(async (req, res) => {
-  const { customerName, items, notes } = req.body;
+  const { customerName, customerId, items, notes } = req.body;
+  const appointed = await applyFrozenCustomer(customerId, items);
   const { built, total } = await buildItems(items);
 
   const year = new Date().getFullYear();
@@ -46,7 +72,8 @@ const createSalesOrder = asyncHandler(async (req, res) => {
 
   const order = await SalesOrder.create({
     number,
-    customerName,
+    customerName: appointed ? appointed.companyName : customerName,
+    customer: appointed?._id,
     items: built,
     total,
     notes: notes || '',
@@ -80,7 +107,8 @@ const listSalesOrders = asyncHandler(async (req, res) => {
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
-      .populate('createdBy', 'name'),
+      .populate('createdBy', 'name')
+      .populate('customer', 'companyName'),
     SalesOrder.countDocuments(filter),
   ]);
   res.json({ success: true, data: orders, meta: buildMeta(total, page, limit) });
@@ -102,9 +130,11 @@ const updateSalesOrder = asyncHandler(async (req, res) => {
     throw ApiError.badRequest(`Only open orders can be edited — this one is ${order.status}`);
   }
 
-  const { customerName, items, notes } = req.body;
+  const { customerName, customerId, items, notes } = req.body;
+  const appointed = await applyFrozenCustomer(customerId, items);
   const { built, total } = await buildItems(items);
-  order.customerName = customerName;
+  order.customerName = appointed ? appointed.companyName : customerName;
+  order.customer = appointed?._id || undefined;
   order.items = built;
   order.total = total;
   order.notes = notes || '';
@@ -166,7 +196,9 @@ const deleteSalesOrder = asyncHandler(async (req, res) => {
 
 // GET /api/sales-orders/:id/pdf
 const salesOrderPdf = asyncHandler(async (req, res) => {
-  const order = await SalesOrder.findById(req.params.id).populate('createdBy', 'name phone');
+  const order = await SalesOrder.findById(req.params.id)
+    .populate('createdBy', 'name phone')
+    .populate('customer', 'companyName email gstin mobile address');
   if (!order) throw ApiError.notFound('Sales order not found');
 
   const buffer = await renderSalesOrderPdf(order, order.createdBy);

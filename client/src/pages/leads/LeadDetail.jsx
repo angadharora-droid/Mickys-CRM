@@ -36,7 +36,7 @@ import {
   Loader2, Package, Download, Mail, Trash2, RotateCcw, FileText, CheckCircle2,
   AlertTriangle, ArrowLeft, Boxes, Building2, Ship, Sparkles, Eye, EyeOff, Lock, Pencil, ExternalLink,
   MessageSquare, CalendarCheck, Paperclip, Upload, Image as ImageIcon, Target,
-  ClipboardList, Plus, History, UserCog, X, NotebookPen,
+  ClipboardList, Plus, History, UserCog, UserCheck, X, NotebookPen,
 } from 'lucide-react';
 import ExportKitStep from './ExportKitStep';
 import CityCombobox from '@/components/shared/CityCombobox';
@@ -808,6 +808,29 @@ export default function LeadDetail() {
             <Button onClick={unlock} disabled={action === 'unlock'}>
               {action === 'unlock' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pencil className="h-4 w-4" />}
               Edit
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Kit delivered → the lead can be appointed as a rate-frozen customer
+          in the Sales Order module (admin + sales execs). */}
+      {lead.status === 'delivered' && user?.role !== 'pr_manager' && (
+        <Card className="border-emerald-300 bg-emerald-50/60">
+          <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4">
+            <div className="flex items-center gap-3">
+              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
+                <CheckCircle2 className="h-4 w-4" />
+              </span>
+              <div>
+                <p className="font-semibold">Kit delivered — appoint as customer?</p>
+                <p className="text-xs text-muted-foreground">
+                  Freezes the emailed kit rates as their price list; their sales orders will use only those items and rates.
+                </p>
+              </div>
+            </div>
+            <Button onClick={() => navigate(`/sales/customers/new?lead=${lead._id}`)}>
+              <UserCheck className="h-4 w-4" /> Appoint as Customer
             </Button>
           </CardContent>
         </Card>

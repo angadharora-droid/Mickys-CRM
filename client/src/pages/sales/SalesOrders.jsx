@@ -21,7 +21,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import {
-  Search, ReceiptText, Plus, Download, Pencil, Trash2, Loader2, X, Eye, ExternalLink,
+  Search, ReceiptText, Plus, Download, Pencil, Trash2, Loader2, X, Eye, ExternalLink, Snowflake,
 } from 'lucide-react';
 
 const ALL = '__all__';
@@ -65,6 +65,8 @@ const prefillRate = (s) => s.standardPrice || s.lastSalePrice || s.closingRate |
  */
 function OrderDialog({ open, onClose, order, onSaved }) {
   const [customers, setCustomers] = useState([]);
+  const [appointed, setAppointed] = useState([]); // rate-frozen customers
+  const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [stock, setStock] = useState([]);
   const [customerName, setCustomerName] = useState('');
   const [customerFocus, setCustomerFocus] = useState(false);
@@ -94,7 +96,16 @@ function OrderDialog({ open, onClose, order, onSaved }) {
     setNotes(order?.notes || '');
     setItemSearch('');
     setStock([]);
+    setSelectedCustomer(null);
     api.get('/stock/customers').then((r) => setCustomers(r.data.data)).catch(() => {});
+    api.get('/sales-customers')
+      .then((r) => {
+        setAppointed(r.data.data);
+        // Editing an order for an appointed customer → restore the frozen link.
+        const cid = order?.customer?._id || order?.customer;
+        if (cid) setSelectedCustomer(r.data.data.find((c) => c._id === cid) || null);
+      })
+      .catch(() => {});
     // Tally shows the item list as soon as you land on the field — preload
     // the top in-stock items for the before-you-type list.
     api.get('/stock', { params: { inStock: 'true', limit: 20 } })
@@ -106,8 +117,9 @@ function OrderDialog({ open, onClose, order, onSaved }) {
 
   // Debounced stock search against the Tally mirror (list is capped at 100
   // rows per request, so we search instead of loading everything upfront).
+  // A frozen customer's items are matched locally instead.
   useEffect(() => {
-    if (!open) return;
+    if (!open || selectedCustomer) return;
     const q = itemSearch.trim();
     if (!q) { setStock([]); return; }
     const t = setTimeout(() => {
@@ -116,22 +128,39 @@ function OrderDialog({ open, onClose, order, onSaved }) {
         .catch(() => {});
     }, 300);
     return () => clearTimeout(t);
-  }, [open, itemSearch]);
+  }, [open, itemSearch, selectedCustomer]);
 
+  // Appointed (rate-frozen) customers list first, then the Tally ledgers.
   const customerMatches = useMemo(() => {
     const q = customerName.trim();
-    if (!q) return customers.slice(0, 10);
-    const hits = customers.filter((c) => matchesAllWords(`${c.name} ${c.group || ''}`, q));
-    return rankByPrefix(hits, q, (c) => c.name).slice(0, 10);
-  }, [customers, customerName]);
+    const apps = (q ? appointed.filter((c) => matchesAllWords(c.companyName, q)) : appointed)
+      .map((c) => ({ kind: 'appointed', key: `a-${c._id}`, name: c.companyName, sub: `${c.items?.length || 0} frozen rates`, data: c }));
+    const tally = (q ? customers.filter((c) => matchesAllWords(`${c.name} ${c.group || ''}`, q)) : customers)
+      .map((c) => ({ kind: 'tally', key: `t-${c._id}`, name: c.name, sub: c.group || '', data: c }));
+    return [
+      ...rankByPrefix(apps, q, (e) => e.name),
+      ...rankByPrefix(tally, q, (e) => e.name),
+    ].slice(0, 10);
+  }, [appointed, customers, customerName]);
 
-  // Typed query → server results; empty query + focused field → the
+  // Item source: a frozen customer's own list, matched locally — otherwise
+  // typed query → server results; empty query + focused field → the
   // preloaded in-stock list (Tally shows the item list before you type).
   const itemMatches = useMemo(() => {
     const q = itemSearch.trim();
+    if (selectedCustomer) {
+      const source = q
+        ? selectedCustomer.items.filter((f) => matchesAllWords(`${f.name} ${f.packSize || ''}`, q))
+        : itemFocus
+          ? selectedCustomer.items
+          : [];
+      return rankByPrefix(source, q, (f) => f.name)
+        .filter((f) => !lines.some((l) => l.name === f.name))
+        .slice(0, 20);
+    }
     const base = q ? rankByPrefix(stock, q, (s) => s.name) : itemFocus ? defaultStock : [];
     return base.filter((s) => !lines.some((l) => l.name === s.name)).slice(0, 20);
-  }, [stock, defaultStock, itemFocus, itemSearch, lines]);
+  }, [selectedCustomer, stock, defaultStock, itemFocus, itemSearch, lines]);
 
   // Keep list highlights in range as the matches change under them.
   useEffect(() => { setCustomerHl(0); }, [customerName, customers]);
@@ -145,26 +174,46 @@ function OrderDialog({ open, onClose, order, onSaved }) {
     else if (e.key === 'ArrowUp') { e.preventDefault(); setHl((hl - 1 + count) % count); }
   };
 
-  const pickCustomer = (name) => {
-    setCustomerName(name);
+  const pickCustomer = (entry) => {
+    setCustomerName(entry.name);
     setCustomerFocus(false);
+    if (entry.kind === 'appointed') {
+      const c = entry.data;
+      setSelectedCustomer(c);
+      // Enforce the freeze on any lines already added: keep only items on the
+      // frozen list, at the frozen rate.
+      const frozen = new Map(c.items.map((i) => [i.name, i]));
+      setLines((prev) => {
+        const kept = prev.filter((l) => frozen.has(String(l.name).toUpperCase()));
+        if (kept.length !== prev.length) {
+          toast.info(`Removed ${prev.length - kept.length} item(s) outside ${c.companyName}'s frozen list`);
+        }
+        return kept.map((l) => {
+          const f = frozen.get(String(l.name).toUpperCase());
+          return { ...l, name: f.name, rate: String(f.rate), packSize: f.packSize };
+        });
+      });
+    } else {
+      setSelectedCustomer(null);
+    }
     itemRef.current?.focus();
   };
 
   const addLine = (s) => {
     const idx = lines.length;
-    setLines((prev) => [
-      ...prev,
-      {
-        name: s.name,
-        baseUnits: s.baseUnits,
-        qty: '',
-        // Selling-rate prefill: maintained standard price, else the rate of
-        // the item's last sales voucher, else the stock valuation rate.
-        rate: String(prefillRate(s) || ''),
-        available: s.closingQty,
-      },
-    ]);
+    const line = selectedCustomer
+      ? // Frozen list line: the rate is dictated by the customer's price list.
+        { name: s.name, baseUnits: '', qty: '', rate: String(s.rate), available: null, packSize: s.packSize }
+      : {
+          name: s.name,
+          baseUnits: s.baseUnits,
+          qty: '',
+          // Selling-rate prefill: maintained standard price, else the rate of
+          // the item's last sales voucher, else the stock valuation rate.
+          rate: String(prefillRate(s) || ''),
+          available: s.closingQty,
+        };
+    setLines((prev) => [...prev, line]);
     setItemSearch('');
     itemNav.current = false;
     focusField(`qty-${idx}`); // Tally flow: item → qty
@@ -184,7 +233,12 @@ function OrderDialog({ open, onClose, order, onSaved }) {
 
     setSaving(true);
     try {
-      const body = { customerName: customerName.trim(), items, notes: notes.trim() };
+      const body = {
+        customerName: customerName.trim(),
+        customerId: selectedCustomer?._id,
+        items,
+        notes: notes.trim(),
+      };
       const { data } = order?._id
         ? await api.put(`/sales-orders/${order._id}`, body)
         : await api.post('/sales-orders', body);
@@ -234,7 +288,13 @@ function OrderDialog({ open, onClose, order, onSaved }) {
               ref={customerRef}
               placeholder="Type to search customers…"
               value={customerName}
-              onChange={(e) => setCustomerName(e.target.value)}
+              onChange={(e) => {
+                setCustomerName(e.target.value);
+                // Editing the name breaks the frozen-customer link.
+                if (selectedCustomer && e.target.value.trim().toUpperCase() !== selectedCustomer.companyName) {
+                  setSelectedCustomer(null);
+                }
+              }}
               onFocus={() => setCustomerFocus(true)}
               onBlur={() => setTimeout(() => setCustomerFocus(false), 150)}
               onKeyDown={(e) => {
@@ -242,30 +302,39 @@ function OrderDialog({ open, onClose, order, onSaved }) {
                 if (open) moveHl(e, customerHl, setCustomerHl, customerMatches.length);
                 if (e.key === 'Enter') {
                   e.preventDefault();
-                  if (open) pickCustomer(customerMatches[customerHl].name);
+                  if (open) pickCustomer(customerMatches[customerHl]);
                   else itemRef.current?.focus(); // free-typed name → next field
                 }
               }}
             />
             {customerFocus && customerMatches.length > 0 && (
               <div className="absolute z-50 mt-1 w-full rounded-md border bg-card shadow-lg max-h-56 overflow-y-auto">
-                {customerMatches.map((c, i) => (
+                {customerMatches.map((entry, i) => (
                   <button
-                    key={c._id}
+                    key={entry.key}
                     type="button"
                     ref={(el) => { if (i === customerHl) el?.scrollIntoView({ block: 'nearest' }); }}
-                    className={`w-full text-left px-3 py-2 text-sm hover:bg-muted ${i === customerHl ? 'bg-muted' : ''}`}
-                    onMouseDown={() => pickCustomer(c.name)}
+                    className={`w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-muted ${i === customerHl ? 'bg-muted' : ''}`}
+                    onMouseDown={() => pickCustomer(entry)}
                     onMouseEnter={() => setCustomerHl(i)}
                   >
-                    {c.name}
-                    {c.group && <span className="text-xs text-muted-foreground ml-2">{c.group}</span>}
+                    <span className="truncate">
+                      {entry.name}
+                      {entry.sub && <span className="text-xs text-muted-foreground ml-2">{entry.sub}</span>}
+                    </span>
+                    {entry.kind === 'appointed' && (
+                      <Badge className="ml-2 shrink-0 border bg-sky-100 text-sky-800 border-sky-200" variant="outline">
+                        <Snowflake className="h-3 w-3 mr-1" /> FROZEN
+                      </Badge>
+                    )}
                   </button>
                 ))}
               </div>
             )}
             <p className="text-xs text-muted-foreground mt-1">
-              From Tally (Sundry Debtors). A new name can be typed as-is.
+              {selectedCustomer
+                ? `Rate-frozen customer — this order can contain only their ${selectedCustomer.items?.length || 0} frozen items.`
+                : 'Appointed customers (frozen rates) and Tally ledgers. A new name can be typed as-is.'}
             </p>
           </div>
 
@@ -304,7 +373,7 @@ function OrderDialog({ open, onClose, order, onSaved }) {
               <div className="absolute z-50 mt-1 w-full rounded-md border bg-card shadow-lg max-h-56 overflow-y-auto">
                 {itemMatches.map((s, i) => (
                   <button
-                    key={s._id}
+                    key={s._id || s.name}
                     type="button"
                     ref={(el) => { if (i === itemHl) el?.scrollIntoView({ block: 'nearest' }); }}
                     className={`w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-muted ${i === itemHl ? 'bg-muted' : ''}`}
@@ -312,16 +381,23 @@ function OrderDialog({ open, onClose, order, onSaved }) {
                     onMouseEnter={() => setItemHl(i)}
                   >
                     <span className="truncate">{s.name}</span>
-                    <span className="ml-2 shrink-0 text-right">
-                      <span className={`block text-xs ${s.closingQty > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                        {qty(s.closingQty, s.baseUnits)} in stock
+                    {selectedCustomer ? (
+                      <span className="ml-2 shrink-0 text-right">
+                        {s.packSize && <span className="block text-[11px] text-muted-foreground">{s.packSize}</span>}
+                        <span className="block text-xs font-medium">{formatCurrency(s.rate)}</span>
                       </span>
-                      {prefillRate(s) > 0 && (
-                        <span className="block text-[11px] text-muted-foreground">
-                          {formatCurrency(prefillRate(s))}{s.baseUnits ? `/${s.baseUnits}` : ''}
+                    ) : (
+                      <span className="ml-2 shrink-0 text-right">
+                        <span className={`block text-xs ${s.closingQty > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                          {qty(s.closingQty, s.baseUnits)} in stock
                         </span>
-                      )}
-                    </span>
+                        {prefillRate(s) > 0 && (
+                          <span className="block text-[11px] text-muted-foreground">
+                            {formatCurrency(prefillRate(s))}{s.baseUnits ? `/${s.baseUnits}` : ''}
+                          </span>
+                        )}
+                      </span>
+                    )}
                   </button>
                 ))}
               </div>
@@ -337,7 +413,11 @@ function OrderDialog({ open, onClose, order, onSaved }) {
                     <div className="min-w-0">
                       <p className="text-sm font-medium leading-tight truncate">{l.name}</p>
                       <p className="text-xs text-muted-foreground mt-0.5">
-                        {l.available == null ? 'Not in stock mirror' : `${qty(l.available, l.baseUnits)} in stock`}
+                        {selectedCustomer
+                          ? [l.packSize, 'rate frozen'].filter(Boolean).join(' · ')
+                          : l.available == null
+                            ? 'Not in stock mirror'
+                            : `${qty(l.available, l.baseUnits)} in stock`}
                       </p>
                     </div>
                     <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={() => setLines((prev) => prev.filter((_, idx) => idx !== i))}>
@@ -351,14 +431,26 @@ function OrderDialog({ open, onClose, order, onSaved }) {
                         ref={(el) => { fieldRefs.current[`qty-${i}`] = el; }}
                         type="number" min="0" inputMode="decimal" value={l.qty}
                         onChange={(e) => setLine(i, { qty: e.target.value })}
-                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); focusField(`rate-${i}`); } }}
+                        // Frozen rate = disabled field, so Enter skips it and
+                        // goes straight back to the item search.
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            if (selectedCustomer) itemRef.current?.focus();
+                            else focusField(`rate-${i}`);
+                          }
+                        }}
                       />
                     </div>
                     <div>
-                      <p className="text-[11px] text-muted-foreground mb-1">Rate (Rs.)</p>
+                      <p className="text-[11px] text-muted-foreground mb-1">
+                        Rate (Rs.){selectedCustomer ? ' · frozen' : ''}
+                      </p>
                       <Input
                         ref={(el) => { fieldRefs.current[`rate-${i}`] = el; }}
                         type="number" min="0" inputMode="decimal" value={l.rate}
+                        disabled={Boolean(selectedCustomer)}
+                        title={selectedCustomer ? 'Frozen rate — edit it on the Customers page' : undefined}
                         onChange={(e) => setLine(i, { rate: e.target.value })}
                         onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); itemRef.current?.focus(); } }}
                       />

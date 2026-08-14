@@ -20,6 +20,7 @@ const notifications = require('../controllers/notification.controller');
 const reports = require('../controllers/report.controller');
 const stock = require('../controllers/stock.controller');
 const salesOrders = require('../controllers/salesOrder.controller');
+const salesCustomers = require('../controllers/appointedCustomer.controller');
 
 const router = express.Router();
 
@@ -131,6 +132,15 @@ router.get('/sales-orders/:id/pdf', authenticate, authorize(ADMIN, EXEC), salesO
 router.put('/sales-orders/:id', authenticate, authorize(ADMIN, EXEC), validate(v.salesOrderSchema), salesOrders.updateSalesOrder);
 router.put('/sales-orders/:id/status', authenticate, authorize(ADMIN, EXEC), validate(v.salesOrderStatusSchema), salesOrders.updateStatus);
 router.delete('/sales-orders/:id', authenticate, authorize(ADMIN), salesOrders.deleteSalesOrder);
+
+// ---------- Sales Order module: appointed customers (rate freeze) ----------
+// A delivered lead can be appointed as a customer with the kit's emailed
+// rates frozen; their sales orders then only contain those items/rates.
+router.post('/sales-customers', authenticate, authorize(ADMIN, EXEC), validate(v.appointedCustomerSchema), salesCustomers.createCustomer);
+router.get('/sales-customers', authenticate, authorize(ADMIN, EXEC), salesCustomers.listCustomers);
+router.get('/sales-customers/:id', authenticate, authorize(ADMIN, EXEC), salesCustomers.getCustomer);
+router.put('/sales-customers/:id', authenticate, authorize(ADMIN, EXEC), validate(v.appointedCustomerSchema), salesCustomers.updateCustomer);
+router.delete('/sales-customers/:id', authenticate, authorize(ADMIN), salesCustomers.deleteCustomer);
 
 // ---------- In-app notifications (the header bell) ----------
 router.get('/notifications', authenticate, notifications.listNotifications);

@@ -1,6 +1,6 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
-import { LayoutDashboard, Boxes, ReceiptText, ArrowLeftRight } from 'lucide-react';
+import { LayoutDashboard, Boxes, ReceiptText, UserCheck, ArrowLeftRight } from 'lucide-react';
 
 /**
  * Bottom tab bar for the Sales Order module (phones/small tablets only).
@@ -18,7 +18,7 @@ export default function SalesMobileNav() {
 
   return (
     <nav className="lg:hidden fixed inset-x-0 bottom-0 z-40 border-t border-border bg-card/95 backdrop-blur-md shadow-nav pb-safe">
-      <div className="grid grid-cols-4 h-16">
+      <div className="grid grid-cols-5 h-16">
         <NavLink to="/sales" end className={tabClass}>
           {({ isActive }) => (
             <>
@@ -48,6 +48,17 @@ export default function SalesMobileNav() {
                 <ReceiptText className={cn('h-[22px] w-[22px]', isActive && 'stroke-[2.4]')} />
               </span>
               Orders
+            </>
+          )}
+        </NavLink>
+
+        <NavLink to="/sales/customers" className={tabClass}>
+          {({ isActive }) => (
+            <>
+              <span className="flex h-7 items-center">
+                <UserCheck className={cn('h-[22px] w-[22px]', isActive && 'stroke-[2.4]')} />
+              </span>
+              Customers
             </>
           )}
         </NavLink>
