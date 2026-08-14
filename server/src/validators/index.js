@@ -417,7 +417,6 @@ const appointedCustomerSchema = z.object({
     .regex(/^[0-9A-Za-z]{15}$/, 'GSTIN must be the 15-character number'),
   mobile: z.string().trim().min(7).max(20),
   address: z.string().trim().min(3).max(500),
-  leadId: objectId.optional(),
   items: z
     .array(
       z.object({
@@ -428,6 +427,11 @@ const appointedCustomerSchema = z.object({
       })
     )
     .min(1, 'Keep at least one item in the frozen rate list'),
+});
+
+// Creation is only allowed from a delivered lead — leadId is mandatory.
+const appointedCustomerCreateSchema = appointedCustomerSchema.extend({
+  leadId: objectId,
 });
 
 // ---------- Sales orders ----------
@@ -489,4 +493,5 @@ module.exports = {
   salesOrderSchema,
   salesOrderStatusSchema,
   appointedCustomerSchema,
+  appointedCustomerCreateSchema,
 };
