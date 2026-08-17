@@ -198,12 +198,17 @@ export default function SalesReports() {
     }
   };
 
+  // A report that ignores the period is not filed under one: a current-position
+  // extract, or the whole outstanding book, named for a window it never obeyed
+  // reads as a period extract to whoever the file is forwarded to.
   const downloadReport = () =>
     downloadXlsx(
       'one',
       `/sales-reports/${type}`,
       { ...query, format: 'xlsx' },
-      `mickys-sales-${type}-report_${from}_to_${to}.xlsx`
+      CURRENT_STATE.has(type) || wholeBook
+        ? `mickys-sales-${type}-report.xlsx`
+        : `mickys-sales-${type}-report_${from}_to_${to}.xlsx`
     );
 
   // Every sheet shares one period, so the workbook's Order Book sheet is always
