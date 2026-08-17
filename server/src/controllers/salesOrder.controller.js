@@ -23,6 +23,17 @@ const canManage = (user, order) =>
 /** Statuses that hold stock back — see services/stockAvailability.service.js. */
 const RESERVING = new Set(['open', 'confirmed']);
 
+/** Statuses an order is locked in once it reaches them — see models/SalesOrder.js. */
+const LOCKED = new Set(['confirmed', 'closed', 'cancelled']);
+
+/**
+ * Ending a confirmed order is still the booking exec's to do: closing it once
+ * the goods have gone, or cancelling it, settles the order rather than
+ * reversing what was agreed. Every other move out of a locked status is an
+ * admin's call.
+ */
+const isExecEnding = (from, to) => from === 'confirmed' && (to === 'closed' || to === 'cancelled');
+
 /**
  * Everything the PDF and the emails need: the booking exec (shown on the
  * document, and the reply-to when the mail goes from the shared account) and
@@ -319,10 +330,16 @@ const updateStatus = asyncHandler(async (req, res) => {
     return res.json({ success: true, message: 'No change', data: withWarnings(order, []) });
   }
   // An exec who could un-confirm at will would make the confirmation lock
-  // decorative — reversing an agreed order is an admin's call.
-  if (order.status === 'confirmed' && status === 'open' && req.user.role !== 'admin') {
+  // decorative — reversing an agreed order is an admin's call. The rule is
+  // about the locked status the order sits in, not about one hop out of it:
+  // guarding only confirmed → open would leave confirmed → closed → open as a
+  // way straight round it, and un-cancelling would put a written-off order back
+  // into edit and back onto the stock the same way.
+  if (LOCKED.has(order.status) && !isExecEnding(order.status, status) && req.user.role !== 'admin') {
     throw ApiError.forbidden(
-      `Sales order ${order.number} is confirmed — only an admin can re-open it for editing`
+      status === 'open'
+        ? `Sales order ${order.number} is ${order.status} — only an admin can re-open it for editing`
+        : `Sales order ${order.number} is ${order.status} — only an admin can change it now`
     );
   }
 

@@ -24,12 +24,18 @@ import { Search, Boxes, Upload, Loader2, CalendarDays, Truck, Users } from 'luci
 const ALL = '__all__';
 const AVAILABILITY_FILTERS = ['in', 'available', 'short'];
 
-/** Cancelled orders never hold stock, so only these two ever reach the drill-down. */
+/**
+ * Cancelled orders never hold stock, so only these three ever reach the
+ * drill-down. Same colours as the Sales Orders list, so a status reads
+ * identically on both screens.
+ */
 const STATUS_STYLES = {
   open: 'bg-amber-100 text-amber-800 border-amber-200',
-  dispatched: 'bg-emerald-100 text-emerald-800 border-emerald-200',
-  cancelled: 'bg-red-100 text-red-800 border-red-200',
+  confirmed: 'bg-sky-100 text-sky-800 border-sky-200',
+  closed: 'bg-emerald-100 text-emerald-800 border-emerald-200',
 };
+
+const STATUS_LABELS = { open: 'Open', confirmed: 'Confirmed', closed: 'Closed' };
 
 /** "12.5 KG" style display: trim trailing zeros, keep the unit. */
 const qty = (n, unit) => {
@@ -318,12 +324,14 @@ function ReservationsDialog({ item, onClose }) {
                         <p className="text-xs text-muted-foreground mt-0.5">
                           {o.customerName} · {formatDate(o.createdAt)}
                         </p>
-                        <Badge variant="outline" className={`border mt-1 sm:hidden ${STATUS_STYLES[o.status]}`}>
-                          {o.status}
+                        <Badge variant="outline" className={`border mt-1 sm:hidden ${STATUS_STYLES[o.status] || ''}`}>
+                          {STATUS_LABELS[o.status] || o.status}
                         </Badge>
                       </TableCell>
                       <TableCell className="hidden sm:table-cell">
-                        <Badge variant="outline" className={`border ${STATUS_STYLES[o.status]}`}>{o.status}</Badge>
+                        <Badge variant="outline" className={`border ${STATUS_STYLES[o.status] || ''}`}>
+                          {STATUS_LABELS[o.status] || o.status}
+                        </Badge>
                       </TableCell>
                       <TableCell className="text-right tabular-nums font-semibold">{qty(o.qty, units)}</TableCell>
                     </TableRow>
@@ -333,7 +341,7 @@ function ReservationsDialog({ item, onClose }) {
             )}
 
             <p className="text-xs text-muted-foreground">
-              A dispatched order keeps holding stock until Tally has been synced after the invoice was raised,
+              A closed order keeps holding stock until Tally has been synced after the invoice was raised,
               so the same goods are never promised twice.
             </p>
           </>
