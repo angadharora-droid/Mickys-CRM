@@ -21,6 +21,7 @@ const reports = require('../controllers/report.controller');
 const stock = require('../controllers/stock.controller');
 const salesOrders = require('../controllers/salesOrder.controller');
 const salesCustomers = require('../controllers/appointedCustomer.controller');
+const salesReports = require('../controllers/salesReport.controller');
 
 const router = express.Router();
 
@@ -157,6 +158,15 @@ router.get('/sales-customers', authenticate, authorize(ADMIN, EXEC), SALES_MODUL
 router.get('/sales-customers/:id', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, salesCustomers.getCustomer);
 router.put('/sales-customers/:id', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, validate(v.appointedCustomerSchema), salesCustomers.updateCustomer);
 router.delete('/sales-customers/:id', authenticate, authorize(ADMIN), salesCustomers.deleteCustomer);
+
+// ---------- Sales Order module: reports ----------
+// Role-scoped the way orders are: an exec's reports cover only the orders they
+// booked, an admin sees the whole book and may narrow to one exec. The catalog
+// hides Executive Performance from execs, and export/all is declared before
+// /:type so it is not swallowed as a report name.
+router.get('/sales-reports', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, salesReports.listReports);
+router.get('/sales-reports/export/all', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, salesReports.exportAll);
+router.get('/sales-reports/:type', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, salesReports.getReport);
 
 // ---------- In-app notifications (the header bell) ----------
 router.get('/notifications', authenticate, notifications.listNotifications);
