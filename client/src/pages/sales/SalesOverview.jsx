@@ -56,6 +56,15 @@ export default function SalesOverview() {
             <Boxes className="h-4 w-4" /> View stock
           </Link>
         </Button>
+        {/* The bottom tab bar is full at five tabs, so this header is how an
+            admin reaches the module's settings from a phone. */}
+        {user?.role === ROLES.ADMIN && (
+          <Button asChild variant="outline">
+            <Link to="/sales/settings">
+              <Settings className="h-4 w-4" /> Settings
+            </Link>
+          </Button>
+        )}
       </PageHeader>
 
       {loading ? (
