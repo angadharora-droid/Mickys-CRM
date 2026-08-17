@@ -157,47 +157,6 @@ export default function Settings() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="salesOrder">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Sales Orders</CardTitle>
-              <CardDescription>
-                Accounts can be sent the order PDF automatically the moment an exec confirms it, so invoicing never waits
-                on someone remembering to forward it.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label>Accounts email addresses</Label>
-                <Input
-                  placeholder="accounts@mickys.in, billing@mickys.in"
-                  value={emailListText(settings.salesOrder?.accountsEmails)}
-                  onChange={(e) => setSalesOrder('accountsEmails', e.target.value)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Separate multiple addresses with commas. Every one of them receives the confirmed order PDF.
-                </p>
-              </div>
-              <div className="flex items-center gap-3">
-                <input id="emailAccountsOnConfirm" type="checkbox" className="h-4 w-4 accent-primary"
-                  checked={settings.salesOrder?.emailAccountsOnConfirm || false}
-                  onChange={(e) => setSalesOrder('emailAccountsOnConfirm', e.target.checked)} />
-                <Label htmlFor="emailAccountsOnConfirm">Email accounts when an order is confirmed</Label>
-              </div>
-              {settings.salesOrder?.emailAccountsOnConfirm && emailListCount(settings.salesOrder?.accountsEmails) === 0 && (
-                <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300">
-                  <AlertTriangle className="h-4 w-4 shrink-0" />
-                  <span>
-                    This toggle does nothing until you add at least one accounts email address above — confirmed orders
-                    will not be mailed anywhere.
-                  </span>
-                </div>
-              )}
-              <Button onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save settings'}</Button>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
         <TabsContent value="kit">
           <Card>
             <CardHeader>
