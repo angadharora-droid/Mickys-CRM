@@ -10,6 +10,7 @@
     "sync:meta": "node src/scripts/sync-meta-leads.js",
     "normalize:cities": "node src/scripts/normalize-cities.js",
     "backfill:stock-keys": "node src/scripts/backfill-stock-name-keys.js",
+    "migrate:order-status": "node src/scripts/migrate-sales-order-status.js",
     "cleanup:storage": "node src/scripts/cleanup-gridfs.js"
   },
   "dependencies": {

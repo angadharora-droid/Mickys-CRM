@@ -42,6 +42,13 @@ const appointedCustomerSchema = new mongoose.Schema(
       termsAndConditions: { type: String, trim: true, default: '' },
     },
 
+    // Last day these frozen rates may be booked against, inclusive and judged
+    // in IST. There is no default period — the admin states it when appointing
+    // and re-states it on every edit, since editing re-freezes the rates.
+    // null means "no validity recorded": everyone appointed before validity
+    // existed, who keeps trading while the admin works through the list.
+    validUntil: { type: Date, default: null },
+
     frozenAt: { type: Date, default: Date.now },
     appointedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   },

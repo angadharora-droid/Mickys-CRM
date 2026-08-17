@@ -8,7 +8,12 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Loader2, Mail, Building2, Send, ScrollText } from 'lucide-react';
+import { Loader2, Mail, Building2, Send, ScrollText, ClipboardList, AlertTriangle } from 'lucide-react';
+
+// The accounts list is stored as an array but edited as one comma-separated
+// line; the API accepts either and hands back the normalised array on save.
+const emailListText = (v) => (Array.isArray(v) ? v.join(', ') : v || '');
+const emailListCount = (v) => emailListText(v).split(',').filter((e) => e.trim()).length;
 
 export default function Settings() {
   const [settings, setSettings] = useState(null);
@@ -26,6 +31,7 @@ export default function Settings() {
   const setEmail = (key, value) => setSettings((s) => ({ ...s, email: { ...s.email, [key]: value } }));
   const setCompany = (key, value) => setSettings((s) => ({ ...s, company: { ...s.company, [key]: value } }));
   const setKit = (key, value) => setSettings((s) => ({ ...s, kit: { ...s.kit, [key]: value } }));
+  const setSalesOrder = (key, value) => setSettings((s) => ({ ...s, salesOrder: { ...s.salesOrder, [key]: value } }));
 
   const save = async () => {
     setSaving(true);
@@ -34,6 +40,11 @@ export default function Settings() {
         email: { ...settings.email, port: Number(settings.email.port) || 587 },
         company: settings.company,
         kit: settings.kit,
+        salesOrder: {
+          ...settings.salesOrder,
+          accountsEmails: emailListText(settings.salesOrder?.accountsEmails),
+          emailAccountsOnConfirm: settings.salesOrder?.emailAccountsOnConfirm ?? false,
+        },
       });
       setSettings(data.data);
       toast.success('Settings saved');
@@ -73,6 +84,7 @@ export default function Settings() {
         <TabsList className="flex-wrap h-auto">
           <TabsTrigger value="email"><Mail className="h-4 w-4 mr-1.5" /> Email</TabsTrigger>
           <TabsTrigger value="company"><Building2 className="h-4 w-4 mr-1.5" /> Company</TabsTrigger>
+          <TabsTrigger value="salesOrder"><ClipboardList className="h-4 w-4 mr-1.5" /> Sales Orders</TabsTrigger>
           <TabsTrigger value="kit"><ScrollText className="h-4 w-4 mr-1.5" /> Kit Defaults</TabsTrigger>
         </TabsList>
 
@@ -152,6 +164,47 @@ export default function Settings() {
                 <div className="space-y-2"><Label>Email</Label><Input value={settings.company?.email || ''} onChange={(e) => setCompany('email', e.target.value)} /></div>
                 <div className="space-y-2 sm:col-span-2"><Label>Address</Label><Input value={settings.company?.address || ''} onChange={(e) => setCompany('address', e.target.value)} /></div>
               </div>
+              <Button onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save settings'}</Button>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="salesOrder">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Sales Orders</CardTitle>
+              <CardDescription>
+                Accounts can be sent the order PDF automatically the moment an exec confirms it, so invoicing never waits
+                on someone remembering to forward it.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label>Accounts email addresses</Label>
+                <Input
+                  placeholder="accounts@mickys.in, billing@mickys.in"
+                  value={emailListText(settings.salesOrder?.accountsEmails)}
+                  onChange={(e) => setSalesOrder('accountsEmails', e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Separate multiple addresses with commas. Every one of them receives the confirmed order PDF.
+                </p>
+              </div>
+              <div className="flex items-center gap-3">
+                <input id="emailAccountsOnConfirm" type="checkbox" className="h-4 w-4 accent-primary"
+                  checked={settings.salesOrder?.emailAccountsOnConfirm || false}
+                  onChange={(e) => setSalesOrder('emailAccountsOnConfirm', e.target.checked)} />
+                <Label htmlFor="emailAccountsOnConfirm">Email accounts when an order is confirmed</Label>
+              </div>
+              {settings.salesOrder?.emailAccountsOnConfirm && emailListCount(settings.salesOrder?.accountsEmails) === 0 && (
+                <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                  <AlertTriangle className="h-4 w-4 shrink-0" />
+                  <span>
+                    This toggle does nothing until you add at least one accounts email address above — confirmed orders
+                    will not be mailed anywhere.
+                  </span>
+                </div>
+              )}
               <Button onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save settings'}</Button>
             </CardContent>
           </Card>

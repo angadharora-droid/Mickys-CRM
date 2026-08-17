@@ -4,6 +4,7 @@ const AppointedCustomer = require('../models/AppointedCustomer');
 const Lead = require('../models/Lead');
 const { logActivity } = require('../services/activity.service');
 const { searchRegex } = require('../utils/sanitize');
+const { istDayStart, istDateLabel } = require('../utils/istDate');
 
 const pickBody = (body) => ({
   companyName: body.companyName,
@@ -11,6 +12,9 @@ const pickBody = (body) => ({
   gstin: body.gstin || '',
   mobile: body.mobile,
   address: body.address,
+  // Pinned to the IST day the admin picked, since the rates run out at the end
+  // of that day in India whatever timezone the browser was in.
+  validUntil: istDayStart(body.validUntil),
   items: body.items.map((i) => ({
     sku: i.sku || '',
     name: i.name,
@@ -66,7 +70,7 @@ const createCustomer = asyncHandler(async (req, res) => {
     action: 'CUSTOMER_APPOINTED',
     entity: 'AppointedCustomer',
     entityId: customer._id,
-    details: `Appointed ${customer.companyName} as customer with ${customer.items.length} frozen rates & terms`,
+    details: `Appointed ${customer.companyName} as customer with ${customer.items.length} frozen rates & terms, valid till ${istDateLabel(customer.validUntil)}`,
     ip: req.ip,
   });
 
@@ -116,7 +120,7 @@ const updateCustomer = asyncHandler(async (req, res) => {
     action: 'CUSTOMER_RATES_REFROZEN',
     entity: 'AppointedCustomer',
     entityId: customer._id,
-    details: `Updated ${customer.companyName} — ${customer.items.length} rates & terms re-frozen`,
+    details: `Updated ${customer.companyName} — ${customer.items.length} rates & terms re-frozen, valid till ${istDateLabel(customer.validUntil)}`,
     ip: req.ip,
   });
 

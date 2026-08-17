@@ -17,37 +17,37 @@ const StockSyncLog = require('../models/StockSyncLog');
  *                gets promised goods nobody has.
  *
  * WHICH ORDERS HOLD STOCK
- * An open order always reserves: the goods are still sitting in Tally, so
- * Tally's closingQty still counts them and only the CRM knows they are spoken
- * for. A cancelled order never reserves. A dispatched order is the awkward
- * one. The operator marks the order dispatched here and keys the tax invoice
- * into Tally afterwards, sometimes hours afterwards; until that invoice
- * exists, Tally still counts the goods, so releasing the reservation the
- * moment the status changes would promise the same stock twice.
+ * Open and confirmed orders always reserve: the goods are still sitting in
+ * Tally, so Tally's closingQty still counts them and only the CRM knows they
+ * are spoken for. Confirming changes nothing here — it locks the order against
+ * edits, it does not move any goods. A cancelled order never reserves. A
+ * closed order is the awkward one. Closing is the operator's signal that the
+ * goods have gone, and the tax invoice is keyed into Tally afterwards,
+ * sometimes hours afterwards; until that invoice exists, Tally still counts
+ * the goods, so releasing the reservation the moment the status changes would
+ * promise the same stock twice.
  *
- * So a dispatched order keeps reserving until a stock sync lands whose data
- * cut-off is later than dispatch plus a settle window (DISPATCH_SETTLE_MINUTES,
+ * So a closed order keeps reserving until a stock sync lands whose data
+ * cut-off is later than the close plus a settle window (CLOSE_SETTLE_MINUTES,
  * two hours by default). The window is what makes the rule mean anything: an
- * operator who marks an order dispatched and immediately presses sync to
- * refresh the screen has not yet written the invoice, and without the window
- * that refresh would release stock Tally is still showing. The comparison is
- * against StockSyncLog.syncedAt — the moment the sync began — not createdAt,
- * which is written once the upserts finish and would tilt every borderline
- * case towards over-promising.
+ * operator who closes an order and immediately presses sync to refresh the
+ * screen has not yet written the invoice, and without the window that refresh
+ * would release stock Tally is still showing. The comparison is against
+ * StockSyncLog.syncedAt — the moment the sync began — not createdAt, which is
+ * written once the upserts finish and would tilt every borderline case towards
+ * over-promising.
  *
- * Two guards sit around that rule. A dispatched order older than
- * DISPATCH_RESERVE_MAX_DAYS stops reserving regardless of sync evidence, so
- * one stuck order (or a lost StockSyncLog collection) cannot quietly hold
- * stock back for months. And a dispatched order with no dispatchedAt at all —
- * everything dispatched before this feature shipped — counts as released,
- * because Tally caught up long ago; the predicate expresses that by requiring
- * dispatchedAt to be present and recent rather than by comparing against a
- * missing field.
+ * Two guards sit around that rule. A closed order older than
+ * CLOSE_RESERVE_MAX_DAYS stops reserving regardless of sync evidence, so one
+ * stuck order (or a lost StockSyncLog collection) cannot quietly hold stock
+ * back for months. And a closed order with no closedAt at all — everything
+ * dispatched before this feature shipped — counts as released, because Tally
+ * caught up long ago; the predicate expresses that by requiring closedAt to be
+ * present and recent rather than by comparing against a missing field.
  *
- * The opposite ordering (invoice keyed into Tally first, order marked
- * dispatched later) briefly subtracts the goods twice. That direction
- * under-promises, which is the safe way to be wrong, and is the accepted
- * trade-off.
+ * The opposite ordering (invoice keyed into Tally first, order closed later)
+ * briefly subtracts the goods twice. That direction under-promises, which is
+ * the safe way to be wrong, and is the accepted trade-off.
  *
  * NAME MATCHING
  * Everything joins on nameKey — the item name trimmed, upper-cased and with
@@ -118,16 +118,19 @@ async function reservingFilter({ excludeOrder } = {}) {
   const lastSyncAt = log?.syncedAt || null;
 
   const now = Date.now();
-  const capCutoff = new Date(now - env.stock.dispatchReserveMaxDays * DAY_MS);
+  const capCutoff = new Date(now - env.stock.closeReserveMaxDays * DAY_MS);
   const settleCutoff = lastSyncAt
-    ? new Date(lastSyncAt.getTime() - env.stock.dispatchSettleMinutes * MINUTE_MS)
+    ? new Date(lastSyncAt.getTime() - env.stock.closeSettleMinutes * MINUTE_MS)
     : null;
   // No sync evidence at all leaves only the hard cap; otherwise whichever of
   // the two releases the order sooner wins.
   const cutoff = settleCutoff && settleCutoff > capCutoff ? settleCutoff : capCutoff;
 
   const filter = {
-    $or: [{ status: 'open' }, { status: 'dispatched', dispatchedAt: { $gte: cutoff } }],
+    $or: [
+      { status: { $in: ['open', 'confirmed'] } },
+      { status: 'closed', closedAt: { $gte: cutoff } },
+    ],
   };
   const id = excludeId(excludeOrder);
   if (id) filter._id = { $ne: id };
