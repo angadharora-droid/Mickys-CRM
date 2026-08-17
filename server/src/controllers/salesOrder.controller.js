@@ -382,6 +382,7 @@ const updateStatus = asyncHandler(async (req, res) => {
     );
   }
 
+  const previousStatus = order.status;
   const wasReserving = RESERVING.has(order.status);
   order.status = status;
   // closedAt is the clock that eventually releases the order's stock
@@ -408,6 +409,10 @@ const updateStatus = asyncHandler(async (req, res) => {
     action: 'SALES_ORDER_STATUS',
     entity: 'SalesOrder',
     entityId: order._id,
+    // The order document records only its own close, so this log is where the
+    // reports read confirmation and cancellation dates from — keep the status
+    // in meta, not only in the prose (services/salesReport.service.js).
+    meta: { status, from: previousStatus },
     details:
       `Sales order ${order.number} marked ${status}` +
       (!accountsEmail || accountsEmail.reason === 'already-sent'

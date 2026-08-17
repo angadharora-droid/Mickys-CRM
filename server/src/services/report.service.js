@@ -707,10 +707,13 @@ function totalsRow(def, rows) {
 }
 
 /**
- * Builds the query context for a report request. `fromStr`/`toStr` are IST
- * calendar days (YYYY-MM-DD); defaults cover the last 30 days.
+ * Validates the date window a report request asked for and returns its UTC
+ * bounds. `fromStr`/`toStr` are IST calendar days (YYYY-MM-DD); defaults cover
+ * the last 30 days. Role scoping is deliberately not part of this — the sales
+ * order reports draw the same window but scope a different collection, and one
+ * copy of these rules is worth far more than two that can drift apart.
  */
-function buildContext(user, { from, to, execId }) {
+function dayRangeContext({ from, to, execId }) {
   const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
   const todayKey = istDayKey(new Date());
   const toStr = to || todayKey;
@@ -738,8 +741,19 @@ function buildContext(user, { from, to, execId }) {
     ...bounds,
     fromStr,
     toStr,
-    scope: reportScope(user, user.role === 'admin' ? execId : ''),
     rangeLabel: `${dmy(bounds.from)} – ${dmy(bounds.to)}`,
+  };
+}
+
+/**
+ * Builds the query context for a report request: the date window plus the
+ * lead scope this requester may see.
+ */
+function buildContext(user, query) {
+  const range = dayRangeContext(query);
+  return {
+    ...range,
+    scope: reportScope(user, user.role === 'admin' ? query.execId : ''),
   };
 }
 
@@ -853,6 +867,7 @@ module.exports = {
   DAILY_SUMMARY_MAX_DAYS,
   rangeDayCount,
   reportCatalog,
+  dayRangeContext,
   buildContext,
   runReport,
   buildWorkbook,
