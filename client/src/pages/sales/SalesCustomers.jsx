@@ -14,10 +14,76 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Search, UserCheck, Plus, Trash2, Loader2, Snowflake, X, Pencil } from 'lucide-react';
+import {
+  Search, UserCheck, Plus, Trash2, Loader2, Snowflake, X, Pencil,
+  CalendarCheck, CalendarClock, CalendarOff, CalendarX, AlertTriangle,
+} from 'lucide-react';
 
 /** All appointed-customer details are entered and stored in CAPS. */
 const caps = (v) => v.toUpperCase();
+
+/**
+ * Frozen rates run out at the END of their validity day in India, so the day is
+ * drawn in IST here too — the same boundary the server judges bookings on —
+ * rather than in whatever timezone the browser happens to sit in.
+ */
+const IST = 'Asia/Kolkata';
+const istDateKey = (d) => new Intl.DateTimeFormat('en-CA', { timeZone: IST }).format(new Date(d));
+const istDateLabel = (d) =>
+  new Intl.DateTimeFormat('en-GB', { timeZone: IST, day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(d));
+const istDaysLeft = (d) =>
+  Math.round((Date.parse(`${istDateKey(d)}T00:00:00Z`) - Date.parse(`${istDateKey(new Date())}T00:00:00Z`)) / 86400000);
+
+/** Inside this many days the admin should be re-freezing the rates. */
+const EXPIRING_SOON_DAYS = 30;
+
+/**
+ * How a customer's rate validity reads. Customers appointed before validity
+ * existed carry null — they keep trading, so they are flagged as needing
+ * attention rather than shown as broken. Everything expired or close to it is
+ * coloured, because this list is how the admin polices the frozen prices.
+ */
+const validity = (validUntil) => {
+  if (!validUntil) {
+    return {
+      state: 'none',
+      icon: CalendarOff,
+      label: 'No validity set',
+      cls: 'bg-muted text-muted-foreground hover:bg-muted',
+    };
+  }
+  const days = istDaysLeft(validUntil);
+  const on = istDateLabel(validUntil);
+  if (days < 0) {
+    return {
+      state: 'expired',
+      icon: CalendarX,
+      label: 'EXPIRED',
+      sub: on,
+      title: `Rates expired on ${on}`,
+      cls: 'bg-red-100 text-red-800 hover:bg-red-100 dark:bg-red-950 dark:text-red-300',
+      row: 'bg-red-50/70 dark:bg-red-950/30',
+    };
+  }
+  if (days <= EXPIRING_SOON_DAYS) {
+    return {
+      state: 'soon',
+      icon: CalendarClock,
+      label: days === 0 ? 'Expires today' : `Expires in ${days} day${days === 1 ? '' : 's'}`,
+      sub: on,
+      title: `Rates valid up to and including ${on}`,
+      cls: 'bg-amber-100 text-amber-800 hover:bg-amber-100 dark:bg-amber-950 dark:text-amber-300',
+      row: 'bg-amber-50/70 dark:bg-amber-950/30',
+    };
+  }
+  return {
+    state: 'ok',
+    icon: CalendarCheck,
+    label: `Valid till ${on}`,
+    title: `Rates valid up to and including ${on}`,
+    cls: 'bg-muted text-muted-foreground hover:bg-muted',
+  };
+};
 
 /**
  * Appoint/edit form. Reached three ways:
@@ -34,6 +100,10 @@ export function SalesCustomerForm() {
   const [form, setForm] = useState({ companyName: '', email: '', gstin: '', mobile: '', address: '' });
   const [items, setItems] = useState([]);
   const [terms, setTerms] = useState({ paymentTerms: '', creditPeriod: '', termsAndConditions: '' });
+  // The IST day the frozen rates run out on, as the date input's YYYY-MM-DD.
+  // Blank on a new appointment and on customers appointed before validity
+  // existed — the admin must state it either way, since saving re-freezes.
+  const [validUntil, setValidUntil] = useState('');
   const [frozenAt, setFrozenAt] = useState(null);
   const [loading, setLoading] = useState(Boolean(id || leadId));
   const [saving, setSaving] = useState(false);
@@ -53,6 +123,7 @@ export function SalesCustomerForm() {
             creditPeriod: c.terms?.creditPeriod || '',
             termsAndConditions: c.terms?.termsAndConditions || '',
           });
+          setValidUntil(c.validUntil ? istDateKey(c.validUntil) : '');
           setFrozenAt(c.frozenAt);
         })
         .catch((err) => toast.error(apiError(err)))
@@ -101,12 +172,14 @@ export function SalesCustomerForm() {
     const body = {
       ...form,
       leadId: leadId || undefined,
+      validUntil,
       items: items
         .filter((i) => i.name.trim())
         .map((i) => ({ sku: i.sku, name: i.name, packSize: i.packSize, rate: Number(i.rate) || 0 })),
       terms,
     };
     if (!body.items.length) return toast.error('Keep at least one item in the rate list');
+    if (!validUntil) return toast.error('Enter the date these frozen rates are valid until');
     setSaving(true);
     try {
       const { data } = id
@@ -198,6 +271,27 @@ export function SalesCustomerForm() {
             <Plus className="h-4 w-4" /> Add item
           </Button>
         </div>
+        <div className="px-4 pt-3 sm:flex sm:items-end sm:gap-4">
+          <div className="sm:w-56 sm:shrink-0">
+            <p className="text-sm font-medium mb-1.5">Rates valid until *</p>
+            <Input type="date" min={istDateKey(new Date())} value={validUntil} onChange={(e) => setValidUntil(e.target.value)} />
+          </div>
+          <p className="text-xs text-muted-foreground mt-2 sm:mt-0 sm:pb-2.5">
+            Orders can be booked at these rates up to and including this day, India time. After it, edit this customer to re-freeze the rates with a new date.
+          </p>
+        </div>
+        {validUntil && istDaysLeft(`${validUntil}T00:00:00Z`) < 0 && (
+          <p className="mx-4 mt-3 flex items-start gap-1.5 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            That day has already passed — sales orders for this customer stay blocked until the rates are re-frozen with a later date.
+          </p>
+        )}
+        {id && !validUntil && (
+          <p className="mx-4 mt-3 flex items-start gap-1.5 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            No validity was recorded when this customer was appointed. Set one now — saving re-freezes the rates.
+          </p>
+        )}
         {items.length === 0 ? (
           <EmptyState
             icon={Snowflake}
@@ -312,6 +406,13 @@ export default function SalesCustomers() {
     }
   };
 
+  // Rate lists that have run out, or are about to, are the ones the admin has
+  // to act on — counted up front so they are visible without reading the table.
+  const rows = (customers || []).map((c) => ({ c, v: validity(c.validUntil) }));
+  const expired = rows.filter((r) => r.v.state === 'expired').length;
+  const soon = rows.filter((r) => r.v.state === 'soon').length;
+  const unset = rows.filter((r) => r.v.state === 'none').length;
+
   return (
     <div>
       <PageHeader title="Customers" description="Appointed from delivered leads with frozen rate lists — orders use only these items and rates" />
@@ -326,6 +427,29 @@ export default function SalesCustomers() {
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
+        {(expired > 0 || soon > 0 || unset > 0) && (
+          <div className="flex flex-wrap items-center gap-2 mt-3">
+            {expired > 0 && (
+              <Badge className="bg-red-100 text-red-800 hover:bg-red-100 dark:bg-red-950 dark:text-red-300">
+                <CalendarX className="h-3 w-3 mr-1" />
+                {expired} expired
+              </Badge>
+            )}
+            {soon > 0 && (
+              <Badge className="bg-amber-100 text-amber-800 hover:bg-amber-100 dark:bg-amber-950 dark:text-amber-300">
+                <CalendarClock className="h-3 w-3 mr-1" />
+                {soon} expiring within {EXPIRING_SOON_DAYS} days
+              </Badge>
+            )}
+            {unset > 0 && (
+              <Badge variant="secondary">
+                <CalendarOff className="h-3 w-3 mr-1" />
+                {unset} with no validity set
+              </Badge>
+            )}
+            <p className="text-xs text-muted-foreground">Open a customer to re-freeze the rates with a new validity.</p>
+          </div>
+        )}
       </Card>
 
       <Card>
@@ -346,6 +470,7 @@ export default function SalesCustomers() {
             <TableHeader>
               <TableRow>
                 <TableHead>Company</TableHead>
+                <TableHead className="hidden sm:table-cell">Rates valid</TableHead>
                 <TableHead className="hidden md:table-cell">GSTIN</TableHead>
                 <TableHead className="hidden sm:table-cell">Mobile</TableHead>
                 <TableHead className="text-right">Items</TableHead>
@@ -354,11 +479,26 @@ export default function SalesCustomers() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {customers.map((c) => (
-                <TableRow key={c._id} className="cursor-pointer" onClick={() => navigate(`/sales/customers/${c._id}`)}>
+              {rows.map(({ c, v }) => (
+                <TableRow
+                  key={c._id}
+                  className={`cursor-pointer ${v.row || ''}`}
+                  onClick={() => navigate(`/sales/customers/${c._id}`)}
+                >
                   <TableCell>
                     <p className="font-medium leading-tight">{c.companyName}</p>
                     <p className="text-xs text-muted-foreground mt-0.5 sm:hidden">{c.mobile}</p>
+                    <Badge className={`mt-1.5 sm:hidden ${v.cls}`} title={v.title}>
+                      <v.icon className="h-3 w-3 mr-1" />
+                      {v.label}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="hidden sm:table-cell">
+                    <Badge className={v.cls} title={v.title}>
+                      <v.icon className="h-3 w-3 mr-1" />
+                      {v.label}
+                    </Badge>
+                    {v.sub && <p className="text-[11px] text-muted-foreground mt-0.5">{v.sub}</p>}
                   </TableCell>
                   <TableCell className="hidden md:table-cell text-sm">{c.gstin || '—'}</TableCell>
                   <TableCell className="hidden sm:table-cell text-sm">{c.mobile}</TableCell>
