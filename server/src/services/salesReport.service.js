@@ -199,16 +199,25 @@ async function customerRows(ctx) {
     createdAt: { $gte: ctx.from, $lte: ctx.to },
   })
     .select('customerName customer total createdAt')
-    .populate('customer', 'companyName')
     .lean();
+
+  // The appointed list's own name, resolved once, so an order booked before a
+  // customer was renamed still lands on that customer's row. An order whose
+  // appointed customer has since been deleted keeps the name it was booked
+  // with — it was still an appointed booking.
+  const appointedNames = new Map(
+    (await AppointedCustomer.find({ _id: { $in: orders.filter((o) => o.customer).map((o) => o.customer) } })
+      .select('companyName')
+      .lean()).map((c) => [String(c._id), c.companyName])
+  );
 
   // One business, one row. The same customer can be booked through the
   // appointed picker and by typing their name into a plain order, so both
-  // bookings are gathered under the appointed list's own name — which also
-  // keeps a renamed customer's history together.
+  // bookings are gathered under one name rather than split into an appointed
+  // row and a free-typed one that neither adds up to the customer's figure.
   const byCustomer = new Map();
   for (const o of orders) {
-    const name = o.customer?.companyName || o.customerName;
+    const name = (o.customer && appointedNames.get(String(o.customer))) || o.customerName;
     const key = String(name || '').trim().toUpperCase();
     if (!byCustomer.has(key)) {
       byCustomer.set(key, {
@@ -225,7 +234,7 @@ async function customerRows(ctx) {
     // Being appointed is a fact about the customer, not about one booking.
     if (o.customer) {
       row.appointed = true;
-      row.customer = o.customer.companyName;
+      row.customer = name;
     }
     row.orders += 1;
     row.total += Number(o.total) || 0;
