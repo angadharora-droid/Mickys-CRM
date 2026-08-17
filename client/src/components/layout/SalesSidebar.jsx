@@ -15,26 +15,37 @@ const NAV_SECTIONS = [
   {
     label: 'Sales Orders',
     items: [
-      { to: '/sales', label: 'Overview', icon: LayoutDashboard, end: true },
-      { to: '/sales/stock', label: 'Stock from Tally', icon: Boxes },
-      { to: '/sales/orders', label: 'Sales Orders', icon: ReceiptText },
-      { to: '/sales/customers', label: 'Customers', icon: UserCheck },
+      { to: '/sales', label: 'Overview', icon: LayoutDashboard, end: true, roles: ['*'] },
+      { to: '/sales/stock', label: 'Stock from Tally', icon: Boxes, roles: ['*'] },
+      { to: '/sales/orders', label: 'Sales Orders', icon: ReceiptText, roles: ['*'] },
+      { to: '/sales/customers', label: 'Customers', icon: UserCheck, roles: ['*'] },
     ],
   },
   {
+    label: 'Administration',
+    items: [{ to: '/sales/settings', label: 'Settings', icon: Settings, roles: [ROLES.ADMIN] }],
+  },
+  {
     label: 'Switch',
-    items: [{ to: '/', label: 'Back to Leads CRM', icon: ArrowLeftRight, end: true }],
+    items: [
+      // The escape hatch back to the leads CRM only shows for users who can
+      // actually enter it (module assignment).
+      { to: '/', label: 'Back to Leads CRM', icon: ArrowLeftRight, end: true, roles: ['*'], module: MODULES.LEADS },
+    ],
   },
 ];
 
 export default function SalesSidebar({ open, onClose }) {
   const { user } = useAuth();
 
-  // The escape hatch back to the leads CRM only shows for users who can
-  // actually enter it (module assignment).
-  const sections = NAV_SECTIONS.filter(
-    (s) => s.label !== 'Switch' || hasModule(user, MODULES.LEADS)
-  );
+  const sections = NAV_SECTIONS.map((s) => ({
+    ...s,
+    items: s.items.filter(
+      (i) =>
+        (i.roles.includes('*') || i.roles.includes(user?.role)) &&
+        (!i.module || hasModule(user, i.module))
+    ),
+  })).filter((s) => s.items.length > 0);
 
   return (
     <>

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import api, { apiError } from '@/lib/api';
+import { useAuth } from '@/context/AuthContext';
+import { ROLES } from '@/lib/constants';
 import { formatCurrency, formatDateTime } from '@/lib/utils';
 import PageHeader from '@/components/shared/PageHeader';
 import StatCard from '@/components/shared/StatCard';
@@ -12,10 +14,11 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
-  Boxes, PackageCheck, IndianRupee, Tags, ReceiptText, RefreshCw, ClipboardList, TriangleAlert,
+  Boxes, PackageCheck, IndianRupee, Tags, ReceiptText, RefreshCw, ClipboardList, TriangleAlert, Settings,
 } from 'lucide-react';
 
 export default function SalesOverview() {
+  const { user } = useAuth();
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
 
