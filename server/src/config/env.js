@@ -78,6 +78,17 @@ const env = {
   // POST /api/stock/sync). Empty disables key-based sync — manual admin
   // upload in the dashboard still works.
   tallySyncKey: process.env.TALLY_SYNC_KEY || '',
+  // Stock reservation timing (services/stockAvailability.service.js).
+  // dispatchSettleMinutes: how long after an order is marked dispatched the
+  // operator is assumed to still be keying the invoice into Tally — the goods
+  // are counted as reserved until a sync lands past that window, otherwise a
+  // refresh pressed minutes after dispatch would release stock Tally still
+  // shows. dispatchReserveMaxDays: hard backstop so a dispatched order can
+  // never hold a reservation forever when the sync evidence never arrives.
+  stock: {
+    dispatchSettleMinutes: parseInt(process.env.DISPATCH_SETTLE_MINUTES || '120', 10),
+    dispatchReserveMaxDays: parseInt(process.env.DISPATCH_RESERVE_MAX_DAYS || '7', 10),
+  },
   // Meta Ads lead-form sheet poller. On by default so a fresh deploy keeps
   // pulling leads without any external scheduler; set META_SYNC_ENABLED=false
   // to turn it off, or run it by hand with `npm run sync:meta`.

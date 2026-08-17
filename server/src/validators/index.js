@@ -442,6 +442,15 @@ const appointedCustomerCreateSchema = appointedCustomerSchema.extend({
   leadId: objectId,
 });
 
+// ---------- Stock availability ----------
+// Batch lookup for the order dialog. POSTed rather than queried because an
+// appointed customer's frozen list is dozens of long item names; excludeOrder
+// is the order being edited, whose own lines must not count against it.
+const stockAvailabilitySchema = z.object({
+  names: z.array(z.string().trim().min(1).max(200)).min(1).max(500),
+  excludeOrder: objectId.optional(),
+});
+
 // ---------- Sales orders ----------
 // Amounts are recomputed server-side; the client only sends qty and rate.
 const salesOrderSchema = z.object({
@@ -498,6 +507,7 @@ module.exports = {
   exportConfirmSchema,
   pushSubscribeSchema,
   pushUnsubscribeSchema,
+  stockAvailabilitySchema,
   salesOrderSchema,
   salesOrderStatusSchema,
   appointedCustomerSchema,

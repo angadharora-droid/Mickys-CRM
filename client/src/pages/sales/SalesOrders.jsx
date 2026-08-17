@@ -22,6 +22,7 @@ import {
 } from '@/components/ui/select';
 import {
   Search, ReceiptText, Plus, Download, Pencil, Trash2, Loader2, X, Eye, ExternalLink, Snowflake,
+  AlertTriangle,
 } from 'lucide-react';
 
 const ALL = '__all__';
@@ -36,6 +37,32 @@ const qty = (n, unit) => {
   const num = Number(n || 0);
   const s = Number.isInteger(num) ? num.toLocaleString('en-IN') : num.toLocaleString('en-IN', { maximumFractionDigits: 2 });
   return unit ? `${s} ${unit}` : s;
+};
+
+/**
+ * Order lines and stock rows only ever meet through this key. An appointed
+ * customer's frozen item names are stored UPPERCASE while Tally's are mixed
+ * case, so the raw names never match; the server joins on the same normalised
+ * key, and the dialog has to key its availability lookups the same way.
+ */
+const nameKeyOf = (name) => String(name || '').trim().toUpperCase().replace(/\s+/g, ' ');
+
+/** Something left to sell, nothing left, or oversold. */
+const availTone = (n) => (n > 0 ? 'text-emerald-600' : n < 0 ? 'text-red-600' : 'text-amber-600');
+
+/**
+ * The server re-checks availability while it saves and reports every line that
+ * went past it. It is never a rejection — orders are routinely booked against
+ * goods still in production — so by the time this shows, the order is saved.
+ */
+const warnShortfalls = (warnings) => {
+  if (!warnings?.length) return;
+  toast.warning(`${warnings.length} item(s) booked beyond available stock`, {
+    description: warnings
+      .map((w) => `${w.name}: ${qty(w.requested)} ordered, ${qty(w.available)} available (short ${qty(w.short)})`)
+      .join(' · '),
+    duration: 10000,
+  });
 };
 
 /** Every word of the query must appear in the text, in any order. */
@@ -62,6 +89,11 @@ const prefillRate = (s) => s.standardPrice || s.lastSalePrice || s.closingRate |
  * Keyboard flow mimics Tally voucher entry: Enter advances customer → item →
  * qty → rate → next item, ↑/↓ move in suggestion lists, Esc backs out of a
  * list (not the screen), Ctrl+A accepts/saves.
+ *
+ * Quantities are promised against availability — Tally's closing stock less
+ * what other orders have already committed — not against closing stock, which
+ * still counts goods that are spoken for. The order being edited is excluded
+ * from its own reservation, so re-saving it unchanged never reads as short.
  */
 function OrderDialog({ open, onClose, order, onSaved }) {
   const [customers, setCustomers] = useState([]);
@@ -75,6 +107,8 @@ function OrderDialog({ open, onClose, order, onSaved }) {
   const [itemFocus, setItemFocus] = useState(false);
   const [itemHl, setItemHl] = useState(0);
   const [defaultStock, setDefaultStock] = useState([]); // in-stock list shown before typing
+  const [avail, setAvail] = useState({}); // nameKey → availability, excluding this order
+  const availDone = useRef(new Set()); // nameKeys the batch lookup has answered
   const itemNav = useRef(false); // true once ↑/↓ used on the current list
   const [lines, setLines] = useState([]);
   const [notes, setNotes] = useState('');
@@ -88,15 +122,20 @@ function OrderDialog({ open, onClose, order, onSaved }) {
   useEffect(() => {
     if (!open) return;
     setCustomerName(order?.customerName || '');
+    // The stored stockQtyAtOrder/availableAtOrder are an audit record of the
+    // last save, not today's position — the lines take their figures from the
+    // live lookup below instead.
     setLines(
       (order?.items || []).map((i) => ({
-        name: i.name, baseUnits: i.baseUnits, qty: String(i.qty), rate: String(i.rate), available: i.stockQtyAtOrder,
+        name: i.name, baseUnits: i.baseUnits, qty: String(i.qty), rate: String(i.rate), packSize: i.packSize,
       }))
     );
     setNotes(order?.notes || '');
     setItemSearch('');
     setStock([]);
     setSelectedCustomer(null);
+    setAvail({});
+    availDone.current = new Set();
     api.get('/stock/customers').then((r) => setCustomers(r.data.data)).catch(() => {});
     api.get('/sales-customers')
       .then((r) => {
@@ -129,6 +168,55 @@ function OrderDialog({ open, onClose, order, onSaved }) {
     }, 300);
     return () => clearTimeout(t);
   }, [open, itemSearch, selectedCustomer]);
+
+  // Availability for every name the dialog can show a figure for: the lines on
+  // the voucher, plus a frozen customer's whole price list (their suggestions
+  // come from that list, not from a stock search, so they carry no stock data).
+  const wantedNames = useMemo(() => {
+    const byKey = new Map();
+    const want = (name) => {
+      const key = nameKeyOf(name);
+      if (key && key.length <= 200 && !byKey.has(key)) byKey.set(key, String(name));
+    };
+    lines.forEach((l) => want(l.name));
+    (selectedCustomer?.items || []).forEach((f) => want(f.name));
+    return [...byKey.values()];
+  }, [lines, selectedCustomer]);
+
+  // One batched request per change rather than one per keystroke, and each
+  // name is asked for only once: the figure excludes this order, so it does
+  // not move as this order's own quantities are typed.
+  useEffect(() => {
+    if (!open) return;
+    // The endpoint takes 500 names at a time; a longer list is picked up by
+    // the next pass, since answering one batch marks it done.
+    const done = availDone.current;
+    const names = wantedNames.filter((n) => !done.has(nameKeyOf(n))).slice(0, 500);
+    if (!names.length) return;
+    const t = setTimeout(() => {
+      api.post('/stock/availability', { names, excludeOrder: order?._id })
+        .then((r) => {
+          // A reply that lands after the dialog was reset belongs to another
+          // voucher and would carry the wrong order's exclusion.
+          if (availDone.current !== done) return;
+          names.forEach((n) => done.add(nameKeyOf(n)));
+          setAvail((prev) => {
+            const next = { ...prev };
+            r.data.data.forEach((a) => { next[a.nameKey] = a; });
+            return next;
+          });
+        })
+        .catch(() => {});
+    }, 250);
+    return () => clearTimeout(t);
+  }, [open, order, wantedNames, avail]);
+
+  /**
+   * Netted availability for a name. A stock row already carries its own
+   * reservation figures, so it stands in until the batch lookup — which is the
+   * only one that excludes this order — answers for that name.
+   */
+  const availOf = (name, fallback) => avail[nameKeyOf(name)] || fallback || null;
 
   // Appointed (rate-frozen) customers list first, then the Tally ledgers.
   const customerMatches = useMemo(() => {
@@ -203,7 +291,7 @@ function OrderDialog({ open, onClose, order, onSaved }) {
     const idx = lines.length;
     const line = selectedCustomer
       ? // Frozen list line: the rate is dictated by the customer's price list.
-        { name: s.name, baseUnits: '', qty: '', rate: String(s.rate), available: null, packSize: s.packSize }
+        { name: s.name, baseUnits: '', qty: '', rate: String(s.rate), packSize: s.packSize }
       : {
           name: s.name,
           baseUnits: s.baseUnits,
@@ -211,8 +299,13 @@ function OrderDialog({ open, onClose, order, onSaved }) {
           // Selling-rate prefill: maintained standard price, else the rate of
           // the item's last sales voucher, else the stock valuation rate.
           rate: String(prefillRate(s) || ''),
-          available: s.closingQty,
         };
+    // The stock row's figures stand in until the lookup answers, so the new
+    // line has something to show the moment it lands.
+    if (!selectedCustomer) {
+      const key = nameKeyOf(s.name);
+      setAvail((prev) => (prev[key] ? prev : { ...prev, [key]: { ...s, nameKey: key } }));
+    }
     setLines((prev) => [...prev, line]);
     setItemSearch('');
     itemNav.current = false;
@@ -223,6 +316,41 @@ function OrderDialog({ open, onClose, order, onSaved }) {
     setLines((prev) => prev.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
 
   const total = lines.reduce((sum, l) => sum + (Number(l.qty) || 0) * (Number(l.rate) || 0), 0);
+
+  // Lines that ask for more than is left to sell. An item with no figure —
+  // free-typed, or not in the Tally mirror — is never called short, because a
+  // shortfall cannot be asserted against a quantity nobody knows.
+  const shortfalls = useMemo(() => {
+    const byKey = new Map();
+    lines.forEach((l) => {
+      const key = nameKeyOf(l.name);
+      const a = avail[key];
+      if (!a || a.availableQty == null) return;
+      const seen = byKey.get(key);
+      byKey.set(key, {
+        name: a.name || l.name,
+        baseUnits: a.baseUnits || l.baseUnits,
+        requested: (seen?.requested || 0) + (Number(l.qty) || 0),
+        available: a.availableQty,
+      });
+    });
+    return [...byKey.values()].filter((s) => s.requested > s.available);
+  }, [lines, avail]);
+
+  /** What a line has left to sell, and why it is less than Tally's figure. */
+  const lineCaption = (l, a) => {
+    const parts = selectedCustomer ? [l.packSize, 'rate frozen'].filter(Boolean) : [];
+    if (!a) parts.push('checking availability…');
+    else if (a.availableQty == null) parts.push('not in stock mirror');
+    else {
+      const unit = a.baseUnits || l.baseUnits;
+      parts.push(`${qty(a.availableQty, unit)} available`);
+      if (a.reservedQty > 0) {
+        parts.push(`${qty(a.closingQty, unit)} in Tally, ${qty(a.reservedQty, unit)} on other orders`);
+      }
+    }
+    return parts.join(' · ');
+  };
 
   const save = async () => {
     const items = lines
@@ -243,6 +371,7 @@ function OrderDialog({ open, onClose, order, onSaved }) {
         ? await api.put(`/sales-orders/${order._id}`, body)
         : await api.post('/sales-orders', body);
       toast.success(data.message);
+      warnShortfalls(data.data?.warnings);
       onSaved();
       onClose();
     } catch (err) {
@@ -371,35 +500,47 @@ function OrderDialog({ open, onClose, order, onSaved }) {
             </div>
             {itemMatches.length > 0 && (
               <div className="absolute z-50 mt-1 w-full rounded-md border bg-card shadow-lg max-h-56 overflow-y-auto">
-                {itemMatches.map((s, i) => (
-                  <button
-                    key={s._id || s.name}
-                    type="button"
-                    ref={(el) => { if (i === itemHl) el?.scrollIntoView({ block: 'nearest' }); }}
-                    className={`w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-muted ${i === itemHl ? 'bg-muted' : ''}`}
-                    onMouseDown={() => addLine(s)}
-                    onMouseEnter={() => setItemHl(i)}
-                  >
-                    <span className="truncate">{s.name}</span>
-                    {selectedCustomer ? (
+                {itemMatches.map((s, i) => {
+                  // A frozen item has no stock figures of its own; a searched
+                  // stock row does, and stands in until the lookup answers.
+                  const a = selectedCustomer ? availOf(s.name) : availOf(s.name, s);
+                  return (
+                    <button
+                      key={s._id || s.name}
+                      type="button"
+                      ref={(el) => { if (i === itemHl) el?.scrollIntoView({ block: 'nearest' }); }}
+                      className={`w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-muted ${i === itemHl ? 'bg-muted' : ''}`}
+                      onMouseDown={() => addLine(s)}
+                      onMouseEnter={() => setItemHl(i)}
+                    >
+                      <span className="truncate">{s.name}</span>
                       <span className="ml-2 shrink-0 text-right">
-                        {s.packSize && <span className="block text-[11px] text-muted-foreground">{s.packSize}</span>}
-                        <span className="block text-xs font-medium">{formatCurrency(s.rate)}</span>
-                      </span>
-                    ) : (
-                      <span className="ml-2 shrink-0 text-right">
-                        <span className={`block text-xs ${s.closingQty > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                          {qty(s.closingQty, s.baseUnits)} in stock
-                        </span>
-                        {prefillRate(s) > 0 && (
-                          <span className="block text-[11px] text-muted-foreground">
-                            {formatCurrency(prefillRate(s))}{s.baseUnits ? `/${s.baseUnits}` : ''}
+                        {a && a.availableQty != null && (
+                          <span className={`block text-xs ${availTone(a.availableQty)}`}>
+                            {qty(a.availableQty, a.baseUnits || s.baseUnits)} available
                           </span>
                         )}
+                        {a?.reservedQty > 0 && (
+                          <span className="block text-[11px] text-muted-foreground">
+                            {qty(a.closingQty, a.baseUnits || s.baseUnits)} in Tally · {qty(a.reservedQty)} on order
+                          </span>
+                        )}
+                        {selectedCustomer ? (
+                          <>
+                            {s.packSize && <span className="block text-[11px] text-muted-foreground">{s.packSize}</span>}
+                            <span className="block text-xs font-medium">{formatCurrency(s.rate)}</span>
+                          </>
+                        ) : (
+                          prefillRate(s) > 0 && (
+                            <span className="block text-[11px] text-muted-foreground">
+                              {formatCurrency(prefillRate(s))}{s.baseUnits ? `/${s.baseUnits}` : ''}
+                            </span>
+                          )
+                        )}
                       </span>
-                    )}
-                  </button>
-                ))}
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -407,63 +548,88 @@ function OrderDialog({ open, onClose, order, onSaved }) {
           {/* Lines */}
           {lines.length > 0 && (
             <div className="space-y-2">
-              {lines.map((l, i) => (
-                <div key={l.name} className="rounded-lg border p-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium leading-tight truncate">{l.name}</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        {selectedCustomer
-                          ? [l.packSize, 'rate frozen'].filter(Boolean).join(' · ')
-                          : l.available == null
-                            ? 'Not in stock mirror'
-                            : `${qty(l.available, l.baseUnits)} in stock`}
-                      </p>
+              {lines.map((l, i) => {
+                const a = availOf(l.name);
+                const over = Boolean(a) && a.availableQty != null && (Number(l.qty) || 0) > a.availableQty;
+                return (
+                  <div key={l.name} className={`rounded-lg border p-3 ${over ? 'border-red-300' : ''}`}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium leading-tight truncate">{l.name}</p>
+                        <p className={`text-xs mt-0.5 ${over ? 'text-red-600' : 'text-muted-foreground'}`}>
+                          {lineCaption(l, a)}
+                          {over && ` · short by ${qty((Number(l.qty) || 0) - a.availableQty, a.baseUnits || l.baseUnits)}`}
+                        </p>
+                      </div>
+                      <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={() => setLines((prev) => prev.filter((_, idx) => idx !== i))}>
+                        <X className="h-4 w-4" />
+                      </Button>
                     </div>
-                    <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={() => setLines((prev) => prev.filter((_, idx) => idx !== i))}>
-                      <X className="h-4 w-4" />
-                    </Button>
+                    <div className="grid grid-cols-3 gap-2 mt-2">
+                      <div>
+                        <p className="text-[11px] text-muted-foreground mb-1">Qty{l.baseUnits ? ` (${l.baseUnits})` : ''}</p>
+                        <Input
+                          ref={(el) => { fieldRefs.current[`qty-${i}`] = el; }}
+                          type="number" min="0" inputMode="decimal" value={l.qty}
+                          className={over ? 'border-red-500 text-red-600 focus-visible:border-red-500 focus-visible:ring-red-500/20' : undefined}
+                          onChange={(e) => setLine(i, { qty: e.target.value })}
+                          // Frozen rate = disabled field, so Enter skips it and
+                          // goes straight back to the item search.
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              if (selectedCustomer) itemRef.current?.focus();
+                              else focusField(`rate-${i}`);
+                            }
+                          }}
+                        />
+                      </div>
+                      <div>
+                        <p className="text-[11px] text-muted-foreground mb-1">
+                          Rate (Rs.){selectedCustomer ? ' · frozen' : ''}
+                        </p>
+                        <Input
+                          ref={(el) => { fieldRefs.current[`rate-${i}`] = el; }}
+                          type="number" min="0" inputMode="decimal" value={l.rate}
+                          disabled={Boolean(selectedCustomer)}
+                          title={selectedCustomer ? 'Frozen rate — edit it on the Customers page' : undefined}
+                          onChange={(e) => setLine(i, { rate: e.target.value })}
+                          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); itemRef.current?.focus(); } }}
+                        />
+                      </div>
+                      <div>
+                        <p className="text-[11px] text-muted-foreground mb-1">Amount</p>
+                        <p className="h-10 flex items-center text-sm font-semibold tabular-nums">
+                          {formatCurrency((Number(l.qty) || 0) * (Number(l.rate) || 0))}
+                        </p>
+                      </div>
+                    </div>
                   </div>
-                  <div className="grid grid-cols-3 gap-2 mt-2">
-                    <div>
-                      <p className="text-[11px] text-muted-foreground mb-1">Qty{l.baseUnits ? ` (${l.baseUnits})` : ''}</p>
-                      <Input
-                        ref={(el) => { fieldRefs.current[`qty-${i}`] = el; }}
-                        type="number" min="0" inputMode="decimal" value={l.qty}
-                        onChange={(e) => setLine(i, { qty: e.target.value })}
-                        // Frozen rate = disabled field, so Enter skips it and
-                        // goes straight back to the item search.
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault();
-                            if (selectedCustomer) itemRef.current?.focus();
-                            else focusField(`rate-${i}`);
-                          }
-                        }}
-                      />
-                    </div>
-                    <div>
-                      <p className="text-[11px] text-muted-foreground mb-1">
-                        Rate (Rs.){selectedCustomer ? ' · frozen' : ''}
-                      </p>
-                      <Input
-                        ref={(el) => { fieldRefs.current[`rate-${i}`] = el; }}
-                        type="number" min="0" inputMode="decimal" value={l.rate}
-                        disabled={Boolean(selectedCustomer)}
-                        title={selectedCustomer ? 'Frozen rate — edit it on the Customers page' : undefined}
-                        onChange={(e) => setLine(i, { rate: e.target.value })}
-                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); itemRef.current?.focus(); } }}
-                      />
-                    </div>
-                    <div>
-                      <p className="text-[11px] text-muted-foreground mb-1">Amount</p>
-                      <p className="h-10 flex items-center text-sm font-semibold tabular-nums">
-                        {formatCurrency((Number(l.qty) || 0) * (Number(l.rate) || 0))}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              ))}
+                  );
+              })}
+            </div>
+          )}
+
+          {/* Shortfalls warn, they never block: goods still in production are
+              routinely booked, so the order goes through either way. */}
+          {shortfalls.length > 0 && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+              <p className="flex items-center gap-1.5 text-sm font-medium text-amber-800">
+                <AlertTriangle className="h-4 w-4" />
+                {shortfalls.length} item{shortfalls.length > 1 ? 's' : ''} ordered beyond available stock
+              </p>
+              <ul className="mt-1 space-y-0.5">
+                {shortfalls.map((s) => (
+                  <li key={s.name} className="text-xs text-amber-800">
+                    {s.name} — {qty(s.requested, s.baseUnits)} ordered, {qty(s.available, s.baseUnits)} available
+                    <span className="font-medium"> (short {qty(s.requested - s.available, s.baseUnits)})</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-1.5 text-[11px] text-amber-700">
+                Available = closing stock in Tally minus quantities already committed on other open orders.
+                The order can still be saved.
+              </p>
             </div>
           )}
 
@@ -584,6 +750,8 @@ export default function SalesOrders() {
     try {
       const { data } = await api.put(`/sales-orders/${o._id}/status`, { status: next });
       toast.success(data.message);
+      // Re-opening re-takes the reservation against stock that has moved since.
+      warnShortfalls(data.data?.warnings);
       fetchOrders();
     } catch (err) {
       toast.error(apiError(err));

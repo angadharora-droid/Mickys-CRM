@@ -129,6 +129,12 @@ router.get('/stock/vendors', authenticate, authorize(ADMIN, EXEC), SALES_MODULE,
 router.get('/stock/customers', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, stock.listCustomers);
 router.get('/stock/groups', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, stock.listGroups);
 router.get('/stock/summary', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, stock.stockSummary);
+// Open sales orders hold stock back: these expose who is holding what, and
+// what is left to sell. POSTed batch lookup — a frozen customer's item list is
+// far too long for a query string.
+router.get('/stock/reservations', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, stock.listReservations);
+router.get('/stock/orphan-reservations', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, stock.listOrphanReservations);
+router.post('/stock/availability', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, validate(v.stockAvailabilitySchema), stock.batchAvailability);
 
 // ---------- Sales Order module: orders ----------
 // Admins manage all orders; execs create orders and manage their own.

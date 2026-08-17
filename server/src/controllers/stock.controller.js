@@ -14,6 +14,16 @@ const {
   parseTallyVendors,
   parseTallyCustomers,
 } = require('../services/tallyStock.service');
+const {
+  nameKeyOf,
+  reservedByNameKey,
+  reservedStages,
+  attachAvailability,
+  availabilityForNames,
+  reservationsForName,
+  orphanReservations,
+  round2,
+} = require('../services/stockAvailability.service');
 const { getPagination, buildMeta } = require('../utils/pagination');
 const { logActivity } = require('../services/activity.service');
 const { searchRegex } = require('../utils/sanitize');
@@ -85,6 +95,16 @@ const syncStock = asyncHandler(async (req, res) => {
     );
   }
 
+  // Two Tally items differing only in case share one nameKey and would then be
+  // handed the same reserved quantity — worth a line in the log, not worth
+  // failing a sync over.
+  const keyCounts = new Map();
+  for (const item of items) {
+    const key = nameKeyOf(item.name);
+    keyCounts.set(key, (keyCounts.get(key) || 0) + 1);
+  }
+  const keyCollisions = [...keyCounts.values()].filter((n) => n > 1).length;
+
   // Mirror semantics: upsert everything present, then drop whatever this sync
   // didn't touch (items deleted/renamed in Tally).
   const syncedAt = new Date();
@@ -92,7 +112,7 @@ const syncStock = asyncHandler(async (req, res) => {
     items.map((item) => ({
       updateOne: {
         filter: { name: item.name },
-        update: { $set: { ...item, syncedAt } },
+        update: { $set: { ...item, nameKey: nameKeyOf(item.name), syncedAt } },
         upsert: true,
       },
     })),
@@ -161,6 +181,7 @@ const syncStock = asyncHandler(async (req, res) => {
   await mirrorLedgers(Customer, customers);
 
   const log = await StockSyncLog.create({
+    syncedAt,
     itemCount: items.length,
     removedCount: removed.deletedCount || 0,
     vendorCount: vendors.length,
@@ -181,7 +202,10 @@ const syncStock = asyncHandler(async (req, res) => {
       (parsed.length > items.length
         ? `; skipped ${parsed.length - items.length} outside Semi Finished/Finished groups`
         : '') +
-      (removed.deletedCount ? `; removed ${removed.deletedCount} no longer in Tally` : ''),
+      (removed.deletedCount ? `; removed ${removed.deletedCount} no longer in Tally` : '') +
+      (keyCollisions
+        ? `; ${keyCollisions} item name(s) differ only by case/spacing and share one stock reservation`
+        : ''),
     ip: req.ip,
   });
 
@@ -212,9 +236,27 @@ const syncStock = asyncHandler(async (req, res) => {
   });
 });
 
-// GET /api/stock?search=&group=&inStock=&page=&limit=
+/**
+ * `inStock=true` and `availability=in` both mean "Tally holds some" and are
+ * plain field matches; 'available' and 'short' are about the netted figure,
+ * which no index can answer.
+ */
+const AVAILABILITY_MATCH = {
+  in: { closingQty: { $gt: 0 } },
+  available: { availableQty: { $gt: 0 } },
+  short: { availableQty: { $lt: 0 } },
+};
+
+// GET /api/stock?search=&group=&inStock=&availability=&page=&limit=
+// Every row carries reservedQty/availableQty/reservedOrders alongside the raw
+// Tally figures.
 const listStock = asyncHandler(async (req, res) => {
   const { page, limit, skip } = getPagination(req.query);
+  const availability = req.query.availability ? String(req.query.availability) : '';
+  if (availability && !AVAILABILITY_MATCH[availability]) {
+    throw ApiError.badRequest("availability must be one of 'in', 'available' or 'short'");
+  }
+
   const filter = {};
   if (req.query.group) filter.group = req.query.group;
   if (req.query.inStock === 'true') filter.closingQty = { $gt: 0 };
@@ -229,11 +271,61 @@ const listStock = asyncHandler(async (req, res) => {
     });
   }
 
+  // Filtering on a derived value has to happen inside one pipeline, upstream
+  // of both the page slice and the count — filtering the page afterwards would
+  // hand back short pages under a total nobody can reach. Plain browsing and
+  // the order dialog's inStock=true never enter this path.
+  if (availability && availability !== 'in') {
+    const reserved = await reservedByNameKey();
+    const [result] = await StockItem.aggregate([
+      { $match: filter },
+      ...reservedStages(reserved),
+      { $match: AVAILABILITY_MATCH[availability] },
+      { $project: { reservedIdx: 0 } },
+      {
+        $facet: {
+          data: [{ $sort: { name: 1 } }, { $skip: skip }, { $limit: limit }],
+          total: [{ $count: 'n' }],
+        },
+      },
+    ]);
+    const total = result?.total?.[0]?.n || 0;
+    return res.json({ success: true, data: result?.data || [], meta: buildMeta(total, page, limit) });
+  }
+
+  if (availability === 'in') filter.closingQty = { $gt: 0 };
   const [items, total] = await Promise.all([
-    StockItem.find(filter).sort({ name: 1 }).skip(skip).limit(limit),
+    StockItem.find(filter).sort({ name: 1 }).skip(skip).limit(limit).lean(),
     StockItem.countDocuments(filter),
   ]);
-  res.json({ success: true, data: items, meta: buildMeta(total, page, limit) });
+  const data = await attachAvailability(items);
+  res.json({ success: true, data, meta: buildMeta(total, page, limit) });
+});
+
+// GET /api/stock/reservations?name=<item name> — the orders holding one item,
+// oldest first; the drill-down behind a stock row.
+const listReservations = asyncHandler(async (req, res) => {
+  const name = String(req.query.name || '').trim();
+  if (!name) throw ApiError.badRequest('An item name is required');
+  const data = await reservationsForName(name);
+  res.json({ success: true, data });
+});
+
+// GET /api/stock/orphan-reservations — reservations for items the mirror no
+// longer has (renamed or deleted in Tally with orders still open).
+const listOrphanReservations = asyncHandler(async (_req, res) => {
+  const data = await orphanReservations();
+  res.json({ success: true, data });
+});
+
+// POST /api/stock/availability — body: { names: [], excludeOrder }
+// Batch lookup for the order dialog. POST rather than GET because a frozen
+// customer's list runs to dozens of long item names. excludeOrder keeps the
+// order being edited from counting against itself.
+const batchAvailability = asyncHandler(async (req, res) => {
+  const { names, excludeOrder } = req.body;
+  const data = await availabilityForNames(names, { excludeOrder });
+  res.json({ success: true, data });
 });
 
 // GET /api/stock/tdl?key= — serves the current Mickys Stock Export TDL with
@@ -307,43 +399,81 @@ const listGroups = asyncHandler(async (_req, res) => {
   res.json({ success: true, data: groups.filter(Boolean).sort() });
 });
 
-// GET /api/stock/summary — dashboard stats + last-sync banner
+const EMPTY_TOTALS = {
+  items: 0,
+  inStock: 0,
+  reservedItems: 0,
+  shortItems: 0,
+  reservedValue: 0,
+  closingValue: 0,
+  inwardValue: 0,
+  outwardValue: 0,
+  missingNameKeyItems: 0,
+};
+
+// GET /api/stock/summary — dashboard stats + last-sync banner. `inStock` and
+// `closingValue` stay raw Tally figures; the committed/short counts are the
+// netted view sitting beside them.
 const stockSummary = asyncHandler(async (_req, res) => {
-  const [totals, byGroup, lastSync] = await Promise.all([
+  const reserved = await reservedByNameKey();
+  const stages = reservedStages(reserved);
+
+  const [totals, byGroup, lastSync, orphans] = await Promise.all([
     StockItem.aggregate([
+      ...stages,
       {
         $group: {
           _id: null,
           items: { $sum: 1 },
           inStock: { $sum: { $cond: [{ $gt: ['$closingQty', 0] }, 1, 0] } },
+          reservedItems: { $sum: { $cond: [{ $gt: ['$reservedQty', 0] }, 1, 0] } },
+          shortItems: { $sum: { $cond: [{ $lt: ['$availableQty', 0] }, 1, 0] } },
+          reservedValue: { $sum: { $multiply: ['$reservedQty', '$closingRate'] } },
           closingValue: { $sum: '$closingValue' },
           inwardValue: { $sum: '$inwardValue' },
           outwardValue: { $sum: '$outwardValue' },
+          // Non-zero means the mirror is half-migrated and reservations are
+          // reading low — the one failure of this feature that otherwise looks
+          // exactly like "nobody ordered anything".
+          missingNameKeyItems: {
+            $sum: { $cond: [{ $eq: [{ $ifNull: ['$nameKey', ''] }, ''] }, 1, 0] },
+          },
         },
       },
     ]),
     StockItem.aggregate([
+      ...stages,
       {
         $group: {
           _id: { $ifNull: ['$group', ''] },
           items: { $sum: 1 },
           inStock: { $sum: { $cond: [{ $gt: ['$closingQty', 0] }, 1, 0] } },
+          reservedItems: { $sum: { $cond: [{ $gt: ['$reservedQty', 0] }, 1, 0] } },
+          shortItems: { $sum: { $cond: [{ $lt: ['$availableQty', 0] }, 1, 0] } },
           closingValue: { $sum: '$closingValue' },
         },
       },
       { $sort: { closingValue: -1 } },
     ]),
     StockSyncLog.findOne().sort({ createdAt: -1 }).populate('syncedBy', 'name'),
+    orphanReservations(),
   ]);
+
+  const summary = totals[0]
+    ? { ...totals[0], reservedValue: round2(totals[0].reservedValue), _id: undefined }
+    : EMPTY_TOTALS;
 
   res.json({
     success: true,
     data: {
-      totals: totals[0] || { items: 0, inStock: 0, closingValue: 0, inwardValue: 0, outwardValue: 0 },
+      totals: summary,
       byGroup: byGroup.map((g) => ({ group: g._id || 'Ungrouped', ...g, _id: undefined })),
+      // Reservations whose item vanished from Tally: invisible on the stock
+      // list by design, so they are reported here instead.
+      orphanReservations: { items: orphans.items, qty: orphans.qty },
       lastSync: lastSync
         ? {
-            at: lastSync.createdAt,
+            at: lastSync.syncedAt || lastSync.createdAt,
             itemCount: lastSync.itemCount,
             source: lastSync.source,
             by: lastSync.syncedBy?.name || null,
@@ -358,6 +488,9 @@ module.exports = {
   syncStock,
   serveTdl,
   listStock,
+  listReservations,
+  listOrphanReservations,
+  batchAvailability,
   dailyStock,
   listVendors,
   listCustomers,

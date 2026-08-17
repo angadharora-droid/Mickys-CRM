@@ -5,6 +5,10 @@ const Counter = require('../models/Counter');
 const SalesOrder = require('../models/SalesOrder');
 const StockItem = require('../models/StockItem');
 const { renderSalesOrderPdf } = require('../services/salesOrderPdf.service');
+const {
+  nameKeyOf,
+  checkLineAvailability,
+} = require('../services/stockAvailability.service');
 const { getPagination, buildMeta } = require('../utils/pagination');
 const { logActivity } = require('../services/activity.service');
 const { searchRegex } = require('../utils/sanitize');
@@ -15,26 +19,44 @@ const canManage = (user, order) =>
 
 /**
  * Recomputes line amounts and the total from qty × rate, enriching each line
- * with the unit and current stock level from the Tally mirror. Item names not
- * in the mirror are allowed (stock may lag Tally) — they just carry no unit.
+ * with the unit and the stock position from the Tally mirror. The mirror is
+ * matched on the normalised nameKey, not the raw name — an appointed
+ * customer's lines carry their frozen list's UPPERCASE name and would
+ * otherwise never find their item. Names absent from the mirror are still
+ * allowed (stock may lag Tally); they carry no unit and no stock figures.
+ *
+ * `excludeOrder` is the order being re-saved: its own lines must not count
+ * against its own availability, or every edit would report itself as short.
  */
-async function buildItems(items) {
-  const stock = await StockItem.find({ name: { $in: items.map((i) => i.name) } }).lean();
-  const byName = new Map(stock.map((s) => [s.name, s]));
+async function buildItems(items, { excludeOrder } = {}) {
+  const keys = items.map((i) => nameKeyOf(i.name)).filter(Boolean);
+  const [stock, { availableByKey, warnings }] = await Promise.all([
+    StockItem.find({ nameKey: { $in: keys } }).lean(),
+    checkLineAvailability(items, { excludeOrder }),
+  ]);
+  const byKey = new Map();
+  for (const s of stock) {
+    const seen = byKey.get(s.nameKey);
+    if (!seen || String(s.name) < String(seen.name)) byKey.set(s.nameKey, s);
+  }
+
   const built = items.map((i) => {
-    const s = byName.get(i.name);
+    const key = nameKeyOf(i.name);
+    const s = byKey.get(key);
     return {
       name: i.name,
+      nameKey: key,
       packSize: i.packSize || '',
       baseUnits: s?.baseUnits || '',
       qty: i.qty,
       rate: i.rate,
       amount: Math.round(i.qty * i.rate * 100) / 100,
       stockQtyAtOrder: s ? s.closingQty : null,
+      availableAtOrder: availableByKey.has(key) ? availableByKey.get(key) : null,
     };
   });
   const total = Math.round(built.reduce((sum, i) => sum + i.amount, 0) * 100) / 100;
-  return { built, total };
+  return { built, total, warnings };
 }
 
 /**
@@ -62,11 +84,21 @@ async function applyFrozenCustomer(customerId, items) {
   return appointed;
 }
 
+/**
+ * Lines that exceed what is left to sell are reported back, never refused —
+ * orders are routinely booked against goods still in production, so a hard
+ * rejection would stop real work. The client surfaces them as a warning.
+ */
+const withWarnings = (order, warnings) => ({
+  ...(order.toObject ? order.toObject() : order),
+  warnings,
+});
+
 // POST /api/sales-orders
 const createSalesOrder = asyncHandler(async (req, res) => {
   const { customerName, customerId, items, notes } = req.body;
   const appointed = await applyFrozenCustomer(customerId, items);
-  const { built, total } = await buildItems(items);
+  const { built, total, warnings } = await buildItems(items);
 
   const year = new Date().getFullYear();
   const seq = await Counter.next(`SO-${year}`);
@@ -91,7 +123,9 @@ const createSalesOrder = asyncHandler(async (req, res) => {
     ip: req.ip,
   });
 
-  res.status(201).json({ success: true, message: `Sales order ${number} created`, data: order });
+  res
+    .status(201)
+    .json({ success: true, message: `Sales order ${number} created`, data: withWarnings(order, warnings) });
 });
 
 // GET /api/sales-orders?search=&status=&page=&limit=
@@ -134,7 +168,7 @@ const updateSalesOrder = asyncHandler(async (req, res) => {
 
   const { customerName, customerId, items, notes } = req.body;
   const appointed = await applyFrozenCustomer(customerId, items);
-  const { built, total } = await buildItems(items);
+  const { built, total, warnings } = await buildItems(items, { excludeOrder: order._id });
   order.customerName = appointed ? appointed.companyName : customerName;
   order.customer = appointed?._id || undefined;
   order.items = built;
@@ -151,7 +185,11 @@ const updateSalesOrder = asyncHandler(async (req, res) => {
     ip: req.ip,
   });
 
-  res.json({ success: true, message: `Sales order ${order.number} updated`, data: order });
+  res.json({
+    success: true,
+    message: `Sales order ${order.number} updated`,
+    data: withWarnings(order, warnings),
+  });
 });
 
 // PUT /api/sales-orders/:id/status
@@ -162,9 +200,22 @@ const updateStatus = asyncHandler(async (req, res) => {
 
   const { status } = req.body;
   if (order.status === status) {
-    return res.json({ success: true, message: 'No change', data: order });
+    return res.json({ success: true, message: 'No change', data: withWarnings(order, []) });
   }
+
+  // dispatchedAt is the clock that eventually releases the order's stock
+  // reservation once Tally has had time to catch up; moving back to open (or
+  // cancelling) restarts it from nothing.
   order.status = status;
+  order.dispatchedAt = status === 'dispatched' ? new Date() : null;
+
+  // Re-opening re-takes the reservation days later, against stock that has
+  // moved since — the one transition that can book a shortfall nobody sees.
+  const warnings =
+    status === 'open'
+      ? (await checkLineAvailability(order.items, { excludeOrder: order._id })).warnings
+      : [];
+
   await order.save();
 
   await logActivity({
@@ -176,7 +227,7 @@ const updateStatus = asyncHandler(async (req, res) => {
     ip: req.ip,
   });
 
-  res.json({ success: true, message: `Order marked ${status}`, data: order });
+  res.json({ success: true, message: `Order marked ${status}`, data: withWarnings(order, warnings) });
 });
 
 // DELETE /api/sales-orders/:id — admin only (route-gated)

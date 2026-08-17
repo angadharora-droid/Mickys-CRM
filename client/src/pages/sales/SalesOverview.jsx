@@ -11,7 +11,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Boxes, PackageCheck, IndianRupee, Tags, ReceiptText, RefreshCw } from 'lucide-react';
+import {
+  Boxes, PackageCheck, IndianRupee, Tags, ReceiptText, RefreshCw, ClipboardList, TriangleAlert,
+} from 'lucide-react';
 
 export default function SalesOverview() {
   const [summary, setSummary] = useState(null);
@@ -54,8 +56,8 @@ export default function SalesOverview() {
       </PageHeader>
 
       {loading ? (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          {Array.from({ length: 4 }).map((_, i) => (
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, i) => (
             <Skeleton key={i} className="h-28 rounded-xl" />
           ))}
         </div>
@@ -73,16 +75,38 @@ export default function SalesOverview() {
         </Card>
       ) : (
         <>
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             <StatCard title="Stock Items" value={totals.items.toLocaleString('en-IN')} icon={Boxes} />
             <StatCard
               title="In Stock"
               value={totals.inStock.toLocaleString('en-IN')}
-              hint="Items with closing quantity above zero"
+              hint="Items Tally holds a quantity of"
               icon={PackageCheck}
               tone="success"
             />
-            <StatCard title="Closing Stock Value" value={formatCurrency(totals.closingValue)} icon={IndianRupee} tone="gold" />
+            <StatCard
+              title="Stock Value in Tally"
+              value={formatCurrency(totals.closingValue)}
+              hint="Before open orders are taken off"
+              icon={IndianRupee}
+              tone="gold"
+            />
+            <StatCard
+              title="Committed on Orders"
+              value={formatCurrency(totals.reservedValue)}
+              hint={`${totals.reservedItems.toLocaleString('en-IN')} item${totals.reservedItems === 1 ? '' : 's'} promised on sales orders`}
+              icon={ClipboardList}
+              tone="warning"
+            />
+            <Link to="/sales/stock?availability=short" className="block">
+              <StatCard
+                title="Short (Oversold)"
+                value={totals.shortItems.toLocaleString('en-IN')}
+                hint="Sold beyond stock — tap to see them"
+                icon={TriangleAlert}
+                tone={totals.shortItems > 0 ? 'danger' : 'success'}
+              />
+            </Link>
             <StatCard title="Stock Groups" value={summary.byGroup.length} icon={Tags} />
           </div>
 
@@ -98,7 +122,8 @@ export default function SalesOverview() {
                       <TableHead>Group</TableHead>
                       <TableHead className="text-right">Items</TableHead>
                       <TableHead className="text-right hidden sm:table-cell">In stock</TableHead>
-                      <TableHead className="text-right">Closing value</TableHead>
+                      <TableHead className="text-right">Short</TableHead>
+                      <TableHead className="text-right hidden sm:table-cell">Closing value</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -109,7 +134,10 @@ export default function SalesOverview() {
                         </TableCell>
                         <TableCell className="text-right tabular-nums">{g.items}</TableCell>
                         <TableCell className="text-right tabular-nums hidden sm:table-cell">{g.inStock}</TableCell>
-                        <TableCell className="text-right tabular-nums">{formatCurrency(g.closingValue)}</TableCell>
+                        <TableCell className={`text-right tabular-nums ${g.shortItems > 0 ? 'text-red-600' : 'text-muted-foreground'}`}>
+                          {g.shortItems}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums hidden sm:table-cell">{formatCurrency(g.closingValue)}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -127,9 +155,16 @@ export default function SalesOverview() {
                     <ReceiptText className="h-6 w-6 text-primary/60" />
                   </div>
                   <p>
-                    Order creation from live stock is the next step — you&rsquo;ll pick items, see available
-                    quantity, and generate the sales order right here.
+                    Every order that has not reached Tally yet holds its items back, so the stock page shows what is
+                    genuinely left to sell rather than what Tally still counts.
                   </p>
+                  {summary.orphanReservations?.items > 0 && (
+                    <p>
+                      {summary.orphanReservations.items} ordered item
+                      {summary.orphanReservations.items === 1 ? '' : 's'} no longer exist in Tally&rsquo;s stock list,
+                      so nothing is being held back for them.
+                    </p>
+                  )}
                   <Button asChild variant="outline" size="sm">
                     <Link to="/sales/orders">Open Sales Orders</Link>
                   </Button>
