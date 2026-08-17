@@ -8,12 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Loader2, Mail, Building2, Send, ScrollText, ClipboardList, AlertTriangle } from 'lucide-react';
-
-// The accounts list is stored as an array but edited as one comma-separated
-// line; the API accepts either and hands back the normalised array on save.
-const emailListText = (v) => (Array.isArray(v) ? v.join(', ') : v || '');
-const emailListCount = (v) => emailListText(v).split(',').filter((e) => e.trim()).length;
+import { Loader2, Mail, Building2, Send, ScrollText } from 'lucide-react';
 
 export default function Settings() {
   const [settings, setSettings] = useState(null);
@@ -31,7 +26,6 @@ export default function Settings() {
   const setEmail = (key, value) => setSettings((s) => ({ ...s, email: { ...s.email, [key]: value } }));
   const setCompany = (key, value) => setSettings((s) => ({ ...s, company: { ...s.company, [key]: value } }));
   const setKit = (key, value) => setSettings((s) => ({ ...s, kit: { ...s.kit, [key]: value } }));
-  const setSalesOrder = (key, value) => setSettings((s) => ({ ...s, salesOrder: { ...s.salesOrder, [key]: value } }));
 
   const save = async () => {
     setSaving(true);
@@ -40,11 +34,6 @@ export default function Settings() {
         email: { ...settings.email, port: Number(settings.email.port) || 587 },
         company: settings.company,
         kit: settings.kit,
-        salesOrder: {
-          ...settings.salesOrder,
-          accountsEmails: emailListText(settings.salesOrder?.accountsEmails),
-          emailAccountsOnConfirm: settings.salesOrder?.emailAccountsOnConfirm ?? false,
-        },
       });
       setSettings(data.data);
       toast.success('Settings saved');
@@ -84,7 +73,6 @@ export default function Settings() {
         <TabsList className="flex-wrap h-auto">
           <TabsTrigger value="email"><Mail className="h-4 w-4 mr-1.5" /> Email</TabsTrigger>
           <TabsTrigger value="company"><Building2 className="h-4 w-4 mr-1.5" /> Company</TabsTrigger>
-          <TabsTrigger value="salesOrder"><ClipboardList className="h-4 w-4 mr-1.5" /> Sales Orders</TabsTrigger>
           <TabsTrigger value="kit"><ScrollText className="h-4 w-4 mr-1.5" /> Kit Defaults</TabsTrigger>
         </TabsList>
 
