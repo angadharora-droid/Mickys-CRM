@@ -6,10 +6,18 @@ const mongoose = require('mongoose');
  * and removes items that disappeared from Tally — it is never edited by hand.
  * Quantities are in `baseUnits`; opening figures are "as on" the sync period's
  * from-date, closing figures "as on" its to-date.
+ *
+ * `nameKey` is the normalised item name (trimmed, upper-cased, inner runs of
+ * whitespace collapsed) and is the only thing sales orders join on — order
+ * lines for appointed customers carry the frozen list's UPPERCASE name, which
+ * never matches Tally's mixed-case name directly. It is deliberately not
+ * unique: Tally allows "CP Nuggets" and "CP NUGGETS" to coexist, and a unique
+ * index would make the whole sync fail rather than surface the clash.
  */
 const stockItemSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true, unique: true },
+    nameKey: { type: String, trim: true, default: '', index: true },
     group: { type: String, trim: true, default: '', index: true },
     category: { type: String, trim: true, default: '' },
     baseUnits: { type: String, trim: true, default: '' },
