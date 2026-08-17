@@ -14,7 +14,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
-  Boxes, PackageCheck, IndianRupee, Tags, ReceiptText, RefreshCw, ClipboardList, TriangleAlert, Settings,
+  Boxes, PackageCheck, IndianRupee, Tags, ReceiptText, RefreshCw, ClipboardList, TriangleAlert, BarChart3,
+  Settings,
 } from 'lucide-react';
 
 export default function SalesOverview() {
@@ -56,8 +57,14 @@ export default function SalesOverview() {
             <Boxes className="h-4 w-4" /> View stock
           </Link>
         </Button>
-        {/* The bottom tab bar is full at five tabs, so this header is how an
-            admin reaches the module's settings from a phone. */}
+        {/* The bottom tab bar is full at five tabs, so this header is how a
+            phone reaches the rest of the module — reports for everyone, and
+            settings for an admin. */}
+        <Button asChild variant="outline">
+          <Link to="/sales/reports">
+            <BarChart3 className="h-4 w-4" /> Reports
+          </Link>
+        </Button>
         {user?.role === ROLES.ADMIN && (
           <Button asChild variant="outline">
             <Link to="/sales/settings">
