@@ -217,7 +217,20 @@ const updateSalesOrder = asyncHandler(async (req, res) => {
   }
 
   const { customerName, customerId, items, notes } = req.body;
-  const appointed = await applyFrozenCustomer(customerId, items);
+  // An edit that leaves customerId out is not permission to drop the freeze:
+  // the dialog clears its frozen-customer selection the moment the typed name
+  // differs by a character, and taking that at face value would re-price an
+  // appointed customer's own order outside their frozen list and past their
+  // validity date. The order keeps the customer it was booked for unless a
+  // different name is actually typed over it.
+  const keepsBookedCustomer =
+    !customerId &&
+    order.customer &&
+    String(customerName || '').trim().toUpperCase() === order.customerName;
+  const appointed = await applyFrozenCustomer(
+    customerId || (keepsBookedCustomer ? order.customer : null),
+    items
+  );
   const { built, total, warnings } = await buildItems(items, { excludeOrder: order._id });
   order.customerName = appointed ? appointed.companyName : customerName;
   order.customer = appointed?._id || undefined;
@@ -262,6 +275,18 @@ const recordEmail = (order, { kind, to, cc = [], subject, sentBy, messageId = ''
 };
 
 /**
+ * Gives the accounts-email claim back, so a send that genuinely failed can go
+ * out on the next confirmation instead of being mistaken for one already made.
+ * Mutates the order — the caller saves once, after this returns.
+ */
+async function releaseAccountsClaim(order) {
+  order.accountsEmailedAt = null;
+  await SalesOrder.updateOne({ _id: order._id }, { $set: { accountsEmailedAt: null } }).catch(
+    (err) => console.error(`[sales-order] could not release accounts claim for ${order.number}: ${err.message}`)
+  );
+}
+
+/**
  * Mails the confirmed order to the accounts desk, when Settings asks for it.
  *
  * NOTHING HERE MAY THROW. Confirming is the business action; the email is a
@@ -274,15 +299,28 @@ const recordEmail = (order, { kind, to, cc = [], subject, sentBy, messageId = ''
  */
 async function emailAccountsOnConfirm(order, user) {
   let recipients = [];
+  let claimed = false;
   try {
     const settings = await Setting.getGlobal();
     const cfg = settings.salesOrder || {};
     recipients = (cfg.accountsEmails || []).filter(Boolean);
     if (!cfg.emailAccountsOnConfirm || !recipients.length) return null;
-    // Confirming twice over must not mail twice; the flag is cleared whenever
-    // the order leaves confirmed, so a re-opened, edited and re-confirmed
-    // order does go out again.
-    if (order.accountsEmailedAt) return { sent: false, to: recipients, reason: 'already-sent' };
+    // Confirming twice over must not mail twice. The flag only reaches the
+    // database with the rest of the order — long after the send — so the claim
+    // is staked there first: two confirmations overlapping the send window
+    // would otherwise each read a blank flag off their own copy of the order
+    // and both mail accounts. It is cleared whenever the order leaves
+    // confirmed, so a re-opened, edited and re-confirmed order does go again.
+    const stamp = new Date();
+    const won = await SalesOrder.findOneAndUpdate(
+      { _id: order._id, accountsEmailedAt: null },
+      { $set: { accountsEmailedAt: stamp } }
+    );
+    // Losing the race leaves the field untouched on this copy, so the caller's
+    // save cannot wipe the stamp the winning request wrote.
+    if (!won) return { sent: false, to: recipients, reason: 'already-sent' };
+    claimed = true;
+    order.accountsEmailedAt = stamp;
 
     const result = await sendOrderEmail(order, {
       kind: 'accounts',
@@ -298,6 +336,7 @@ async function emailAccountsOnConfirm(order, user) {
       recordEmail(order, {
         kind: 'accounts', to: recipients, subject: result.subject || '', sentBy: user._id, error: reason,
       });
+      await releaseAccountsClaim(order);
       return { sent: false, to: recipients, reason };
     }
 
@@ -308,13 +347,13 @@ async function emailAccountsOnConfirm(order, user) {
       sentBy: user._id,
       messageId: result.messageId || '',
     });
-    order.accountsEmailedAt = new Date();
     return { sent: true, to: recipients };
   } catch (err) {
     console.error(`[sales-order] accounts email failed for ${order.number}: ${err.message}`);
     recordEmail(order, {
       kind: 'accounts', to: recipients, subject: '', sentBy: user._id, error: err.message,
     });
+    if (claimed) await releaseAccountsClaim(order);
     return { sent: false, to: recipients, reason: err.message };
   }
 }

@@ -3,7 +3,7 @@ import { toast } from 'sonner';
 import api, { apiError } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { ROLES } from '@/lib/constants';
-import { formatCurrency, formatDate, formatDateTime } from '@/lib/utils';
+import { formatCurrency, formatDateTime } from '@/lib/utils';
 import PageHeader from '@/components/shared/PageHeader';
 import Pagination from '@/components/shared/Pagination';
 import EmptyState from '@/components/shared/EmptyState';
@@ -50,7 +50,13 @@ const STATUS_LABELS = {
  * A customer appointed before validity was recorded carries no date at all:
  * those are grandfathered and keep working.
  */
-const istDayKey = (d) => new Date(d).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+const IST = 'Asia/Kolkata';
+const istDayKey = (d) => new Date(d).toLocaleDateString('en-CA', { timeZone: IST });
+// Named in IST as well: a date judged on the Indian day must not be printed as
+// the day before it on a browser sitting west of India, or the screen and the
+// server's refusal would name two different dates.
+const istDateLabel = (d) =>
+  new Date(d).toLocaleDateString('en-GB', { timeZone: IST, day: '2-digit', month: 'short', year: 'numeric' });
 
 const EXPIRING_SOON_DAYS = 30;
 
@@ -130,6 +136,7 @@ function OrderDialog({ open, onClose, order, onSaved }) {
   const [customers, setCustomers] = useState([]);
   const [appointed, setAppointed] = useState([]); // rate-frozen customers
   const [selectedCustomer, setSelectedCustomer] = useState(null);
+  const bookedFor = useRef(null); // the frozen customer this order was booked for
   const [stock, setStock] = useState([]);
   const [customerName, setCustomerName] = useState('');
   const [customerFocus, setCustomerFocus] = useState(false);
@@ -165,6 +172,7 @@ function OrderDialog({ open, onClose, order, onSaved }) {
     setItemSearch('');
     setStock([]);
     setSelectedCustomer(null);
+    bookedFor.current = null;
     setAvail({});
     availDone.current = new Set();
     api.get('/stock/customers').then((r) => setCustomers(r.data.data)).catch(() => {});
@@ -173,7 +181,10 @@ function OrderDialog({ open, onClose, order, onSaved }) {
         setAppointed(r.data.data);
         // Editing an order for an appointed customer → restore the frozen link.
         const cid = order?.customer?._id || order?.customer;
-        if (cid) setSelectedCustomer(r.data.data.find((c) => c._id === cid) || null);
+        if (cid) {
+          bookedFor.current = r.data.data.find((c) => c._id === cid) || null;
+          setSelectedCustomer(bookedFor.current);
+        }
       })
       .catch(() => {});
     // Tally shows the item list as soon as you land on the field — preload
@@ -304,7 +315,7 @@ function OrderDialog({ open, onClose, order, onSaved }) {
     // Lapsed rates are refused by the server on save, so the voucher is stopped
     // here rather than after a whole order has been typed into it.
     if (entry.kind === 'appointed' && entry.validity.state === 'expired') {
-      toast.error(`${entry.name}'s frozen rates expired on ${formatDate(entry.validity.until)}`, {
+      toast.error(`${entry.name}'s frozen rates expired on ${istDateLabel(entry.validity.until)}`, {
         description: 'Edit the customer on the Customers page to re-freeze the rates with a new validity date before booking for them.',
         duration: 8000,
       });
@@ -412,7 +423,7 @@ function OrderDialog({ open, onClose, order, onSaved }) {
     if (!items.length) return toast.error('Add at least one item with a quantity');
     if (ratesExpired) {
       return toast.error(
-        `${selectedCustomer.companyName}'s frozen rates expired on ${formatDate(validity.until)} — re-freeze them on the Customers page before booking this order`
+        `${selectedCustomer.companyName}'s frozen rates expired on ${istDateLabel(validity.until)} — re-freeze them on the Customers page before booking this order`
       );
     }
 
@@ -476,9 +487,15 @@ function OrderDialog({ open, onClose, order, onSaved }) {
               value={customerName}
               onChange={(e) => {
                 setCustomerName(e.target.value);
-                // Editing the name breaks the frozen-customer link.
-                if (selectedCustomer && e.target.value.trim().toUpperCase() !== selectedCustomer.companyName) {
+                const typed = e.target.value.trim().toUpperCase();
+                // Editing the name breaks the frozen-customer link — but typing
+                // the booked customer's name back restores it, so correcting a
+                // typo cannot quietly turn their order into a free-typed one.
+                // The server reads an unchanged name the same way.
+                if (selectedCustomer && typed !== selectedCustomer.companyName) {
                   setSelectedCustomer(null);
+                } else if (!selectedCustomer && bookedFor.current && typed === bookedFor.current.companyName) {
+                  setSelectedCustomer(bookedFor.current);
                 }
               }}
               onFocus={() => setCustomerFocus(true)}
@@ -534,7 +551,7 @@ function OrderDialog({ open, onClose, order, onSaved }) {
             </p>
             {selectedCustomer && validity.state === 'soon' && (
               <p className="text-xs text-amber-700 mt-1">
-                These frozen rates expire in {validity.days} day{validity.days === 1 ? '' : 's'}, on {formatDate(validity.until)}.
+                These frozen rates expire in {validity.days} day{validity.days === 1 ? '' : 's'}, on {istDateLabel(validity.until)}.
               </p>
             )}
             {selectedCustomer && validity.state === 'none' && (
@@ -546,7 +563,7 @@ function OrderDialog({ open, onClose, order, onSaved }) {
               <div className="mt-2 rounded-lg border border-red-200 bg-red-50 p-3">
                 <p className="flex items-center gap-1.5 text-sm font-medium text-red-800">
                   <AlertTriangle className="h-4 w-4" />
-                  {selectedCustomer.companyName}&rsquo;s frozen rates expired on {formatDate(validity.until)}
+                  {selectedCustomer.companyName}&rsquo;s frozen rates expired on {istDateLabel(validity.until)}
                 </p>
                 <p className="mt-1 text-xs text-red-700">
                   This order cannot be saved. Edit the customer on the Customers page — that re-freezes their
