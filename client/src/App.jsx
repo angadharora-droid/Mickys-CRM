@@ -24,6 +24,7 @@ import SalesOverview from '@/pages/sales/SalesOverview';
 import StockList from '@/pages/sales/StockList';
 import SalesOrders from '@/pages/sales/SalesOrders';
 import SalesCustomers, { SalesCustomerForm } from '@/pages/sales/SalesCustomers';
+import SalesReports from '@/pages/sales/SalesReports';
 import SalesSettings from '@/pages/sales/SalesSettings';
 import NotFound from '@/pages/NotFound';
 
@@ -129,6 +130,9 @@ export default function App() {
         <Route path="/sales/customers" element={<SalesCustomers />} />
         <Route path="/sales/customers/new" element={<SalesCustomerForm />} />
         <Route path="/sales/customers/:id" element={<SalesCustomerForm />} />
+        {/* Sales execs run these too — the server scopes every report to the
+            orders they booked, so no admin-only wrapper here. */}
+        <Route path="/sales/reports" element={<SalesReports />} />
         <Route
           path="/sales/settings"
           element={
