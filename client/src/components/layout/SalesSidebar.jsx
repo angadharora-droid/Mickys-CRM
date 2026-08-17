@@ -1,8 +1,8 @@
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { cn, getInitials } from '@/lib/utils';
-import { ROLE_LABELS, MODULES, hasModule } from '@/lib/constants';
-import { LayoutDashboard, Boxes, ReceiptText, UserCheck, ArrowLeftRight, X } from 'lucide-react';
+import { ROLES, ROLE_LABELS, MODULES, hasModule } from '@/lib/constants';
+import { LayoutDashboard, Boxes, ReceiptText, UserCheck, ArrowLeftRight, Settings, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 
