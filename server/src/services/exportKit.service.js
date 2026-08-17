@@ -782,24 +782,28 @@ function totalsBlock(doc, y, card, footerLabel) {
   return y + 28;
 }
 
-/** Facts card for the FOB card: the standard mixed-load pricing basis. */
+/**
+ * Facts card for the FOB card: the standard mixed-load pricing basis.
+ *
+ * Only the basis the buyer needs in order to read the price is stated. The
+ * load option, the common-cost build-up, the overhead and margin assumptions
+ * and the currency line are deliberately absent — they are our own workings,
+ * and the margin figure in particular is not a customer's business. All of
+ * them still drive the rates through fobAssumptions() and
+ * computeFobUnitPricing(); this card just stops printing them.
+ */
 function fobBasisCard(doc, y, card) {
   const { config } = card;
   const a = config.fob;
   const W = contentWidth(doc);
   const rows = [
     ['Price Basis', 'FOB Nhava Sheva · Incoterms® 2020'],
-    ['Load Option', a.label],
     ['Standard Payload', `${(a.payloadKg / 1000).toLocaleString('en-IN')} MT saleable product per FCL`],
-    // "=" not "→": the arrow glyph is missing from PDFKit's WinAnsi Helvetica.
-    ['Common FOB Costs', `${inr(a.commonCostInr)} per load + ${a.bufferPercent}% buffer = ${inr(round2(a.logisticsPerKgInr))}/kg`],
-    ['Costing', `Factory overhead ${a.overheadPercent}% on COGS · target gross margin ${a.marginPercent}% of selling price`],
     // FOB prices are destination-independent; a country appears only on legacy
     // cards whose shipment snapshot still carries one.
     ...(config.country
       ? [['Destination', config.country.code ? `${config.country.name} (${config.country.code})` : config.country.name]]
       : []),
-    ['Currency', config.currency],
   ];
   const colW = W / 2 - 12;
   const rowH = 26;

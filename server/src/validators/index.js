@@ -499,7 +499,8 @@ const salesOrderSchema = z.object({
 });
 
 // Open and Confirmed are the two the status control offers; closing and
-// cancelling are deliberate one-way actions the client raises separately.
+// cancelling are deliberate endings the client raises separately, and only an
+// admin moves an order out of them again (see controllers/salesOrder.controller.js).
 const salesOrderStatusSchema = z.object({
   status: z.enum(['open', 'confirmed', 'closed', 'cancelled']),
 });
