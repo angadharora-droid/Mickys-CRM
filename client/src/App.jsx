@@ -24,6 +24,7 @@ import SalesOverview from '@/pages/sales/SalesOverview';
 import StockList from '@/pages/sales/StockList';
 import SalesOrders from '@/pages/sales/SalesOrders';
 import SalesCustomers, { SalesCustomerForm } from '@/pages/sales/SalesCustomers';
+import SalesSettings from '@/pages/sales/SalesSettings';
 import NotFound from '@/pages/NotFound';
 
 /** "/" is the Leads dashboard — users without the Leads module land on their
@@ -128,6 +129,14 @@ export default function App() {
         <Route path="/sales/customers" element={<SalesCustomers />} />
         <Route path="/sales/customers/new" element={<SalesCustomerForm />} />
         <Route path="/sales/customers/:id" element={<SalesCustomerForm />} />
+        <Route
+          path="/sales/settings"
+          element={
+            <ProtectedRoute roles={[ROLES.ADMIN]}>
+              <SalesSettings />
+            </ProtectedRoute>
+          }
+        />
       </Route>
 
       <Route path="/404" element={<NotFound />} />
