@@ -3,7 +3,7 @@ import { toast } from 'sonner';
 import api, { apiError } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { ROLES } from '@/lib/constants';
-import { formatCurrency, formatDateTime } from '@/lib/utils';
+import { formatCurrency, formatDate, formatDateTime } from '@/lib/utils';
 import PageHeader from '@/components/shared/PageHeader';
 import Pagination from '@/components/shared/Pagination';
 import EmptyState from '@/components/shared/EmptyState';
@@ -21,16 +21,47 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
   Search, ReceiptText, Plus, Download, Pencil, Trash2, Loader2, X, Eye, ExternalLink, Snowflake,
-  AlertTriangle,
+  AlertTriangle, Mail, MoreVertical, Lock, History, PackageCheck, Ban,
 } from 'lucide-react';
 
 const ALL = '__all__';
 
 const STATUS_STYLES = {
   open: 'bg-amber-100 text-amber-800 border-amber-200',
-  dispatched: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+  confirmed: 'bg-sky-100 text-sky-800 border-sky-200',
+  closed: 'bg-emerald-100 text-emerald-800 border-emerald-200',
   cancelled: 'bg-red-100 text-red-700 border-red-200',
+};
+
+const STATUS_LABELS = {
+  open: 'Open', confirmed: 'Confirmed', closed: 'Closed', cancelled: 'Cancelled',
+};
+
+/**
+ * Frozen rates run out at the end of their validity day in India, whatever
+ * timezone the browser is set to. The server judges that same IST boundary
+ * before it accepts an order, so the screen has to agree with it — otherwise an
+ * exec types a whole voucher against rates the save then refuses.
+ *
+ * A customer appointed before validity was recorded carries no date at all:
+ * those are grandfathered and keep working.
+ */
+const istDayKey = (d) => new Date(d).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+
+const EXPIRING_SOON_DAYS = 30;
+
+const rateValidity = (customer) => {
+  if (!customer?.validUntil) return { state: 'none' };
+  const today = istDayKey(Date.now());
+  const until = istDayKey(customer.validUntil);
+  // The whole validity day counts — an order booked on it is still valid.
+  if (until < today) return { state: 'expired', until: customer.validUntil };
+  const days = Math.round((Date.parse(until) - Date.parse(today)) / 86400000);
+  return { state: days <= EXPIRING_SOON_DAYS ? 'soon' : 'valid', until: customer.validUntil, days };
 };
 
 const qty = (n, unit) => {
@@ -222,7 +253,14 @@ function OrderDialog({ open, onClose, order, onSaved }) {
   const customerMatches = useMemo(() => {
     const q = customerName.trim();
     const apps = (q ? appointed.filter((c) => matchesAllWords(c.companyName, q)) : appointed)
-      .map((c) => ({ kind: 'appointed', key: `a-${c._id}`, name: c.companyName, sub: `${c.items?.length || 0} frozen rates`, data: c }));
+      .map((c) => ({
+        kind: 'appointed',
+        key: `a-${c._id}`,
+        name: c.companyName,
+        sub: `${c.items?.length || 0} frozen rates`,
+        validity: rateValidity(c),
+        data: c,
+      }));
     const tally = (q ? customers.filter((c) => matchesAllWords(`${c.name} ${c.group || ''}`, q)) : customers)
       .map((c) => ({ kind: 'tally', key: `t-${c._id}`, name: c.name, sub: c.group || '', data: c }));
     return [
@@ -263,6 +301,15 @@ function OrderDialog({ open, onClose, order, onSaved }) {
   };
 
   const pickCustomer = (entry) => {
+    // Lapsed rates are refused by the server on save, so the voucher is stopped
+    // here rather than after a whole order has been typed into it.
+    if (entry.kind === 'appointed' && entry.validity.state === 'expired') {
+      toast.error(`${entry.name}'s frozen rates expired on ${formatDate(entry.validity.until)}`, {
+        description: 'Edit the customer on the Customers page to re-freeze the rates with a new validity date before booking for them.',
+        duration: 8000,
+      });
+      return;
+    }
     setCustomerName(entry.name);
     setCustomerFocus(false);
     if (entry.kind === 'appointed') {
@@ -317,6 +364,11 @@ function OrderDialog({ open, onClose, order, onSaved }) {
 
   const total = lines.reduce((sum, l) => sum + (Number(l.qty) || 0) * (Number(l.rate) || 0), 0);
 
+  // An order already on screen for a customer whose rates lapsed since (an edit,
+  // or a validity that ran out while the dialog was open) cannot be saved.
+  const validity = rateValidity(selectedCustomer);
+  const ratesExpired = validity.state === 'expired';
+
   // Lines that ask for more than is left to sell. An item with no figure —
   // free-typed, or not in the Tally mirror — is never called short, because a
   // shortfall cannot be asserted against a quantity nobody knows.
@@ -358,6 +410,11 @@ function OrderDialog({ open, onClose, order, onSaved }) {
       .filter((l) => l.qty > 0);
     if (customerName.trim().length < 2) return toast.error('Pick or type a customer name');
     if (!items.length) return toast.error('Add at least one item with a quantity');
+    if (ratesExpired) {
+      return toast.error(
+        `${selectedCustomer.companyName}'s frozen rates expired on ${formatDate(validity.until)} — re-freeze them on the Customers page before booking this order`
+      );
+    }
 
     setSaving(true);
     try {
@@ -447,14 +504,24 @@ function OrderDialog({ open, onClose, order, onSaved }) {
                     onMouseDown={() => pickCustomer(entry)}
                     onMouseEnter={() => setCustomerHl(i)}
                   >
-                    <span className="truncate">
+                    <span className={`truncate ${entry.validity?.state === 'expired' ? 'text-red-600 line-through' : ''}`}>
                       {entry.name}
                       {entry.sub && <span className="text-xs text-muted-foreground ml-2">{entry.sub}</span>}
                     </span>
                     {entry.kind === 'appointed' && (
-                      <Badge className="ml-2 shrink-0 border bg-sky-100 text-sky-800 border-sky-200" variant="outline">
-                        <Snowflake className="h-3 w-3 mr-1" /> FROZEN
-                      </Badge>
+                      entry.validity.state === 'expired' ? (
+                        <Badge className="ml-2 shrink-0 border bg-red-100 text-red-700 border-red-200" variant="outline">
+                          <AlertTriangle className="h-3 w-3 mr-1" /> RATES EXPIRED
+                        </Badge>
+                      ) : (
+                        <Badge
+                          className={`ml-2 shrink-0 border ${entry.validity.state === 'soon' ? 'bg-amber-100 text-amber-800 border-amber-200' : 'bg-sky-100 text-sky-800 border-sky-200'}`}
+                          variant="outline"
+                        >
+                          <Snowflake className="h-3 w-3 mr-1" />
+                          {entry.validity.state === 'soon' ? `${entry.validity.days}D LEFT` : 'FROZEN'}
+                        </Badge>
+                      )
                     )}
                   </button>
                 ))}
@@ -465,6 +532,28 @@ function OrderDialog({ open, onClose, order, onSaved }) {
                 ? `Rate-frozen customer — this order can contain only their ${selectedCustomer.items?.length || 0} frozen items.`
                 : 'Appointed customers (frozen rates) and Tally ledgers. A new name can be typed as-is.'}
             </p>
+            {selectedCustomer && validity.state === 'soon' && (
+              <p className="text-xs text-amber-700 mt-1">
+                These frozen rates expire in {validity.days} day{validity.days === 1 ? '' : 's'}, on {formatDate(validity.until)}.
+              </p>
+            )}
+            {selectedCustomer && validity.state === 'none' && (
+              <p className="text-xs text-muted-foreground mt-1">No validity recorded on these frozen rates.</p>
+            )}
+            {/* An order priced at rates the company stopped honouring is far
+                costlier than a refused booking, so the save is barred outright. */}
+            {ratesExpired && (
+              <div className="mt-2 rounded-lg border border-red-200 bg-red-50 p-3">
+                <p className="flex items-center gap-1.5 text-sm font-medium text-red-800">
+                  <AlertTriangle className="h-4 w-4" />
+                  {selectedCustomer.companyName}&rsquo;s frozen rates expired on {formatDate(validity.until)}
+                </p>
+                <p className="mt-1 text-xs text-red-700">
+                  This order cannot be saved. Edit the customer on the Customers page — that re-freezes their
+                  rates against a new validity date.
+                </p>
+              </div>
+            )}
           </div>
 
           {/* Item picker */}
@@ -663,9 +752,156 @@ function OrderDialog({ open, onClose, order, onSaved }) {
         </p>
         <DialogFooter className="mt-2">
           <Button variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>
-          <Button onClick={save} disabled={saving}>
+          <Button onClick={save} disabled={saving || ratesExpired}>
             {saving && <Loader2 className="h-4 w-4 animate-spin" />}
             {order?._id ? 'Save changes' : 'Create order'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Sends the order PDF to the customer, and shows everything this order has
+ * already been mailed to anyone. The automatic send to accounts on confirmation
+ * writes to the same history, so one list answers "who has seen this order" —
+ * failed sends included, since a mail that did not go is exactly what someone
+ * needs to see.
+ */
+function EmailDialog({ open, order, onClose, onSent }) {
+  const [form, setForm] = useState({ to: '', cc: '', subject: '', message: '' });
+  const [detail, setDetail] = useState(null);
+  const [sending, setSending] = useState(false);
+
+  // The list rows carry the history with sentBy unpopulated; the order itself
+  // names who sent each mail, so the dialog reloads it on open.
+  const reload = useCallback((id) => {
+    api.get(`/sales-orders/${id}`).then((r) => setDetail(r.data.data)).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!open || !order) return;
+    setForm({
+      // Only an appointed customer has an address on file — an order booked
+      // against a free-typed Tally name starts blank and must be typed.
+      to: order.customer?.email || '',
+      cc: '',
+      subject: `Sales order ${order.number} — ${order.customerName}`,
+      message: `Thank you for your order. Please find your sales order ${order.number} attached for your records. Do let us know if anything needs correcting.`,
+    });
+    setDetail(order);
+    reload(order._id);
+  }, [open, order, reload]);
+
+  const send = async () => {
+    if (!form.to.trim()) return toast.error('Type the recipient email address');
+    setSending(true);
+    try {
+      const { data } = await api.post(`/sales-orders/${order._id}/email`, {
+        to: form.to.trim(),
+        cc: form.cc.trim(),
+        subject: form.subject.trim(),
+        message: form.message.trim(),
+      });
+      toast.success(data.message);
+      setDetail(data.data);
+      onSent();
+    } catch (err) {
+      toast.error(apiError(err));
+      // A refused send is recorded on the order too — reload so it shows up.
+      reload(order._id);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const history = [...(detail?.emails || [])].reverse();
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-2xl max-h-[92dvh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Email {order?.number} to the customer</DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <p className="text-sm font-medium mb-1.5">To</p>
+              <Input
+                type="email"
+                placeholder="customer@company.com"
+                value={form.to}
+                onChange={(e) => setForm((f) => ({ ...f, to: e.target.value }))}
+              />
+              {!order?.customer?.email && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  No address on file for {order?.customerName} — type one to send.
+                </p>
+              )}
+            </div>
+            <div>
+              <p className="text-sm font-medium mb-1.5">CC</p>
+              <Input
+                placeholder="Add more emails, comma-separated"
+                value={form.cc}
+                onChange={(e) => setForm((f) => ({ ...f, cc: e.target.value }))}
+              />
+            </div>
+          </div>
+          <div>
+            <p className="text-sm font-medium mb-1.5">Subject</p>
+            <Input value={form.subject} onChange={(e) => setForm((f) => ({ ...f, subject: e.target.value }))} />
+          </div>
+          <div>
+            <p className="text-sm font-medium mb-1.5">Message</p>
+            <Textarea
+              rows={4}
+              value={form.message}
+              onChange={(e) => setForm((f) => ({ ...f, message: e.target.value }))}
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              The order PDF is attached automatically, and the order number, date and value are added below your note.
+            </p>
+          </div>
+
+          {history.length > 0 && (
+            <div>
+              <p className="text-sm font-medium flex items-center gap-2 mb-1.5">
+                <History className="h-4 w-4" /> Email history ({history.length})
+              </p>
+              <ul className="divide-y rounded-lg border">
+                {history.map((m, i) => (
+                  <li key={i} className="p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-sm font-medium truncate">{m.subject || '(no subject)'}</p>
+                      <Badge
+                        className={`shrink-0 border ${m.status === 'failed' ? 'bg-red-100 text-red-700 border-red-200' : 'bg-emerald-100 text-emerald-800 border-emerald-200'}`}
+                        variant="outline"
+                      >
+                        {m.kind === 'accounts' ? 'Accounts' : 'Customer'} · {m.status}
+                      </Badge>
+                    </div>
+                    <p className="text-xs text-muted-foreground truncate">
+                      To {m.to?.join(', ') || '—'}{m.cc?.length ? ` · CC ${m.cc.join(', ')}` : ''}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {formatDateTime(m.sentAt)}{m.sentBy?.name ? ` · ${m.sentBy.name}` : ''}
+                    </p>
+                    {m.error && <p className="text-xs text-red-600 mt-0.5">{m.error}</p>}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+
+        <DialogFooter className="mt-2">
+          <Button variant="outline" onClick={onClose} disabled={sending}>Close</Button>
+          <Button onClick={send} disabled={sending}>
+            {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
+            Send order
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -684,6 +920,7 @@ export default function SalesOrders() {
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState(ALL);
   const [dialog, setDialog] = useState({ open: false, order: null });
+  const [emailDialog, setEmailDialog] = useState({ open: false, order: null });
   const [previewFile, setPreviewFile] = useState(null); // { url, filename }
 
   const canManage = (o) => isAdmin || String(o.createdBy?._id || o.createdBy) === String(user?._id || '');
@@ -746,16 +983,47 @@ export default function SalesOrders() {
     });
   };
 
+  /**
+   * Confirming mails the order to accounts on its own when Settings asks for
+   * it, and that send is deliberately allowed to fail without touching the
+   * confirmation — so this toast is the only place anyone learns it did not go.
+   */
+  const reportAccountsEmail = (result) => {
+    if (!result || result.reason === 'already-sent') return;
+    if (result.sent) {
+      toast.success(`Accounts emailed this order — ${result.to.join(', ')}`);
+      return;
+    }
+    toast.warning('Accounts were NOT emailed this order', {
+      description: `${result.reason} The order is confirmed either way — send it by hand from the email action.`,
+      duration: 12000,
+    });
+  };
+
   const changeStatus = async (o, next) => {
     try {
       const { data } = await api.put(`/sales-orders/${o._id}/status`, { status: next });
       toast.success(data.message);
       // Re-opening re-takes the reservation against stock that has moved since.
       warnShortfalls(data.data?.warnings);
+      reportAccountsEmail(data.data?.accountsEmail);
       fetchOrders();
     } catch (err) {
       toast.error(apiError(err));
     }
+  };
+
+  // Closing and cancelling both release the order's hold on stock and lock it
+  // for good, so neither sits in the status dropdown alongside the everyday
+  // open ↔ confirmed switch.
+  const closeOrder = (o) => {
+    if (!window.confirm(`Mark ${o.number} as closed? The order locks and stops holding stock — use this once the goods have gone and the invoice is in Tally.`)) return;
+    changeStatus(o, 'closed');
+  };
+
+  const cancelOrder = (o) => {
+    if (!window.confirm(`Cancel ${o.number} (${o.customerName})? The order locks and releases its stock at once.`)) return;
+    changeStatus(o, 'cancelled');
   };
 
   const remove = async (o) => {
@@ -793,7 +1061,8 @@ export default function SalesOrders() {
             <SelectContent>
               <SelectItem value={ALL}>All statuses</SelectItem>
               <SelectItem value="open">Open</SelectItem>
-              <SelectItem value="dispatched">Dispatched</SelectItem>
+              <SelectItem value="confirmed">Confirmed</SelectItem>
+              <SelectItem value="closed">Closed</SelectItem>
               <SelectItem value="cancelled">Cancelled</SelectItem>
             </SelectContent>
           </Select>
@@ -840,20 +1109,27 @@ export default function SalesOrders() {
                     <TableCell className="text-right tabular-nums hidden sm:table-cell">{o.items?.length || 0}</TableCell>
                     <TableCell className="text-right tabular-nums font-semibold">{formatCurrency(o.total)}</TableCell>
                     <TableCell>
-                      {canManage(o) ? (
+                      {/* Two choices only: an order is being worked on, or it is
+                          agreed. Un-confirming is an admin's call — an exec who
+                          could flip it back would make the lock decorative. */}
+                      {canManage(o) && (o.status === 'open' || (o.status === 'confirmed' && isAdmin)) ? (
                         <Select value={o.status} onValueChange={(v) => changeStatus(o, v)}>
                           <SelectTrigger className={`h-7 w-[122px] text-xs border ${STATUS_STYLES[o.status] || ''}`}>
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="open">Open</SelectItem>
-                            <SelectItem value="dispatched">Dispatched</SelectItem>
-                            <SelectItem value="cancelled">Cancelled</SelectItem>
+                            <SelectItem value="confirmed">Confirmed</SelectItem>
                           </SelectContent>
                         </Select>
                       ) : (
-                        <Badge className={`border ${STATUS_STYLES[o.status] || ''}`} variant="outline">
-                          {o.status}
+                        <Badge
+                          className={`border ${STATUS_STYLES[o.status] || ''}`}
+                          variant="outline"
+                          title={o.status === 'confirmed' ? 'Confirmed and locked — only an admin can re-open it for editing' : undefined}
+                        >
+                          {o.status === 'confirmed' && <Lock className="h-3 w-3 mr-1" />}
+                          {STATUS_LABELS[o.status] || o.status}
                         </Badge>
                       )}
                     </TableCell>
@@ -868,16 +1144,60 @@ export default function SalesOrders() {
                         <Button variant="ghost" size="icon" className="h-8 w-8" title="Download PDF" onClick={() => downloadPdf(o)}>
                           <Download className="h-4 w-4" />
                         </Button>
-                        {canManage(o) && o.status === 'open' && (
+                        {/* Only an open order can be edited; once confirmed the
+                            booking stands until an admin re-opens it. */}
+                        {canManage(o) && o.status === 'open' ? (
                           <Button variant="ghost" size="icon" className="h-8 w-8" title="Edit" onClick={() => setDialog({ open: true, order: o })}>
                             <Pencil className="h-4 w-4" />
                           </Button>
-                        )}
-                        {isAdmin && (
-                          <Button variant="ghost" size="icon" className="h-8 w-8 text-red-600 hover:text-red-700" title="Delete" onClick={() => remove(o)}>
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        )}
+                        ) : canManage(o) && o.status === 'confirmed' ? (
+                          <span
+                            className="inline-flex h-8 w-8 items-center justify-center text-muted-foreground"
+                            title="Confirmed and locked — an admin must re-open it before it can be edited"
+                          >
+                            <Lock className="h-4 w-4" />
+                          </span>
+                        ) : null}
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-8 w-8" title="More actions">
+                              <MoreVertical className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-56">
+                            <DropdownMenuItem
+                              disabled={o.status === 'cancelled'}
+                              onSelect={() => setEmailDialog({ open: true, order: o })}
+                            >
+                              <Mail /> Email to customer
+                            </DropdownMenuItem>
+                            {canManage(o) && (o.status === 'open' || o.status === 'confirmed') && (
+                              <>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem onSelect={() => closeOrder(o)}>
+                                  <PackageCheck /> Mark as closed
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  className="text-red-600 focus:text-red-700"
+                                  onSelect={() => cancelOrder(o)}
+                                >
+                                  <Ban /> Cancel order
+                                </DropdownMenuItem>
+                              </>
+                            )}
+                            {isAdmin && (
+                              <>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                  className="text-red-600 focus:text-red-700"
+                                  onSelect={() => remove(o)}
+                                >
+                                  <Trash2 /> Delete order
+                                </DropdownMenuItem>
+                              </>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </div>
                     </TableCell>
                   </TableRow>
@@ -894,6 +1214,13 @@ export default function SalesOrders() {
         order={dialog.order}
         onClose={() => setDialog({ open: false, order: null })}
         onSaved={fetchOrders}
+      />
+
+      <EmailDialog
+        open={emailDialog.open}
+        order={emailDialog.order}
+        onClose={() => setEmailDialog({ open: false, order: null })}
+        onSent={fetchOrders}
       />
 
       <Dialog open={Boolean(previewFile)} onOpenChange={closePreview}>
