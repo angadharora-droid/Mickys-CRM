@@ -29,11 +29,17 @@ const getReport = asyncHandler(async (req, res) => {
 
   if (req.query.format === 'xlsx') {
     const buffer = await salesReportService.buildWorkbook([report], ctx, req.user.name);
+    // A report that names its own period ignores the requested window, so the
+    // file is neither filed nor logged under one — a dated filename on a
+    // current-position extract is read as a period extract by whoever it is
+    // forwarded to.
+    const period = report.rangeLabel || `${ctx.fromStr} to ${ctx.toStr}`;
+    const suffix = report.rangeLabel ? '' : `_${ctx.fromStr}_to_${ctx.toStr}`;
     await logActivity({
       userId: req.user._id, action: 'SALES_REPORT_EXPORTED', entity: 'Report',
-      details: `Exported ${report.label} (${ctx.fromStr} to ${ctx.toStr}) to Excel`, ip: req.ip,
+      details: `Exported ${report.label} (${period}) to Excel`, ip: req.ip,
     });
-    return sendWorkbook(res, buffer, `mickys-sales-${type}-report_${ctx.fromStr}_to_${ctx.toStr}.xlsx`);
+    return sendWorkbook(res, buffer, `mickys-sales-${type}-report${suffix}.xlsx`);
   }
 
   res.json({

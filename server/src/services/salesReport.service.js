@@ -81,13 +81,14 @@ const loggedStatus = (log) =>
 
 /**
  * Order ids this requester may see, for the queries that cannot express the
- * scope themselves (the activity trail is keyed by order, not by exec). null
- * means "no restriction" — an admin looking at the whole book.
+ * scope themselves — the activity trail is keyed by order, not by exec. Every
+ * run resolves the ids, an admin's whole book included, so a transition logged
+ * against an order that has since been deleted is never counted: those log rows
+ * outlive the order and would otherwise make an admin's day-wise counts exceed
+ * anything the Order Register for the same period can account for.
  */
 const scopedOrderIds = async (ctx) =>
-  Object.keys(ctx.scope).length
-    ? (await SalesOrder.find(ctx.scope).select('_id').lean()).map((o) => o._id)
-    : null;
+  (await SalesOrder.find(ctx.scope).select('_id').lean()).map((o) => o._id);
 
 /**
  * When each of the given orders last entered confirmed / closed / cancelled.
@@ -198,15 +199,21 @@ async function customerRows(ctx) {
     createdAt: { $gte: ctx.from, $lte: ctx.to },
   })
     .select('customerName customer total createdAt')
+    .populate('customer', 'companyName')
     .lean();
 
+  // One business, one row. The same customer can be booked through the
+  // appointed picker and by typing their name into a plain order, so both
+  // bookings are gathered under the appointed list's own name — which also
+  // keeps a renamed customer's history together.
   const byCustomer = new Map();
   for (const o of orders) {
-    const key = o.customer ? String(o.customer) : o.customerName;
+    const name = o.customer?.companyName || o.customerName;
+    const key = String(name || '').trim().toUpperCase();
     if (!byCustomer.has(key)) {
       byCustomer.set(key, {
-        customer: o.customerName,
-        appointed: yesNo(o.customer),
+        customer: name,
+        appointed: false,
         orders: 0,
         total: 0,
         firstOrder: null,
@@ -215,6 +222,11 @@ async function customerRows(ctx) {
     }
     const row = byCustomer.get(key);
     const at = new Date(o.createdAt);
+    // Being appointed is a fact about the customer, not about one booking.
+    if (o.customer) {
+      row.appointed = true;
+      row.customer = o.customer.companyName;
+    }
     row.orders += 1;
     row.total += Number(o.total) || 0;
     if (!row.firstOrder || at < row.firstOrder) row.firstOrder = at;
@@ -224,6 +236,7 @@ async function customerRows(ctx) {
   return [...byCustomer.values()]
     .map((r) => ({
       ...r,
+      appointed: yesNo(r.appointed),
       total: round2(r.total),
       avgOrderValue: r.orders ? round2(r.total / r.orders) : 0,
     }))
@@ -369,12 +382,12 @@ async function dailyRows(ctx) {
   // Confirmations and cancellations are transitions, not order attributes, so
   // they are counted off the audit trail on the day they happened — an order
   // booked in June and confirmed in August belongs to August's row here.
-  if (!ids || ids.length) {
+  if (ids.length) {
     const logs = await ActivityLog.find({
       entity: 'SalesOrder',
       action: STATUS_ACTION,
       timestamp: { $gte: ctx.from, $lte: ctx.to },
-      ...(ids ? { entityId: { $in: ids } } : {}),
+      entityId: { $in: ids },
     })
       .select('entityId details meta timestamp')
       .lean();
@@ -444,8 +457,11 @@ async function rateValidityRows() {
 // ---------------------------------------------------------------------------
 // Registry — the single source of truth for report types, labels and columns.
 // Column `type`: string | number | date | datetime ('day' = ISO day string).
-// `noTotal` marks a numeric column that must not be summed (an average or an
-// age); `adminOnly` keeps a report out of an exec's catalog entirely.
+// `noTotal` marks a numeric column that must not be summed — an average, an
+// age, or a count of distinct orders that recurs down the rows, where one order
+// spanning six items would be counted six times; `adminOnly` keeps a report out
+// of an exec's catalog entirely. `periodScoped: false` marks a report that
+// describes today rather than the window — see sheetRangeLabel.
 // ---------------------------------------------------------------------------
 
 const REPORTS = {
@@ -478,7 +494,7 @@ const REPORTS = {
       { key: 'baseUnits', header: 'Unit', width: 10 },
       { key: 'qty', header: 'Qty Ordered', type: 'number', width: 13 },
       { key: 'value', header: 'Order Value', type: 'number', width: 14 },
-      { key: 'orders', header: 'Orders', type: 'number', width: 9 },
+      { key: 'orders', header: 'Orders', type: 'number', width: 9, noTotal: true },
       { key: 'avgRate', header: 'Avg Rate', type: 'number', width: 11, noTotal: true },
     ],
   },
@@ -533,13 +549,14 @@ const REPORTS = {
     description: 'What the order book has committed of the Tally stock: reserved against closing quantity, and what is left to sell. Current state, not period-scoped.',
     build: commitmentRows,
     totals: true,
+    periodScoped: false,
     columns: [
       { key: 'name', header: 'Item', width: 34 },
       { key: 'baseUnits', header: 'Unit', width: 10 },
       { key: 'closingQty', header: 'Tally Closing', type: 'number', width: 14 },
       { key: 'reservedQty', header: 'Reserved', type: 'number', width: 11 },
       { key: 'availableQty', header: 'Available', type: 'number', width: 11 },
-      { key: 'orders', header: 'Orders', type: 'number', width: 9 },
+      { key: 'orders', header: 'Orders', type: 'number', width: 9, noTotal: true },
       { key: 'reservedValue', header: 'Reserved Value', type: 'number', width: 15 },
       { key: 'alert', header: 'Alert', width: 14 },
     ],
@@ -562,6 +579,7 @@ const REPORTS = {
     label: 'Rate Freeze Validity',
     description: 'Every appointed customer’s frozen rate list and how long it may still be booked against. Expired and expiring lists come first. Current state, not period-scoped.',
     build: rateValidityRows,
+    periodScoped: false,
     columns: [
       { key: 'company', header: 'Customer', width: 32 },
       { key: 'gstin', header: 'GSTIN', width: 18 },
@@ -635,6 +653,20 @@ function buildContext(user, query) {
   };
 }
 
+/**
+ * The period an exported sheet is stamped with must be the period its rows
+ * obey, so a file that outlives the screen it was run from cannot be misread.
+ * The two current-state reports ignore the window entirely, and the pending
+ * order book run without an explicit range covers everything outstanding —
+ * quoting the request's default thirty days on any of them would date rows that
+ * were never filtered by it. Anything else keeps the workbook's own label.
+ */
+const sheetRangeLabel = (type, def, ctx) => {
+  if (def.periodScoped === false) return 'Current position — all dates';
+  if (type === 'orderBook' && !ctx.explicitRange) return 'All outstanding orders — any booking date';
+  return null;
+};
+
 async function runReport(type, ctx, user) {
   const def = reportDef(type);
   if (!def) throw ApiError.badRequest(`Unknown report type "${type}"`);
@@ -648,6 +680,7 @@ async function runReport(type, ctx, user) {
     columns: def.columns,
     rows,
     totals: def.totals ? totalsRow(def, rows) : null,
+    rangeLabel: sheetRangeLabel(type, def, ctx),
   };
 }
 
