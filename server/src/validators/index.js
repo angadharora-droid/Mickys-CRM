@@ -326,6 +326,22 @@ const fobVariantSchema = z.object({
   marginPercent: z.coerce.number().min(0).max(99).optional(),
 });
 
+// The accounts mailing list. The settings form sends one comma-separated
+// field, older/other callers may send an array — both land as a clean,
+// lowercased, deduped list, so the same address typed twice in different case
+// never mails the desk twice.
+const accountsEmailsSchema = z
+  .preprocess(
+    (v) =>
+      (Array.isArray(v) ? v : String(v ?? '').split(','))
+        .map((e) => String(e).trim().toLowerCase())
+        .filter(Boolean),
+    z
+      .array(z.string().email('Enter valid accounts email address(es), separated by commas'))
+      .max(20, 'At most 20 accounts email addresses')
+  )
+  .transform((list) => [...new Set(list)]);
+
 const settingsSchema = z.object({
   email: z
     .object({
@@ -353,6 +369,12 @@ const settingsSchema = z.object({
       defaultPaymentTerms: z.string().max(1000).optional(),
       defaultCreditPeriod: z.string().max(200).optional(),
       termsAndConditions: z.string().max(8000).optional(),
+    })
+    .optional(),
+  salesOrder: z
+    .object({
+      accountsEmails: accountsEmailsSchema.optional(),
+      emailAccountsOnConfirm: z.boolean().optional(),
     })
     .optional(),
   export: z
@@ -422,6 +444,14 @@ const appointedCustomerSchema = z.object({
     .regex(/^[0-9A-Za-z]{15}$/, 'GSTIN must be the 15-character number'),
   mobile: z.string().trim().min(7).max(20),
   address: z.string().trim().min(3).max(500),
+  // The last day these rates may be booked against. Always stated, on
+  // appointment and on every edit — an edit re-freezes the rates, so it has to
+  // say how long the new ones stand.
+  // One message for missing and unparseable alike: coercion turns an absent
+  // value into an invalid date, so required_error never fires on its own.
+  validUntil: z.coerce.date({
+    errorMap: () => ({ message: 'Enter the date these frozen rates are valid until' }),
+  }),
   items: z
     .array(
       z.object({
@@ -468,8 +498,28 @@ const salesOrderSchema = z.object({
   notes: z.string().max(2000).optional().or(z.literal('')),
 });
 
+// Open and Confirmed are the two the status control offers; closing and
+// cancelling are deliberate one-way actions the client raises separately.
 const salesOrderStatusSchema = z.object({
-  status: z.enum(['open', 'dispatched', 'cancelled']),
+  status: z.enum(['open', 'confirmed', 'closed', 'cancelled']),
+});
+
+// Manual send of the order PDF to the customer. Everything is optional: the
+// recipient falls back to the appointed customer's address and the subject and
+// body to the standard covering note.
+const salesOrderEmailSchema = z.object({
+  to: z.string().email().optional().or(z.literal('')),
+  // One or more CC addresses, comma-separated.
+  cc: z
+    .string()
+    .max(500)
+    .optional()
+    .refine(
+      (val) => !val || val.split(',').every((e) => z.string().email().safeParse(e.trim()).success),
+      { message: 'Enter valid CC email address(es), separated by commas' }
+    ),
+  subject: z.string().max(300).optional().or(z.literal('')),
+  message: z.string().max(8000).optional().or(z.literal('')),
 });
 
 module.exports = {
@@ -510,6 +560,7 @@ module.exports = {
   stockAvailabilitySchema,
   salesOrderSchema,
   salesOrderStatusSchema,
+  salesOrderEmailSchema,
   appointedCustomerSchema,
   appointedCustomerCreateSchema,
 };

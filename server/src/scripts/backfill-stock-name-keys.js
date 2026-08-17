@@ -11,8 +11,8 @@
  *   - SalesOrder.items[].nameKey — set from each line's stored name (an
  *     appointed customer's line carries their frozen UPPERCASE name, which is
  *     precisely why the raw name never matched).
- *   - SalesOrder.dispatchedAt  — set to updatedAt on already-dispatched orders,
- *     so they read as long settled rather than as a missing field.
+ *   - SalesOrder.closedAt      — set to updatedAt on already-closed orders, so
+ *     they read as long settled rather than as a missing field.
  *   - StockSyncLog.syncedAt    — set to createdAt on historic sync rows, which
  *     is the closest record those rows have of their data cut-off.
  *
@@ -70,11 +70,12 @@ async function run() {
       linesChanged += 1;
       touched = true;
     }
-    // A dispatch that happened before this shipped has long since been
-    // invoiced in Tally; updatedAt is the closest timestamp we have and puts
-    // the order safely past the settle window.
-    if (order.status === 'dispatched' && !order.dispatchedAt) {
-      order.dispatchedAt = order.updatedAt;
+    // A close that happened before this shipped has long since been invoiced
+    // in Tally; updatedAt is the closest timestamp we have and puts the order
+    // safely past the settle window. (Run migrate:order-status first — that is
+    // what turns the old 'dispatched' orders into closed ones.)
+    if (order.status === 'closed' && !order.closedAt) {
+      order.closedAt = order.updatedAt;
       touched = true;
     }
     if (!touched) continue;

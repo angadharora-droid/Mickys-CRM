@@ -138,13 +138,15 @@ router.post('/stock/availability', authenticate, authorize(ADMIN, EXEC), SALES_M
 
 // ---------- Sales Order module: orders ----------
 // Admins manage all orders; execs create orders and manage their own.
-// Deleting is admin-only.
+// Deleting is admin-only. Emailing an order to its customer is a manual send
+// of the same PDF, so it shares the email rate limit.
 router.post('/sales-orders', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, validate(v.salesOrderSchema), salesOrders.createSalesOrder);
 router.get('/sales-orders', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, salesOrders.listSalesOrders);
 router.get('/sales-orders/:id', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, salesOrders.getSalesOrder);
 router.get('/sales-orders/:id/pdf', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, salesOrders.salesOrderPdf);
 router.put('/sales-orders/:id', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, validate(v.salesOrderSchema), salesOrders.updateSalesOrder);
 router.put('/sales-orders/:id/status', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, validate(v.salesOrderStatusSchema), salesOrders.updateStatus);
+router.post('/sales-orders/:id/email', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, emailLimiter, validate(v.salesOrderEmailSchema), salesOrders.emailSalesOrder);
 router.delete('/sales-orders/:id', authenticate, authorize(ADMIN), salesOrders.deleteSalesOrder);
 
 // ---------- Sales Order module: appointed customers (rate freeze) ----------

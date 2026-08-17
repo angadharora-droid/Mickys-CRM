@@ -3,8 +3,10 @@ const ApiError = require('../utils/ApiError');
 const AppointedCustomer = require('../models/AppointedCustomer');
 const Counter = require('../models/Counter');
 const SalesOrder = require('../models/SalesOrder');
+const Setting = require('../models/Setting');
 const StockItem = require('../models/StockItem');
 const { renderSalesOrderPdf } = require('../services/salesOrderPdf.service');
+const { sendOrderEmail } = require('../services/salesOrderEmail.service');
 const {
   nameKeyOf,
   checkLineAvailability,
@@ -12,10 +14,24 @@ const {
 const { getPagination, buildMeta } = require('../utils/pagination');
 const { logActivity } = require('../services/activity.service');
 const { searchRegex } = require('../utils/sanitize');
+const { istDayPassed, istDateLabel } = require('../utils/istDate');
 
 /** Admins manage every order; sales execs manage only the ones they booked. */
 const canManage = (user, order) =>
   user.role === 'admin' || String(order.createdBy?._id || order.createdBy) === String(user._id);
+
+/** Statuses that hold stock back — see services/stockAvailability.service.js. */
+const RESERVING = new Set(['open', 'confirmed']);
+
+/**
+ * Everything the PDF and the emails need: the booking exec (shown on the
+ * document, and the reply-to when the mail goes from the shared account) and
+ * the appointed customer's full details.
+ */
+const withDocumentRefs = (query) =>
+  query
+    .populate('createdBy', 'name phone email')
+    .populate('customer', 'companyName email gstin mobile address terms');
 
 /**
  * Recomputes line amounts and the total from qty × rate, enriching each line
@@ -63,11 +79,23 @@ async function buildItems(items, { excludeOrder } = {}) {
  * Resolves an appointed (rate-frozen) customer when customerId is given and
  * enforces the freeze: every line must be on the frozen list, and the frozen
  * rate always wins over whatever rate the client sent.
+ *
+ * A lapsed validity blocks the booking outright, on create and on edit alike.
+ * Refusing an order is disruptive, but far less costly than invoicing a price
+ * the company stopped honouring weeks ago — the way out is one edit of the
+ * customer, which re-freezes the rates against a fresh date. Customers
+ * appointed before validity existed carry no date and are let through.
  */
 async function applyFrozenCustomer(customerId, items) {
   if (!customerId) return null;
   const appointed = await AppointedCustomer.findById(customerId);
   if (!appointed) throw ApiError.badRequest('Appointed customer not found');
+  if (appointed.validUntil && istDayPassed(appointed.validUntil)) {
+    throw ApiError.badRequest(
+      `${appointed.companyName}'s frozen rates expired on ${istDateLabel(appointed.validUntil)} — ` +
+        'edit the customer to re-freeze the rates with a new validity date before booking this order'
+    );
+  }
 
   const frozen = new Map(appointed.items.map((i) => [i.name, i]));
   for (const it of items) {
@@ -144,7 +172,9 @@ const listSalesOrders = asyncHandler(async (req, res) => {
       .skip(skip)
       .limit(limit)
       .populate('createdBy', 'name')
-      .populate('customer', 'companyName'),
+      // The customer's email rides along so the row's "email to customer"
+      // action can prefill without fetching the order first.
+      .populate('customer', 'companyName email'),
     SalesOrder.countDocuments(filter),
   ]);
   res.json({ success: true, data: orders, meta: buildMeta(total, page, limit) });
@@ -152,7 +182,10 @@ const listSalesOrders = asyncHandler(async (req, res) => {
 
 // GET /api/sales-orders/:id
 const getSalesOrder = asyncHandler(async (req, res) => {
-  const order = await SalesOrder.findById(req.params.id).populate('createdBy', 'name phone');
+  const order = await withDocumentRefs(SalesOrder.findById(req.params.id)).populate(
+    'emails.sentBy',
+    'name'
+  );
   if (!order) throw ApiError.notFound('Sales order not found');
   res.json({ success: true, data: order });
 });
@@ -162,8 +195,14 @@ const updateSalesOrder = asyncHandler(async (req, res) => {
   const order = await SalesOrder.findById(req.params.id);
   if (!order) throw ApiError.notFound('Sales order not found');
   if (!canManage(req.user, order)) throw ApiError.forbidden('You can only edit your own orders');
+  // Confirming is what locks an order: once it is agreed with the customer the
+  // booking stands until an admin deliberately re-opens it.
   if (order.status !== 'open') {
-    throw ApiError.badRequest(`Only open orders can be edited — this one is ${order.status}`);
+    throw ApiError.badRequest(
+      order.status === 'confirmed'
+        ? `Sales order ${order.number} is confirmed and locked — an admin must re-open it before it can be edited`
+        : `Only open orders can be edited — this one is ${order.status}`
+    );
   }
 
   const { customerName, customerId, items, notes } = req.body;
@@ -192,9 +231,86 @@ const updateSalesOrder = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * Records one send on the order's history. The same shape covers both
+ * audiences and both outcomes, because the question the screen has to answer —
+ * "did this order reach anyone, and when" — is the same either way.
+ */
+const recordEmail = (order, { kind, to, cc = [], subject, sentBy, messageId = '', error = '' }) => {
+  order.emails.push({
+    kind,
+    to,
+    cc,
+    subject,
+    sentAt: new Date(),
+    sentBy,
+    messageId,
+    status: error ? 'failed' : 'sent',
+    error,
+  });
+};
+
+/**
+ * Mails the confirmed order to the accounts desk, when Settings asks for it.
+ *
+ * NOTHING HERE MAY THROW. Confirming is the business action; the email is a
+ * side effect, and an SMTP outage must not undo an order the exec has agreed
+ * with the customer. The outcome is returned so the client can say plainly
+ * that the mail did not go, and it is written to the order's history either
+ * way. Mutates the order — the caller saves once, after this returns.
+ *
+ * Returns null when nothing was attempted, otherwise { sent, to, reason }.
+ */
+async function emailAccountsOnConfirm(order, user) {
+  let recipients = [];
+  try {
+    const settings = await Setting.getGlobal();
+    const cfg = settings.salesOrder || {};
+    recipients = (cfg.accountsEmails || []).filter(Boolean);
+    if (!cfg.emailAccountsOnConfirm || !recipients.length) return null;
+    // Confirming twice over must not mail twice; the flag is cleared whenever
+    // the order leaves confirmed, so a re-opened, edited and re-confirmed
+    // order does go out again.
+    if (order.accountsEmailedAt) return { sent: false, to: recipients, reason: 'already-sent' };
+
+    const result = await sendOrderEmail(order, {
+      kind: 'accounts',
+      to: recipients,
+      exec: order.createdBy,
+      actingUser: user,
+    });
+    if (result.skipped) {
+      const reason =
+        result.reason === 'disabled'
+          ? 'Email sending is disabled in Settings.'
+          : 'No email account is available. Link your official mailbox under Email settings (user menu), or ask an admin to configure the company account.';
+      recordEmail(order, {
+        kind: 'accounts', to: recipients, subject: result.subject || '', sentBy: user._id, error: reason,
+      });
+      return { sent: false, to: recipients, reason };
+    }
+
+    recordEmail(order, {
+      kind: 'accounts',
+      to: recipients,
+      subject: result.subject,
+      sentBy: user._id,
+      messageId: result.messageId || '',
+    });
+    order.accountsEmailedAt = new Date();
+    return { sent: true, to: recipients };
+  } catch (err) {
+    console.error(`[sales-order] accounts email failed for ${order.number}: ${err.message}`);
+    recordEmail(order, {
+      kind: 'accounts', to: recipients, subject: '', sentBy: user._id, error: err.message,
+    });
+    return { sent: false, to: recipients, reason: err.message };
+  }
+}
+
 // PUT /api/sales-orders/:id/status
 const updateStatus = asyncHandler(async (req, res) => {
-  const order = await SalesOrder.findById(req.params.id);
+  const order = await withDocumentRefs(SalesOrder.findById(req.params.id));
   if (!order) throw ApiError.notFound('Sales order not found');
   if (!canManage(req.user, order)) throw ApiError.forbidden('You can only update your own orders');
 
@@ -202,32 +318,133 @@ const updateStatus = asyncHandler(async (req, res) => {
   if (order.status === status) {
     return res.json({ success: true, message: 'No change', data: withWarnings(order, []) });
   }
+  // An exec who could un-confirm at will would make the confirmation lock
+  // decorative — reversing an agreed order is an admin's call.
+  if (order.status === 'confirmed' && status === 'open' && req.user.role !== 'admin') {
+    throw ApiError.forbidden(
+      `Sales order ${order.number} is confirmed — only an admin can re-open it for editing`
+    );
+  }
 
-  // dispatchedAt is the clock that eventually releases the order's stock
-  // reservation once Tally has had time to catch up; moving back to open (or
-  // cancelling) restarts it from nothing.
+  const wasReserving = RESERVING.has(order.status);
   order.status = status;
-  order.dispatchedAt = status === 'dispatched' ? new Date() : null;
+  // closedAt is the clock that eventually releases the order's stock
+  // reservation once Tally has had time to catch up; any move back out of
+  // closed restarts it from nothing.
+  order.closedAt = status === 'closed' ? new Date() : null;
+  if (status !== 'confirmed') order.accountsEmailedAt = null;
 
-  // Re-opening re-takes the reservation days later, against stock that has
-  // moved since — the one transition that can book a shortfall nobody sees.
+  // Re-taking a released reservation happens days later, against stock that
+  // has moved since — the one transition that can book a shortfall nobody
+  // sees. Confirming an open order holds the same goods it already held.
   const warnings =
-    status === 'open'
+    RESERVING.has(status) && !wasReserving
       ? (await checkLineAvailability(order.items, { excludeOrder: order._id })).warnings
       : [];
 
+  const accountsEmail = status === 'confirmed' ? await emailAccountsOnConfirm(order, req.user) : null;
+
   await order.save();
+  await order.populate('emails.sentBy', 'name');
 
   await logActivity({
     userId: req.user._id,
     action: 'SALES_ORDER_STATUS',
     entity: 'SalesOrder',
     entityId: order._id,
-    details: `Sales order ${order.number} marked ${status}`,
+    details:
+      `Sales order ${order.number} marked ${status}` +
+      (!accountsEmail || accountsEmail.reason === 'already-sent'
+        ? ''
+        : accountsEmail.sent
+          ? ` — accounts emailed (${accountsEmail.to.join(', ')})`
+          : ` — accounts email NOT sent: ${accountsEmail.reason}`),
     ip: req.ip,
   });
 
-  res.json({ success: true, message: `Order marked ${status}`, data: withWarnings(order, warnings) });
+  res.json({
+    success: true,
+    message: `Order marked ${status}`,
+    data: { ...withWarnings(order, warnings), accountsEmail },
+  });
+});
+
+// POST /api/sales-orders/:id/email — send the order PDF to the customer
+const emailSalesOrder = asyncHandler(async (req, res) => {
+  const order = await withDocumentRefs(SalesOrder.findById(req.params.id));
+  if (!order) throw ApiError.notFound('Sales order not found');
+  if (!canManage(req.user, order)) throw ApiError.forbidden('You can only email your own orders');
+  if (order.status === 'cancelled') {
+    throw ApiError.badRequest(`Sales order ${order.number} is cancelled and cannot be emailed`);
+  }
+
+  // Only an appointed customer has an address on file; an order booked against
+  // a free-typed Tally ledger name has nowhere to send to until one is typed.
+  const to = String(req.body.to || order.customer?.email || '').trim();
+  if (!to) {
+    throw ApiError.badRequest(
+      `${order.customerName} has no email address on file — type the recipient address to send this order`
+    );
+  }
+  const cc = String(req.body.cc || '')
+    .split(',')
+    .map((e) => e.trim())
+    .filter(Boolean);
+
+  let result;
+  try {
+    result = await sendOrderEmail(order, {
+      kind: 'customer',
+      to: [to],
+      cc,
+      subject: req.body.subject,
+      message: req.body.message,
+      exec: order.createdBy,
+      actingUser: req.user, // their linked mailbox (if any) becomes the sender
+    });
+  } catch (err) {
+    // A refused send is still part of this order's history — the exec needs to
+    // see the attempt as well as the error toast.
+    recordEmail(order, {
+      kind: 'customer', to: [to], cc, subject: req.body.subject || '', sentBy: req.user._id, error: err.message,
+    });
+    await order.save();
+    throw err;
+  }
+
+  if (result.skipped) {
+    const reason =
+      result.reason === 'disabled'
+        ? 'Email sending is disabled in Settings.'
+        : 'No email account is available. Link your official mailbox under Email settings (user menu), or ask an admin to configure the company account.';
+    recordEmail(order, {
+      kind: 'customer', to: [to], cc, subject: result.subject || '', sentBy: req.user._id, error: reason,
+    });
+    await order.save();
+    throw ApiError.badRequest(reason);
+  }
+
+  recordEmail(order, {
+    kind: 'customer',
+    to: [to],
+    cc,
+    subject: result.subject,
+    sentBy: req.user._id,
+    messageId: result.messageId || '',
+  });
+  await order.save();
+  await order.populate('emails.sentBy', 'name');
+
+  await logActivity({
+    userId: req.user._id,
+    action: 'SALES_ORDER_EMAILED',
+    entity: 'SalesOrder',
+    entityId: order._id,
+    details: `Emailed sales order ${order.number} to ${to}${cc.length ? ` (cc ${cc.join(', ')})` : ''}`,
+    ip: req.ip,
+  });
+
+  res.json({ success: true, message: `Sales order ${order.number} emailed to ${to}`, data: order });
 });
 
 // DELETE /api/sales-orders/:id — admin only (route-gated)
@@ -249,9 +466,7 @@ const deleteSalesOrder = asyncHandler(async (req, res) => {
 
 // GET /api/sales-orders/:id/pdf
 const salesOrderPdf = asyncHandler(async (req, res) => {
-  const order = await SalesOrder.findById(req.params.id)
-    .populate('createdBy', 'name phone')
-    .populate('customer', 'companyName email gstin mobile address terms');
+  const order = await withDocumentRefs(SalesOrder.findById(req.params.id));
   if (!order) throw ApiError.notFound('Sales order not found');
 
   const buffer = await renderSalesOrderPdf(order, order.createdBy);
@@ -268,4 +483,5 @@ module.exports = {
   updateStatus,
   deleteSalesOrder,
   salesOrderPdf,
+  emailSalesOrder,
 };

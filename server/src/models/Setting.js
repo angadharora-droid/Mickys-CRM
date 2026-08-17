@@ -97,6 +97,14 @@ const settingSchema = new mongoose.Schema(
         ].join('\n'),
       },
     },
+    // Sales order module. Accounts have to see an order the moment it is
+    // agreed, not when someone remembers to forward it, so confirming an order
+    // can mail its PDF straight to the accounts desk. Off until an admin turns
+    // it on and lists the addresses.
+    salesOrder: {
+      accountsEmails: { type: [String], default: [] },
+      emailAccountsOnConfirm: { type: Boolean, default: false },
+    },
     // Daily email digest bookkeeping: the last IST day (YYYY-MM-DD) whose
     // report was emailed, so restarts/redeploys never send a day twice.
     dailyReport: {

@@ -27,6 +27,7 @@ const {
 const { getPagination, buildMeta } = require('../utils/pagination');
 const { logActivity } = require('../services/activity.service');
 const { searchRegex } = require('../utils/sanitize');
+const { istDateKey } = require('../utils/istDate');
 const { authenticate, authorize } = require('../middleware/auth');
 
 /**
@@ -60,10 +61,6 @@ const tallyKeyOrAdmin = (req, res, next) => {
  * Goods" all pass without depending on the exact wording in Tally.
  */
 const SYNCED_GROUPS = /finished/i;
-
-/** Business date in IST (the Tally PC's timezone), e.g. "2026-08-14". */
-const istDateKey = (d) =>
-  new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(d);
 
 /** "2026-08-14" -> "2026-08-15" */
 const nextDateKey = (key) => {
