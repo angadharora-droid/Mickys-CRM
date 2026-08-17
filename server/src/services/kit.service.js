@@ -147,22 +147,32 @@ function clientCard(doc, y, ctx) {
   const { lead, exec } = ctx;
   const W = contentWidth(doc);
   const half = W / 2 - 10;
-  doc.roundedRect(M, y, W, 88, 6).fill(LIGHT);
-  doc.fill(SLATE).font('Helvetica-Bold').fontSize(8).text('PREPARED FOR', M + 12, y + 10);
-  doc.font('Helvetica-Bold').fontSize(13).fill(MAROON).text(lead.businessName, M + 12, y + 22, { width: half });
-  doc.font('Helvetica').fontSize(9).fill(SLATE);
-  let ly = y + 40;
-  [
+  // Measured before drawing — a long business name wraps, and the detail
+  // lines below it are placed relative to where it actually ends rather than
+  // at a fixed offset that the name would overrun.
+  const lines = [
     `${lead.contactPerson}${lead.designation ? ', ' + lead.designation : ''}`,
     [lead.city, lead.state].filter(Boolean).join(', '),
     `Mob: ${lead.mobileNumber}`,
     lead.gstin ? `GSTIN: ${lead.gstin}` : null,
-  ]
-    .filter(Boolean)
-    .forEach((l) => {
-      doc.text(l, M + 12, ly, { width: half });
-      ly += 11;
-    });
+  ].filter(Boolean);
+  doc.font('Helvetica-Bold').fontSize(13);
+  const nameH = doc.heightOfString(lead.businessName, { width: half });
+  doc.font('Helvetica').fontSize(9);
+  const lineHeights = lines.map((l) => doc.heightOfString(l, { width: half }));
+  const leftBottom = 22 + nameH + 4 + lineHeights.reduce((sum, h) => sum + h + 2, 0);
+  // The right column runs to the business-type value at y + 73.
+  const cardH = Math.max(88, Math.max(leftBottom, 84) + 10);
+
+  doc.roundedRect(M, y, W, cardH, 6).fill(LIGHT);
+  doc.fill(SLATE).font('Helvetica-Bold').fontSize(8).text('PREPARED FOR', M + 12, y + 10);
+  doc.font('Helvetica-Bold').fontSize(13).fill(MAROON).text(lead.businessName, M + 12, y + 22, { width: half });
+  doc.font('Helvetica').fontSize(9).fill(SLATE);
+  let ly = y + 22 + nameH + 4;
+  lines.forEach((l, i) => {
+    doc.text(l, M + 12, ly, { width: half });
+    ly += lineHeights[i] + 2;
+  });
   const rx = M + W / 2 + 10;
   doc.font('Helvetica-Bold').fontSize(8).fill(SLATE).text('SALES EXECUTIVE', rx, y + 10);
   doc.font('Helvetica').fontSize(10).fill(INK).text(exec?.name || '-', rx, y + 22, { width: half });
@@ -171,7 +181,7 @@ function clientCard(doc, y, ctx) {
   doc.font('Helvetica-Bold').fontSize(8).fill(SLATE).text('BUSINESS TYPE', rx, y + 62);
   doc.font('Helvetica').fontSize(9.5).fill(INK).text(lead.businessType || '-', rx, y + 73, { width: half });
   doc.fillColor(INK);
-  return y + 88 + 14;
+  return y + cardH + 14;
 }
 
 /** Numbered terms list inside a titled section. */
@@ -600,9 +610,13 @@ function drawAnnexure(doc, ctx, role = KIT_ROLE.distributor) {
 // ---------------- Quotation ----------------
 function labelledRows(doc, x, y, w, rows) {
   rows.forEach(([k, v]) => {
+    const value = v || '__________________________';
     doc.font('Helvetica-Bold').fontSize(8).fill(SLATE).text(k, x, y, { width: w });
-    doc.font('Helvetica').fontSize(8.5).fill(INK).text(v || '__________________________', x, y + 10, { width: w });
-    y += 26;
+    doc.font('Helvetica').fontSize(8.5).fill(INK).text(value, x, y + 10, { width: w });
+    // Measured, not stepped by a constant: a long value — a delivery address
+    // above all — wraps onto several lines, and a fixed step would print the
+    // next label on top of it. Callers must use the returned y.
+    y += Math.max(26, 10 + doc.heightOfString(value, { width: w }) + 6);
   });
   return y;
 }
@@ -618,19 +632,28 @@ function drawQuotation(doc, ctx) {
   let y = brandHeader(doc, 'Quotation', ctx, { subtitle: 'HORECA & Institutional Supply', showRef: false });
   pageFooter(doc, footerLabel);
 
-  // TO + meta block
-  const boxH = 96;
-  doc.roundedRect(M, y, W, boxH, 6).fill(LIGHT);
+  // TO + meta block. Measured before it is drawn: a long delivery address
+  // wraps onto several lines, and a fixed box height with a fixed line step
+  // would print the GSTIN over the address and spill both past the panel.
   const colW = W / 2 - 18;
-  doc.fill(SLATE).font('Helvetica-Bold').fontSize(8).text('TO', M + 12, y + 8);
-  doc.font('Helvetica-Bold').fontSize(11.5).fill(MAROON).text(lead.businessName, M + 12, y + 19, { width: colW });
-  doc.font('Helvetica').fontSize(8.5).fill(INK);
-  let ly = y + 36;
-  [
+  const toLines = [
     `${lead.contactPerson}${lead.designation ? ', ' + lead.designation : ''}`,
     lead.address || [lead.city, lead.state].filter(Boolean).join(', '),
     [lead.gstin ? `GSTIN: ${lead.gstin}` : null, `Contact: ${lead.mobileNumber}`].filter(Boolean).join('  ·  '),
-  ].filter(Boolean).forEach((l) => { doc.text(l, M + 12, ly, { width: colW }); ly += 12; });
+  ].filter(Boolean);
+  doc.font('Helvetica-Bold').fontSize(11.5);
+  const nameH = doc.heightOfString(lead.businessName, { width: colW });
+  doc.font('Helvetica').fontSize(8.5);
+  const toHeights = toLines.map((l) => doc.heightOfString(l, { width: colW }));
+  const toBottom = 19 + nameH + 6 + toHeights.reduce((sum, h) => sum + h + 3, 0);
+  const boxH = Math.max(96, toBottom + 10);
+
+  doc.roundedRect(M, y, W, boxH, 6).fill(LIGHT);
+  doc.fill(SLATE).font('Helvetica-Bold').fontSize(8).text('TO', M + 12, y + 8);
+  doc.font('Helvetica-Bold').fontSize(11.5).fill(MAROON).text(lead.businessName, M + 12, y + 19, { width: colW });
+  doc.font('Helvetica').fontSize(8.5).fill(INK);
+  let ly = y + 19 + nameH + 6;
+  toLines.forEach((l, i) => { doc.text(l, M + 12, ly, { width: colW }); ly += toHeights[i] + 3; });
   const rx = M + W / 2 + 6;
   labelledRows(doc, rx, y + 8, colW, [
     ['Quotation No.', `QT – ${lead.refNumber}`],
@@ -714,17 +737,17 @@ function drawQuotation(doc, ctx) {
   doc.font('Helvetica-Bold').fontSize(9).fill(MAROON).text('DELIVERY DETAILS', M, y);
   doc.font('Helvetica-Bold').fontSize(9).fill(MAROON).text('PAYMENT DETAILS', M + W / 2 + 8, y);
   const dy = y + 16;
-  labelledRows(doc, M, dy, half, [
+  const deliveryBottom = labelledRows(doc, M, dy, half, [
     ['Delivery Address', lead.address || ''],
     ['Expected Delivery', ''],
     ['Mode of Delivery', ''],
   ]);
-  labelledRows(doc, M + W / 2 + 8, dy, half, [
+  const paymentBottom = labelledRows(doc, M + W / 2 + 8, dy, half, [
     ['Payment Terms', lead.customTerms?.paymentTerms || content.QUOTATION_DEFAULTS.paymentTerms],
     ['Mode', brand.bank.mode],
     ['Account No.', `${brand.bank.accountNo}  ·  IFSC: ${brand.bank.ifsc}`],
   ]);
-  y = dy + 26 * 3 + 6;
+  y = Math.max(deliveryBottom, paymentBottom) + 6;
 
   y = termsBlock(doc, y, 'TERMS & CONDITIONS', termsFor(ctx, content.QUOTATION_TERMS), footerLabel);
   // Acceptance + signature

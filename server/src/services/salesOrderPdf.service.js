@@ -130,17 +130,27 @@ function renderSalesOrderPdf(order, exec) {
             cust.email || null,
           ].filter(Boolean)
         : [];
-      const cardH = Math.max(66, 44 + custLines.length * 11 + 10);
-      doc.roundedRect(M, y, CW, cardH, 6).fill(LIGHT);
       const half = CW / 2 - 10;
+      // Measured before the card is drawn. A long address wraps onto several
+      // lines, and stepping a fixed 11pt per entry would print the GSTIN on
+      // top of it and run the block out through the bottom of the panel.
+      doc.font('Helvetica-Bold').fontSize(13);
+      const nameH = doc.heightOfString(order.customerName, { width: half });
+      doc.font('Helvetica').fontSize(8.5);
+      const custHeights = custLines.map((l) => doc.heightOfString(l, { width: half }));
+      const leftBottom = 22 + nameH + 4 + custHeights.reduce((sum, h) => sum + h + 2, 0);
+      // The right column is three fixed single lines ending at y + 57.
+      const cardH = Math.max(66, Math.max(leftBottom, 57) + 10);
+
+      doc.roundedRect(M, y, CW, cardH, 6).fill(LIGHT);
       doc.fill(SLATE).font('Helvetica-Bold').fontSize(8).text('CUSTOMER', M + 12, y + 10);
       doc.font('Helvetica-Bold').fontSize(13).fill(MAROON).text(order.customerName, M + 12, y + 22, { width: half });
       doc.font('Helvetica').fontSize(8.5).fill(SLATE);
-      let cy = y + 42;
-      for (const line of custLines) {
+      let cy = y + 22 + nameH + 4;
+      custLines.forEach((line, i) => {
         doc.text(line, M + 12, cy, { width: half });
-        cy += 11;
-      }
+        cy += custHeights[i] + 2;
+      });
       const rx = M + CW / 2 + 10;
       doc.font('Helvetica-Bold').fontSize(8).fill(SLATE).text('SALES ORDER DETAILS', rx, y + 10);
       doc.font('Helvetica').fontSize(9).fill(INK);

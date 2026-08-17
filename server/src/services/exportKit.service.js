@@ -596,23 +596,35 @@ function brandHeader(doc, title, subtitle, lead) {
 function clientBlock(doc, y, lead, exec) {
   const W = contentWidth(doc);
   const half = W / 2 - 12;
-  doc.roundedRect(M, y, W, 64, 6).fill(LIGHT);
-  doc.fill(SLATE).font('Helvetica-Bold').fontSize(7.5).text('PREPARED FOR', M + 12, y + 8);
-  doc.font('Helvetica-Bold').fontSize(12).fill(MAROON).text(lead.businessName, M + 12, y + 19, { width: half, lineBreak: false });
-  doc.font('Helvetica').fontSize(8.5).fill(SLATE);
   const who = [
     `${lead.contactPerson || ''}${lead.designation ? ', ' + lead.designation : ''}`,
     [lead.city, lead.state].filter(Boolean).join(', '),
   ].filter(Boolean).join('  ·  ');
-  doc.text(who, M + 12, y + 36, { width: half, lineBreak: false });
-  if (lead.mobileNumber) doc.text(`Mob: ${lead.mobileNumber}`, M + 12, y + 48, { width: half, lineBreak: false });
+  // Wrapped and measured rather than held to one line: lineBreak:false does
+  // not clip, so a long business name or contact line used to run straight
+  // across into the executive column beside it.
+  doc.font('Helvetica-Bold').fontSize(12);
+  const nameH = doc.heightOfString(lead.businessName, { width: half });
+  doc.font('Helvetica').fontSize(8.5);
+  const whoH = doc.heightOfString(who, { width: half });
+  const mobH = lead.mobileNumber ? doc.heightOfString(`Mob: ${lead.mobileNumber}`, { width: half }) : 0;
+  const leftBottom = 19 + nameH + 5 + whoH + (lead.mobileNumber ? 3 + mobH : 0);
+  const boxH = Math.max(64, leftBottom + 8);
+
+  doc.roundedRect(M, y, W, boxH, 6).fill(LIGHT);
+  doc.fill(SLATE).font('Helvetica-Bold').fontSize(7.5).text('PREPARED FOR', M + 12, y + 8);
+  doc.font('Helvetica-Bold').fontSize(12).fill(MAROON).text(lead.businessName, M + 12, y + 19, { width: half });
+  doc.font('Helvetica').fontSize(8.5).fill(SLATE);
+  const whoY = y + 19 + nameH + 5;
+  doc.text(who, M + 12, whoY, { width: half });
+  if (lead.mobileNumber) doc.text(`Mob: ${lead.mobileNumber}`, M + 12, whoY + whoH + 3, { width: half });
   const rx = M + W / 2 + 8;
   doc.font('Helvetica-Bold').fontSize(7.5).fill(SLATE).text('SALES EXECUTIVE', rx, y + 8);
   doc.font('Helvetica').fontSize(9.5).fill(INK).text(exec?.name || '-', rx, y + 19, { width: half, lineBreak: false });
   doc.fontSize(8).fill(SLATE).text(exec?.email || '', rx, y + 32, { width: half, lineBreak: false });
   if (exec?.phone) doc.text(`Mob: ${exec.phone}`, rx, y + 44, { width: half, lineBreak: false });
   doc.fillColor(INK);
-  return y + 64 + 12;
+  return y + boxH + 12;
 }
 
 function slimHeader(doc) {
