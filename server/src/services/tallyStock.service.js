@@ -135,4 +135,16 @@ function parseLedgers(xml, tag) {
 const parseTallyVendors = (xml) => parseLedgers(xml, 'VENDOR');
 const parseTallyCustomers = (xml) => parseLedgers(xml, 'CUSTOMER');
 
-module.exports = { parseTallyStockXml, parseTallyVendors, parseTallyCustomers };
+/**
+ * The <COMPANY> element names the company that produced the export. Older
+ * TDL versions don't send it — '' then means "unknown", not "no company".
+ */
+const parseTallyCompany = (xml) =>
+  typeof xml === 'string' ? tagValue(xml, 'COMPANY') : '';
+
+module.exports = {
+  parseTallyStockXml,
+  parseTallyVendors,
+  parseTallyCustomers,
+  parseTallyCompany,
+};

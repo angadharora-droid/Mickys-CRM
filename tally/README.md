@@ -107,9 +107,9 @@ Two ways, both hitting `POST /api/stock/sync` on the backend:
 > tab). The morning auto-push — it fires when the company is opened, before
 > the day's entries — is recorded as that day's **opening**; the day's
 > **closing** comes from the next morning's push (until then it shows the
-> last sync of the day, marked provisional — with the hourly auto-push this
-> is at most an hour old). For an exact same-day closing, press **Ctrl+F10**
-> after the day's last entry.
+> last sync of the day, marked provisional — with the auto-push every
+> 10 minutes this stays essentially current). For an exact same-day closing,
+> press **Ctrl+F10** after the day's last entry.
 
 > **Vendors & customers.** The same export carries every ledger under
 > Sundry Creditors (→ **Vendors** tab) and Sundry Debtors (→ **Customers**
@@ -132,12 +132,19 @@ The TDL registers two automatic triggers, both guarded by company name
 
 - **Load Company event** — every time the company is opened in Tally, the
   stock report is pushed to the CRM immediately.
-- **Hourly timer** — while Tally stays open with the company loaded, the
-  same push repeats every hour, so the CRM stays fresh through the day
-  even on hosted sessions that keep the company open 24×7. When no
-  company (or a different one) is loaded, the tick does nothing.
+- **10-minute timer** — while Tally stays open with the company active, the
+  same push repeats every 10 minutes. This is also what covers **switching**
+  to the Mickys company when Tally opened with a different company first —
+  Tally fires no event on a switch between already-open companies, so the
+  next timer tick (within 10 minutes) does the push. When no company (or a
+  different one) is active, the tick does nothing.
 
-The button below is for an on-demand refresh between the hourly ticks.
+The export also carries a `<COMPANY>` tag and the backend refuses any payload
+from a company other than CENTRE POINT\*, so even pressing the sync button
+while a different company is active can never overwrite Mickys stock in the
+CRM.
+
+The button below is for an on-demand refresh between the timer ticks.
 
 ### The "Sync to CRM" button
 The TDL defines a button on the report (right-hand button bar, shortcut
@@ -190,13 +197,15 @@ reset. Fixes, best first:
 2. Press **Ctrl+F10** on the report. Success response → backend and key are
    fine. Unauthorized/error → `TALLY_SYNC_KEY` on Railway is missing or
    doesn't match the `key=` in `MickysSyncURL`.
-3. The Load Company event fires only when the company is **opened**, but the
-   TDL also carries an **hourly timer** that re-pushes for as long as the
-   company stays loaded — so even a hosted session that keeps the company
-   open 24×7 syncs every hour. If the hourly push isn't arriving, the
-   loaded TDL copy is probably an old (pre-timer) download — re-download
-   from the URL, overwrite the file and restart Tally. Repeat pushes are
-   harmless (the CRM just refreshes; the first push of the day becomes that
-   day's opening in the Day-wise register). On a multi-user host, each
-   session with the TDL loaded runs its own timer — the extra pushes are
-   harmless too.
+3. The Load Company event fires only when the company is **opened** —
+   switching to Mickys after Tally started in a different company fires no
+   event at all. The TDL's **10-minute timer** covers both cases: it
+   re-pushes for as long as the Mickys company is the active one, so a
+   switch is picked up within 10 minutes and a hosted session that keeps
+   the company open 24×7 stays fresh all day. If the timed pushes aren't
+   arriving, the loaded TDL copy is probably an old (pre-timer) download —
+   re-download from the URL, overwrite the file and restart Tally. Repeat
+   pushes are harmless (the CRM just refreshes; the first push of the day
+   becomes that day's opening in the Day-wise register). On a multi-user
+   host, each session with the TDL loaded runs its own timer — the extra
+   pushes are harmless too.
