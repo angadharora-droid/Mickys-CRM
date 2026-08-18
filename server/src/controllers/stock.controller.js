@@ -13,6 +13,7 @@ const {
   parseTallyStockXml,
   parseTallyVendors,
   parseTallyCustomers,
+  parseTallyCompany,
 } = require('../services/tallyStock.service');
 const {
   nameKeyOf,
@@ -62,6 +63,16 @@ const tallyKeyOrAdmin = (req, res, next) => {
  */
 const SYNCED_GROUPS = /finished/i;
 
+/**
+ * The hosted Tally carries several companies; only Mickys (CENTRE POINT
+ * FOODS…) may feed the CRM. The TDL guards its automatic pushes, but the
+ * Ctrl+F10 button and manual exports have no company guard — this check is
+ * what stops a sibling company's stock from replacing Mickys' mirror.
+ * Prefix match so PVT LTD vs PRIVATE LIMITED wording never matters; exports
+ * from an older TDL carry no <COMPANY> tag and are accepted as before.
+ */
+const SYNC_COMPANY = /^CENTRE POINT/i;
+
 /** "2026-08-14" -> "2026-08-15" */
 const nextDateKey = (key) => {
   const d = new Date(`${key}T00:00:00Z`);
@@ -74,6 +85,13 @@ const syncStock = asyncHandler(async (req, res) => {
   const xml = typeof req.body === 'string' ? req.body : req.body?.xml;
   if (!xml || typeof xml !== 'string') {
     throw ApiError.badRequest('No Tally XML provided');
+  }
+
+  const company = parseTallyCompany(xml);
+  if (company && !SYNC_COMPANY.test(company)) {
+    throw ApiError.badRequest(
+      `This export is from "${company}" — the CRM only syncs CENTRE POINT FOODS. Switch to the Mickys company in Tally and sync again.`
+    );
   }
 
   const parsed = parseTallyStockXml(xml);

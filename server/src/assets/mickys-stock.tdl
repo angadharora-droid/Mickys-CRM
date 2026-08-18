@@ -59,13 +59,15 @@
     Title  : "Sync to CRM"
     Action : HTTP Post : @@MickysSyncURL : ASCII : MickysStockReport
 
-;; ---- Hands-free sync: on company open + every hour -------------------
+;; ---- Hands-free sync: on company open + every 10 minutes -------------
 ;; Two triggers fire the same HTTP push automatically:
 ;;   1. Load Company - each time this company is opened in Tally, so the
 ;;      CRM gets fresh stock first thing without anyone pressing anything.
-;;   2. MickysHourlyTimer - repeats the push every hour for as long as
-;;      Tally stays open. This covers hosted sessions that keep the
-;;      company open 24x7 and therefore never re-fire Load Company.
+;;   2. MickysSyncTimer - repeats the push every 10 minutes for as long
+;;      as Tally stays open. This matters twice over on the hosted setup:
+;;      sessions keep the company open 24x7 (Load Company never re-fires),
+;;      and SWITCHING to this company when a different one opened first
+;;      fires no TDL event at all - the next tick is what picks it up.
 ;; Events invoke a function (CALL) rather than running HTTP Post directly
 ;; - the direct form works on buttons but can silently do nothing in an
 ;; event context. The guard matches only the first 12 characters of the
@@ -73,7 +75,9 @@
 ;; PRIVATE LIMITED never break it, while other companies still never push
 ;; their data to the CRM. The same guard also makes a timer tick a no-op
 ;; whenever no company is loaded (##SVCurrentCompany is empty then), so
-;; the timer is safe to leave running.
+;; the timer is safe to leave running. The backend independently refuses
+;; payloads whose <COMPANY> is not CENTRE POINT*, so even a push fired
+;; with the wrong company active can never overwrite Mickys stock.
 [Function: MickysPushToCrm]
     00 : HTTP Post : @@MickysSyncURL : ASCII : MickysStockReport
 
@@ -86,9 +90,9 @@
 ;; "Start Timer : <name> : <seconds>" creates and starts it - done here on
 ;; System Start, so the clock begins the moment Tally launches.
 [System: Events]
-    MickysAutoSync    : Load Company : ($$StringPart:##SVCurrentCompany:0:12 = "CENTRE POINT") OR ($$StringPart:##SVCurrentCompany:1:12 = "CENTRE POINT") : CALL : MickysPushToCrm
-    MickysHourlyTimer : TIMER        : ($$StringPart:##SVCurrentCompany:0:12 = "CENTRE POINT") OR ($$StringPart:##SVCurrentCompany:1:12 = "CENTRE POINT") : CALL : MickysPushToCrm
-    MickysStartTimer  : System Start : TRUE : Start Timer : MickysHourlyTimer : 3600
+    MickysAutoSync   : Load Company : ($$StringPart:##SVCurrentCompany:0:12 = "CENTRE POINT") OR ($$StringPart:##SVCurrentCompany:1:12 = "CENTRE POINT") : CALL : MickysPushToCrm
+    MickysSyncTimer  : TIMER        : ($$StringPart:##SVCurrentCompany:0:12 = "CENTRE POINT") OR ($$StringPart:##SVCurrentCompany:1:12 = "CENTRE POINT") : CALL : MickysPushToCrm
+    MickysStartTimer : System Start : TRUE : Start Timer : MickysSyncTimer : 600
 
 ;; --------------------------- Report shell ----------------------------
 [Report: MickysStockReport]
@@ -96,9 +100,23 @@
     Title : "Mickys Stock Export"
 
 [Form: MickysStockForm]
-    Parts   : MickysStockPart, MickysVendorPart, MickysCustomerPart
+    Parts   : MickysCompanyPart, MickysStockPart, MickysVendorPart, MickysCustomerPart
     Buttons : MickysSyncBtn
     XMLTag  : "MICKYSSTOCK"
+
+;; Which company produced this export - lets the backend refuse a payload
+;; from any company other than CENTRE POINT* (several companies live on
+;; this Tally, and the Ctrl+F10 button carries no company guard).
+[Part: MickysCompanyPart]
+    Lines : MickysCompanyLine
+
+[Line: MickysCompanyLine]
+    Fields : MickysCompanyField
+
+[Field: MickysCompanyField]
+    Type   : String
+    Set as : ##SVCurrentCompany
+    XMLTag : "COMPANY"
 
 [Part: MickysStockPart]
     Lines    : MickysStockLine
