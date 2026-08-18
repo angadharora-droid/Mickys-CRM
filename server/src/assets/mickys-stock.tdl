@@ -64,30 +64,31 @@
 ;;   1. Load Company - each time this company is opened in Tally, so the
 ;;      CRM gets fresh stock first thing without anyone pressing anything.
 ;;   2. MickysHourlyTimer - repeats the push every hour for as long as
-;;      Tally stays open with the company loaded. This covers hosted
-;;      sessions that keep the company open 24x7 and therefore never
-;;      re-fire Load Company.
+;;      Tally stays open. This covers hosted sessions that keep the
+;;      company open 24x7 and therefore never re-fire Load Company.
 ;; Events invoke a function (CALL) rather than running HTTP Post directly
 ;; - the direct form works on buttons but can silently do nothing in an
 ;; event context. The guard matches only the first 12 characters of the
 ;; company name ("CENTRE POINT") so wording differences like PVT LTD vs
 ;; PRIVATE LIMITED never break it, while other companies still never push
-;; their data to the CRM. On the timer event the same guard also makes
-;; the tick a no-op whenever no company is loaded (##SVCurrentCompany is
-;; empty then), so the timer is safe to leave running.
+;; their data to the CRM. The same guard also makes a timer tick a no-op
+;; whenever no company is loaded (##SVCurrentCompany is empty then), so
+;; the timer is safe to leave running.
 [Function: MickysPushToCrm]
     00 : HTTP Post : @@MickysSyncURL : ASCII : MickysStockReport
 
-;; Ticks every hour from Tally startup; the defined timer's name acts as
-;; the event keyword in [System: Events] below.
-[Timer: MickysHourlyTimer]
-    Interval : 3600 Seconds
-
 ;; Both 0- and 1-based positions are checked because $$StringPart's start
 ;; index differs across releases - either match passes the guard.
+;;
+;; TallyPrime has no [Timer: ...] definition type (loading one fails with
+;; T0006 "definition type is misspelt or incorrect"). A timer exists only
+;; through events: the label of a TIMER event names it, and the action
+;; "Start Timer : <name> : <seconds>" creates and starts it - done here on
+;; System Start, so the clock begins the moment Tally launches.
 [System: Events]
-    MickysAutoSync   : Load Company      : ($$StringPart:##SVCurrentCompany:0:12 = "CENTRE POINT") OR ($$StringPart:##SVCurrentCompany:1:12 = "CENTRE POINT") : CALL : MickysPushToCrm
-    MickysHourlySync : MickysHourlyTimer : ($$StringPart:##SVCurrentCompany:0:12 = "CENTRE POINT") OR ($$StringPart:##SVCurrentCompany:1:12 = "CENTRE POINT") : CALL : MickysPushToCrm
+    MickysAutoSync    : Load Company : ($$StringPart:##SVCurrentCompany:0:12 = "CENTRE POINT") OR ($$StringPart:##SVCurrentCompany:1:12 = "CENTRE POINT") : CALL : MickysPushToCrm
+    MickysHourlyTimer : TIMER        : ($$StringPart:##SVCurrentCompany:0:12 = "CENTRE POINT") OR ($$StringPart:##SVCurrentCompany:1:12 = "CENTRE POINT") : CALL : MickysPushToCrm
+    MickysStartTimer  : System Start : TRUE : Start Timer : MickysHourlyTimer : 3600
 
 ;; --------------------------- Report shell ----------------------------
 [Report: MickysStockReport]
