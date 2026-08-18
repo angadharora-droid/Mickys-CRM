@@ -59,22 +59,35 @@
     Title  : "Sync to CRM"
     Action : HTTP Post : @@MickysSyncURL : ASCII : MickysStockReport
 
-;; ---- Hands-free daily sync -------------------------------------------
-;; Fires the same HTTP push automatically every time this company is
-;; opened in Tally, so the CRM gets fresh stock each morning without
-;; anyone pressing anything. Events invoke a function (CALL) rather than
-;; running HTTP Post directly - the direct form works on buttons but can
-;; silently do nothing in an event context. The guard matches only the
-;; first 12 characters of the company name ("CENTRE POINT") so wording
-;; differences like PVT LTD vs PRIVATE LIMITED never break it, while
-;; other companies still never push their data to the CRM.
+;; ---- Hands-free sync: on company open + every hour -------------------
+;; Two triggers fire the same HTTP push automatically:
+;;   1. Load Company - each time this company is opened in Tally, so the
+;;      CRM gets fresh stock first thing without anyone pressing anything.
+;;   2. MickysHourlyTimer - repeats the push every hour for as long as
+;;      Tally stays open with the company loaded. This covers hosted
+;;      sessions that keep the company open 24x7 and therefore never
+;;      re-fire Load Company.
+;; Events invoke a function (CALL) rather than running HTTP Post directly
+;; - the direct form works on buttons but can silently do nothing in an
+;; event context. The guard matches only the first 12 characters of the
+;; company name ("CENTRE POINT") so wording differences like PVT LTD vs
+;; PRIVATE LIMITED never break it, while other companies still never push
+;; their data to the CRM. On the timer event the same guard also makes
+;; the tick a no-op whenever no company is loaded (##SVCurrentCompany is
+;; empty then), so the timer is safe to leave running.
 [Function: MickysPushToCrm]
     00 : HTTP Post : @@MickysSyncURL : ASCII : MickysStockReport
+
+;; Ticks every hour from Tally startup; the defined timer's name acts as
+;; the event keyword in [System: Events] below.
+[Timer: MickysHourlyTimer]
+    Interval : 3600 Seconds
 
 ;; Both 0- and 1-based positions are checked because $$StringPart's start
 ;; index differs across releases - either match passes the guard.
 [System: Events]
-    MickysAutoSync : Load Company : ($$StringPart:##SVCurrentCompany:0:12 = "CENTRE POINT") OR ($$StringPart:##SVCurrentCompany:1:12 = "CENTRE POINT") : CALL : MickysPushToCrm
+    MickysAutoSync   : Load Company      : ($$StringPart:##SVCurrentCompany:0:12 = "CENTRE POINT") OR ($$StringPart:##SVCurrentCompany:1:12 = "CENTRE POINT") : CALL : MickysPushToCrm
+    MickysHourlySync : MickysHourlyTimer : ($$StringPart:##SVCurrentCompany:0:12 = "CENTRE POINT") OR ($$StringPart:##SVCurrentCompany:1:12 = "CENTRE POINT") : CALL : MickysPushToCrm
 
 ;; --------------------------- Report shell ----------------------------
 [Report: MickysStockReport]
