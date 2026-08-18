@@ -171,6 +171,10 @@ export default function LeadDetail() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [emailForm, setEmailForm] = useState({ to: '', cc: '', subject: '', message: '' });
+  // Last auto-generated email draft — lets the prefill refresh when the kit
+  // type changes (e.g. distributor → institutional) without clobbering text
+  // the user actually typed themselves.
+  const autoEmailDraft = useRef({ subject: '', message: '' });
   const [deliverNote, setDeliverNote] = useState('');
   const [deliverOpen, setDeliverOpen] = useState(false);
   const [viewEmail, setViewEmail] = useState(null); // an emailLog entry being previewed
@@ -255,12 +259,20 @@ export default function LeadDetail() {
       : `Dear ${lead.contactPerson || lead.businessName},\n\n` +
         `Please find attached your Micky's ${kitLabel} sales kit. It includes our rate card, ` +
         `${docNoun} and supporting documents. We look forward to partnering with you.`;
-    setEmailForm((f) => ({
-      ...f,
-      to: f.to || lead.email || '',
-      subject: f.subject || defaultSubject,
-      message: f.message || defaultMessage,
-    }));
+    setEmailForm((f) => {
+      // Replace the draft only when it's blank or still the previous auto text —
+      // a kit switch/regeneration refreshes it, a hand-edited draft is kept.
+      const next = {
+        ...f,
+        to: f.to || lead.email || '',
+        subject:
+          !f.subject || f.subject === autoEmailDraft.current.subject ? defaultSubject : f.subject,
+        message:
+          !f.message || f.message === autoEmailDraft.current.message ? defaultMessage : f.message,
+      };
+      autoEmailDraft.current = { subject: defaultSubject, message: defaultMessage };
+      return next;
+    });
     setActionPoint(lead.actionPoint || '');
     setFollowUpForm({
       note: lead.followUp?.note || '',
