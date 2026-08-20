@@ -1,6 +1,7 @@
 const app = require('./app');
 const env = require('./config/env');
 const connectDB = require('./config/db');
+const Lead = require('./models/Lead');
 const { startMetaSync } = require('./services/metaSync.service');
 const { startFxSync } = require('./services/fx.service');
 const { startDailyReport } = require('./services/dailyReport.service');
@@ -16,6 +17,15 @@ async function main() {
     app.listen(env.port, () => {
       console.log(`[server] Mickys PO API running on http://localhost:${env.port} (${env.nodeEnv})`);
     });
+    // Mongoose builds missing schema indexes on connect but only logs failures
+    // to an 'index' event nobody was listening for — so a unique index that
+    // can't build (e.g. duplicate data already violates it) fails silently and
+    // stops protecting anything. Surface that loudly instead: this is exactly
+    // how 154 duplicate Meta Ads leads went unnoticed on 2026-08-20 (see
+    // scripts/dedupe-meta-leads.js to find/fix duplicates first, then restart).
+    Lead.syncIndexes()
+      .then(() => console.log('[db] Lead indexes ok (metaLeadId uniqueness enforced)'))
+      .catch((err) => console.error(`[db] Lead.syncIndexes failed — metaLeadId is NOT protected against duplicates: ${err.message}`));
     // Carry the sync's original single sheet (plus the newly added one) into
     // Setting.metaSheets before the poller's first pass, so it starts reading
     // the configured list rather than the env/default fallback. No-op once

@@ -343,6 +343,14 @@ async function getMetaUser({ create = true } = {}) {
 
 // --------------------------------------------------------------- sync ----
 
+// Every caller — the boot-time pass, the 15-minute scheduler tick, and an
+// admin's "Sync now" click — goes through this one lock. Without it, two
+// overlapping runs each snapshot `existingIds` before the other has written
+// anything, so both import the same rows as "new": exactly what happened the
+// day this sheet-management feature shipped, producing 154 duplicate leads
+// from one race between the boot sync and a manual sync-now.
+let inFlight = null;
+
 /**
  * Import every sheet row not already in the CRM, across every configured
  * Meta Ads sheet.
@@ -357,7 +365,15 @@ async function getMetaUser({ create = true } = {}) {
  * @param {function} opts.log                   per-lead / per-sheet reporter
  * @returns {Promise<object>} counts of what happened, plus a `bySource` breakdown
  */
-async function syncMetaLeads(opts = {}) {
+function syncMetaLeads(opts = {}) {
+  // A run already in progress covers this call too — join it rather than
+  // starting a second pass with a stale view of what's already imported.
+  if (inFlight) return inFlight;
+  inFlight = runSync(opts).finally(() => { inFlight = null; });
+  return inFlight;
+}
+
+async function runSync(opts = {}) {
   const { apply = false, allowDuplicatePhone = false, log = () => {} } = opts;
 
   // Explicit overrides (CLI flags, or "test this link before saving it") point
@@ -490,17 +506,13 @@ async function recordSheetSyncResult(source, s, apply) {
 
 // ---------------------------------------------------------- scheduler ----
 
-let running = false; // guards against a slow run overlapping the next tick
 let timer = null;
 
 /** One scheduled pass. Never throws — a bad sheet must not disturb the API. */
 async function runScheduledSync() {
-  if (running) {
-    console.log('[meta-sync] previous run still in progress, skipping this tick');
-    return;
-  }
-  running = true;
   try {
+    // Joins whatever's already in flight (e.g. an admin's "Sync now") rather
+    // than racing it — see the `inFlight` lock on syncMetaLeads above.
     const stats = await syncMetaLeads({ apply: true });
     // Only worth a line when something actually changed; otherwise this would
     // print every few minutes forever.
@@ -515,8 +527,6 @@ async function runScheduledSync() {
     }
   } catch (err) {
     console.error(`[meta-sync] sync failed: ${err.message}`);
-  } finally {
-    running = false;
   }
 }
 
