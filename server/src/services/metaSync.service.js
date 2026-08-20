@@ -25,6 +25,13 @@
  * The sheet is read through Google's CSV export endpoint and so must be readable
  * without a login (Share -> "Anyone with the link"). No API key or service
  * account is involved.
+ *
+ * More than one ad form can be running at once, each landing leads in its own
+ * sheet. Which sheets to watch is normally configured by an admin in Settings
+ * -> Meta Ads (Setting.metaSheets, see models/Setting.js) rather than in
+ * environment variables, so a new form can be added without a redeploy. The
+ * env vars (META_SHEET_ID / META_SHEET_GID / META_SHEET_CSV_URL) still work as
+ * a fallback for a deploy that hasn't configured any sheet in the DB yet.
  */
 const fs = require('fs');
 const crypto = require('crypto');
@@ -32,11 +39,13 @@ const env = require('../config/env');
 const Lead = require('../models/Lead');
 const User = require('../models/User');
 const Counter = require('../models/Counter');
+const Setting = require('../models/Setting');
 const { logActivity } = require('./activity.service');
 const { canonicalCity, stateForCity } = require('../config/indianCities');
 
-// The Meta Ads lead-form sheet this sync was built against. Override with
-// META_SHEET_ID / META_SHEET_GID, or point elsewhere with META_SHEET_CSV_URL.
+// The Meta Ads lead-form sheet this sync was originally built against. Used
+// only when no sheet has been configured yet (fresh deploy, no DB config) and
+// no env override is set either.
 const DEFAULT_SHEET_ID = '1-StC2nI4qDDPc1OP9czHkPC5vYTjD1dULE9mWmn79Jg';
 
 // The pseudo-account every imported lead is created by and assigned to. It is
@@ -277,6 +286,49 @@ async function fetchCsv(opts = {}) {
   return body;
 }
 
+/**
+ * Pulls the spreadsheet id (and tab gid, if the link points at a specific tab)
+ * out of whatever a person pastes: the browser's edit URL, a share link, the
+ * CSV export URL, or the bare id. Returns null if nothing id-shaped is found.
+ */
+function parseSheetUrl(input) {
+  const s = String(input || '').trim();
+  if (!s) return null;
+  const pathMatch = s.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  const sheetId = pathMatch ? pathMatch[1] : (/^[a-zA-Z0-9-_]{20,60}$/.test(s) ? s : null);
+  if (!sheetId) return null;
+  const gidMatch = s.match(/[#&?]gid=(\d+)/);
+  return { sheetId, gid: gidMatch ? gidMatch[1] : '0' };
+}
+
+/**
+ * The sheets to poll on this pass: every enabled row an admin has configured
+ * in Settings -> Meta Ads (Setting.metaSheets). Falls back to the single
+ * env-configured / default sheet only when none has been configured yet, so
+ * an existing deploy doesn't go quiet the moment this feature ships.
+ */
+async function listSheetSources() {
+  const settings = await Setting.getGlobal();
+  const configured = (settings.metaSheets || []).filter((s) => s.enabled !== false && s.sheetId);
+  if (configured.length) {
+    return configured.map((s) => ({
+      id: String(s._id),
+      label: s.label || s.url || s.sheetId,
+      sheetId: s.sheetId,
+      gid: s.gid || '0',
+    }));
+  }
+  return [
+    {
+      id: null,
+      label: 'Default',
+      sheetId: env.metaSync.sheetId || DEFAULT_SHEET_ID,
+      gid: env.metaSync.gid || '0',
+      csvUrl: env.metaSync.csvUrl || undefined,
+    },
+  ];
+}
+
 /** Find (or create, once) the "Meta Ads" account leads are attributed to. */
 async function getMetaUser({ create = true } = {}) {
   const existing = await User.findOne({ email: META_USER.email });
@@ -292,28 +344,34 @@ async function getMetaUser({ create = true } = {}) {
 // --------------------------------------------------------------- sync ----
 
 /**
- * Import every sheet row not already in the CRM.
+ * Import every sheet row not already in the CRM, across every configured
+ * Meta Ads sheet.
  *
  * @param {object}   opts
  * @param {boolean}  opts.apply                 persist (false = report only)
  * @param {boolean}  opts.allowDuplicatePhone   import even if the number is on another lead
- * @param {string}   opts.file                  read a local CSV instead of fetching
- * @param {string}   opts.csvUrl                explicit CSV url
- * @param {function} opts.log                   per-lead reporter
- * @returns {Promise<object>} counts of what happened
+ * @param {string}   opts.file                  read a local CSV instead of fetching (single-source override)
+ * @param {string}   opts.csvUrl                explicit CSV url (single-source override)
+ * @param {string}   opts.sheetId               explicit sheet id (single-source override)
+ * @param {string}   opts.gid                   explicit tab gid (single-source override)
+ * @param {function} opts.log                   per-lead / per-sheet reporter
+ * @returns {Promise<object>} counts of what happened, plus a `bySource` breakdown
  */
 async function syncMetaLeads(opts = {}) {
   const { apply = false, allowDuplicatePhone = false, log = () => {} } = opts;
 
-  const csv = await fetchCsv(opts);
-  const { records } = toRecords(parseCsv(csv));
-  const stats = { rows: records.length, imported: 0, existing: 0, skipped: 0, dupPhone: 0 };
-  if (!records.length) return stats;
+  // Explicit overrides (CLI flags, or "test this link before saving it") point
+  // at exactly one sheet and skip the configured list entirely.
+  const explicit = opts.file || opts.csvUrl || opts.sheetId;
+  const sources = explicit
+    ? [{ id: null, label: opts.label || 'Explicit source', file: opts.file, csvUrl: opts.csvUrl, sheetId: opts.sheetId, gid: opts.gid }]
+    : await listSheetSources();
 
   const metaUser = apply ? await getMetaUser() : await getMetaUser({ create: false });
 
-  // Phrased to match the partial index on metaLeadId exactly, so it's a covered
-  // index scan rather than a full collection walk on every poll.
+  // Loaded once and shared across every sheet so a lead already imported from
+  // (or a phone number already on) one sheet is correctly recognised while
+  // reading the next — otherwise two forms sharing a contact would double-book it.
   const existingIds = new Set(
     (await Lead.find({ metaLeadId: { $type: 'string', $gt: '' } }).select('metaLeadId').lean())
       .map((l) => l.metaLeadId)
@@ -322,65 +380,112 @@ async function syncMetaLeads(opts = {}) {
     (await Lead.find().select('mobileNumber refNumber').lean())
       .map((l) => [phoneKey(l.mobileNumber), l.refNumber])
   );
-
   const seen = new Set();
 
-  for (const rec of records) {
-    const mapped = toLead(rec);
-    if (!mapped) { stats.skipped += 1; continue; }
-    if (existingIds.has(mapped.metaLeadId) || seen.has(mapped.metaLeadId)) {
-      stats.existing += 1;
-      continue;
-    }
+  const stats = { rows: 0, imported: 0, existing: 0, skipped: 0, dupPhone: 0, bySource: [] };
+  const tagSource = sources.length > 1;
 
-    const key = phoneKey(mapped.mobileNumber);
-    if (key && phoneIndex.has(key) && !allowDuplicatePhone) {
-      stats.dupPhone += 1;
-      log(`~ ${mapped.businessName} (${mapped.mobileNumber}) — already on ${phoneIndex.get(key)}, skipped`);
-      continue;
-    }
+  for (const source of sources) {
+    const s = { id: source.id, label: source.label, rows: 0, imported: 0, existing: 0, skipped: 0, dupPhone: 0, error: null };
 
-    seen.add(mapped.metaLeadId);
-
-    if (!apply) {
-      stats.imported += 1;
-      log(`+ ${mapped.businessName} · ${mapped.contactPerson} · ${mapped.city} · ${mapped.businessType}`);
-      continue;
-    }
-
-    let lead;
+    let records;
     try {
-      lead = await Lead.create({
-        ...mapped,
-        refNumber: await nextRefNumber(mapped.city, mapped.leadDate),
-        assignedExecId: metaUser._id,
-        status: 'new',
-        statusHistory: [{ from: null, to: 'new', changedBy: metaUser._id, note: 'Imported from Meta Ads' }],
-        createdBy: metaUser._id,
-        modifiedBy: metaUser._id,
-      });
+      const csv = await fetchCsv(source);
+      records = toRecords(parseCsv(csv)).records;
     } catch (err) {
-      // The unique index on metaLeadId is the backstop when two runs overlap:
-      // whoever loses the race simply counts the row as already imported.
-      if (err.code === 11000) { stats.existing += 1; continue; }
-      throw err;
+      s.error = err.message;
+      log(`✗ ${source.label}: ${err.message}`);
+      await recordSheetSyncResult(source, s, apply);
+      stats.bySource.push(s);
+      continue; // one unreadable sheet must not stop the others
+    }
+    s.rows = records.length;
+
+    for (const rec of records) {
+      const mapped = toLead(rec);
+      if (!mapped) { s.skipped += 1; continue; }
+      if (existingIds.has(mapped.metaLeadId) || seen.has(mapped.metaLeadId)) {
+        s.existing += 1;
+        continue;
+      }
+
+      const key = phoneKey(mapped.mobileNumber);
+      if (key && phoneIndex.has(key) && !allowDuplicatePhone) {
+        s.dupPhone += 1;
+        log(`~ ${mapped.businessName} (${mapped.mobileNumber}) — already on ${phoneIndex.get(key)}, skipped`);
+        continue;
+      }
+
+      seen.add(mapped.metaLeadId);
+
+      if (!apply) {
+        s.imported += 1;
+        log(`+ [${source.label}] ${mapped.businessName} · ${mapped.contactPerson} · ${mapped.city} · ${mapped.businessType}`);
+        continue;
+      }
+
+      let lead;
+      try {
+        lead = await Lead.create({
+          ...mapped,
+          internalNotes: tagSource ? `${mapped.internalNotes}\nSheet: ${source.label}` : mapped.internalNotes,
+          refNumber: await nextRefNumber(mapped.city, mapped.leadDate),
+          assignedExecId: metaUser._id,
+          status: 'new',
+          statusHistory: [{ from: null, to: 'new', changedBy: metaUser._id, note: 'Imported from Meta Ads' }],
+          createdBy: metaUser._id,
+          modifiedBy: metaUser._id,
+        });
+      } catch (err) {
+        // The unique index on metaLeadId is the backstop when two runs overlap:
+        // whoever loses the race simply counts the row as already imported.
+        if (err.code === 11000) { s.existing += 1; continue; }
+        throw err;
+      }
+
+      s.imported += 1;
+      if (key) phoneIndex.set(key, lead.refNumber);
+
+      await logActivity({
+        userId: metaUser._id,
+        action: 'LEAD_CREATED',
+        entity: 'Lead',
+        entityId: lead._id,
+        details: `Imported lead ${lead.refNumber} for "${lead.businessName}" (${lead.city}) from Meta Ads`,
+        meta: { source: 'meta-sheet-sync', metaLeadId: lead.metaLeadId, sheetLabel: source.label },
+      });
+      log(`+ [${source.label}] ${lead.refNumber} · ${lead.businessName} · ${lead.city} · ${lead.businessType}`);
     }
 
-    stats.imported += 1;
-    if (key) phoneIndex.set(key, lead.refNumber);
+    await recordSheetSyncResult(source, s, apply);
 
-    await logActivity({
-      userId: metaUser._id,
-      action: 'LEAD_CREATED',
-      entity: 'Lead',
-      entityId: lead._id,
-      details: `Imported lead ${lead.refNumber} for "${lead.businessName}" (${lead.city}) from Meta Ads`,
-      meta: { source: 'meta-sheet-sync', metaLeadId: lead.metaLeadId },
-    });
-    log(`+ ${lead.refNumber} · ${lead.businessName} · ${lead.city} · ${lead.businessType}`);
+    stats.rows += s.rows;
+    stats.imported += s.imported;
+    stats.existing += s.existing;
+    stats.skipped += s.skipped;
+    stats.dupPhone += s.dupPhone;
+    stats.bySource.push(s);
   }
 
   return stats;
+}
+
+/**
+ * Stamps a configured sheet with the outcome of the sync attempt just made
+ * against it, so the Settings UI can show "last synced …" / the last error
+ * without the admin having to run it and watch. No-op for sheets that aren't
+ * DB-configured (the env/default fallback, or an explicit CLI override) and
+ * for dry runs, which write nothing anywhere.
+ */
+async function recordSheetSyncResult(source, s, apply) {
+  if (!apply || !source.id) return;
+  const update = s.error
+    ? { 'metaSheets.$.lastError': s.error }
+    : {
+        'metaSheets.$.lastResult': `${s.imported} imported · ${s.rows} row(s) read`,
+        'metaSheets.$.lastError': '',
+      };
+  await Setting.updateOne({ key: 'global', 'metaSheets._id': source.id }, { $set: { ...update, 'metaSheets.$.lastSyncAt': new Date() } });
 }
 
 // ---------------------------------------------------------- scheduler ----
@@ -404,6 +509,9 @@ async function runScheduledSync() {
         `[meta-sync] ${stats.imported} new lead(s) imported, ${stats.existing} already present` +
           (stats.dupPhone ? `, ${stats.dupPhone} skipped as duplicate phone` : '')
       );
+    }
+    for (const s of stats.bySource) {
+      if (s.error) console.error(`[meta-sync] ${s.label}: ${s.error}`);
     }
   } catch (err) {
     console.error(`[meta-sync] sync failed: ${err.message}`);
@@ -446,6 +554,8 @@ module.exports = {
   startMetaSync,
   stopMetaSync,
   sheetCsvUrl,
+  parseSheetUrl,
+  listSheetSources,
   getMetaUser,
   // exported for tests / the CLI
   parseCsv,

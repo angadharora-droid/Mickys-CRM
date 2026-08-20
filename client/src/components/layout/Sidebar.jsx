@@ -13,6 +13,7 @@ import {
   CalendarClock,
   FileSpreadsheet,
   ReceiptText,
+  Settings as SettingsIcon,
   X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -49,6 +50,7 @@ const NAV_SECTIONS = [
       { to: '/lead-tracker', label: 'Lead Tracker', icon: ClipboardList, roles: [ROLES.ADMIN] },
       { to: '/users', label: 'Users', icon: Users, roles: [ROLES.ADMIN] },
       { to: '/activity-logs', label: 'Activity Logs', icon: ScrollText, roles: [ROLES.ADMIN] },
+      { to: '/settings', label: 'Settings', icon: SettingsIcon, roles: [ROLES.ADMIN] },
     ],
   },
 ];

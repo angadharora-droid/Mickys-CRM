@@ -20,6 +20,7 @@ import UsersPage from '@/pages/users/Users';
 import ActivityLogs from '@/pages/ActivityLogs';
 import ChangePassword from '@/pages/ChangePassword';
 import EmailSettings from '@/pages/EmailSettings';
+import Settings from '@/pages/Settings';
 import SalesOverview from '@/pages/sales/SalesOverview';
 import StockList from '@/pages/sales/StockList';
 import SalesOrders from '@/pages/sales/SalesOrders';
@@ -113,6 +114,14 @@ export default function App() {
         />
         <Route path="/change-password" element={<ChangePassword />} />
         <Route path="/email-settings" element={<EmailSettings />} />
+        <Route
+          path="/settings"
+          element={
+            <ProtectedRoute roles={[ROLES.ADMIN]}>
+              <Settings />
+            </ProtectedRoute>
+          }
+        />
       </Route>
 
       {/* Sales Order module — its own shell with a separate sidebar/nav.

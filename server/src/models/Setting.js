@@ -110,6 +110,28 @@ const settingSchema = new mongoose.Schema(
     dailyReport: {
       lastSentDay: { type: String, default: '' },
     },
+    // Meta (Facebook/Instagram) lead-form sheets the sync job pulls from (see
+    // services/metaSync.service.js). Ad accounts land leads in whichever sheet
+    // that form's Meta connector is wired to, so more than one may need
+    // watching at once — an admin adds/edits/removes them here instead of
+    // editing environment variables and redeploying.
+    metaSheets: {
+      type: [
+        {
+          label: { type: String, default: '', trim: true },
+          // The URL as pasted, kept verbatim so the admin can recognise it later.
+          url: { type: String, default: '', trim: true },
+          sheetId: { type: String, required: true },
+          gid: { type: String, default: '0' },
+          enabled: { type: Boolean, default: true },
+          // Bookkeeping from the most recent sync attempt, shown in the UI.
+          lastSyncAt: { type: Date, default: null },
+          lastResult: { type: String, default: '' },
+          lastError: { type: String, default: '' },
+        },
+      ],
+      default: [],
+    },
     // Defaults merged into every generated kit's term sheet / quotation.
     kit: {
       defaultPaymentTerms: { type: String, default: '100% advance against proforma invoice.' },
