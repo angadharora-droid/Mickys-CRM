@@ -91,7 +91,10 @@ const env = {
   },
   // Meta Ads lead-form sheet poller. On by default so a fresh deploy keeps
   // pulling leads without any external scheduler; set META_SYNC_ENABLED=false
-  // to turn it off, or run it by hand with `npm run sync:meta`.
+  // to turn it off, or run it by hand with `npm run sync:meta`. Which sheets
+  // it reads is normally managed from Settings -> Meta Ads in the app
+  // (Setting.metaSheets); these vars are only the fallback used before any
+  // sheet has been configured there.
   metaSync: {
     enabled: process.env.META_SYNC_ENABLED !== 'false',
     intervalMin: parseInt(process.env.META_SYNC_INTERVAL_MIN || '15', 10),

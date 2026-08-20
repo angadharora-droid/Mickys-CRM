@@ -6,6 +6,7 @@ const { startFxSync } = require('./services/fx.service');
 const { startDailyReport } = require('./services/dailyReport.service');
 const { backfillLeadStates } = require('./scripts/backfill-states');
 const { backfillMetaUsage } = require('./scripts/backfill-meta-usage');
+const { ensureMetaSheets } = require('./scripts/ensure-meta-sheets');
 const { ensureFobCatalogue } = require('./scripts/ensure-fob-catalogue');
 const { updateRateCardTerms } = require('./scripts/update-rate-card-terms');
 
@@ -15,7 +16,14 @@ async function main() {
     app.listen(env.port, () => {
       console.log(`[server] Mickys PO API running on http://localhost:${env.port} (${env.nodeEnv})`);
     });
-    // Poll the Meta Ads lead sheet in-process, so new leads arrive on their own.
+    // Carry the sync's original single sheet (plus the newly added one) into
+    // Setting.metaSheets before the poller's first pass, so it starts reading
+    // the configured list rather than the env/default fallback. No-op once
+    // metaSheets already has anything in it.
+    const seededSheets = await ensureMetaSheets();
+    if (seededSheets) console.log(`[meta-sheets] seeded ${seededSheets} sheet(s) into Settings -> Meta Ads`);
+    // Poll every configured Meta Ads lead sheet in-process, so new leads arrive
+    // on their own.
     startMetaSync();
     // Refresh the export-kit exchange rates daily, so cards never use stale FX.
     startFxSync();

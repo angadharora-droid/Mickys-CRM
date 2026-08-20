@@ -404,6 +404,16 @@ const settingsSchema = z.object({
     .optional(),
 });
 
+// ---------- Meta Ads lead sheets ----------
+// The pasted Google Sheet link is parsed server-side (metaSync.service's
+// parseSheetUrl) to pull out the sheet id / tab gid, so this only checks it
+// looks like something worth trying.
+const metaSheetSchema = z.object({
+  label: z.string().trim().max(120).optional().or(z.literal('')),
+  url: z.string().trim().min(10, 'Paste the Google Sheet link').max(2000),
+  enabled: z.boolean().optional(),
+});
+
 // ---------- Daily report ----------
 // Manual "send now" trigger: an optional IST day (defaults to yesterday) and
 // an optional recipient override for test sends.
@@ -551,6 +561,7 @@ module.exports = {
   emailKitSchema,
   emailSettingsSchema,
   settingsSchema,
+  metaSheetSchema,
   dailyReportEmailSchema,
   exportCountrySchema,
   exchangeRatesSchema,

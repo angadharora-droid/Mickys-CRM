@@ -205,5 +205,12 @@ router.delete('/email-settings', authenticate, emailSettings.deleteEmailSettings
 router.get('/settings', authenticate, authorize(ADMIN), settings.getSettings);
 router.put('/settings', authenticate, authorize(ADMIN), validate(v.settingsSchema), settings.updateSettings);
 router.post('/settings/test-email', authenticate, authorize(ADMIN), emailLimiter, settings.testEmail);
+// Meta Ads lead-form sheets (services/metaSync.service.js polls whichever are
+// enabled here). Sync-now lets an admin confirm a newly-added sheet immediately.
+router.get('/settings/meta-sheets', authenticate, authorize(ADMIN), settings.listMetaSheets);
+router.post('/settings/meta-sheets', authenticate, authorize(ADMIN), validate(v.metaSheetSchema), settings.createMetaSheet);
+router.put('/settings/meta-sheets/:id', authenticate, authorize(ADMIN), validate(v.metaSheetSchema.partial()), settings.updateMetaSheet);
+router.delete('/settings/meta-sheets/:id', authenticate, authorize(ADMIN), settings.deleteMetaSheet);
+router.post('/settings/meta-sheets/sync-now', authenticate, authorize(ADMIN), settings.syncMetaSheetsNow);
 
 module.exports = router;
