@@ -1,12 +1,13 @@
 const mongoose = require('mongoose');
 
-const KIT_TYPES = ['distributor', 'institutional'];
+const KIT_TYPES = ['distributor', 'institutional', 'b2c'];
 
 /**
- * A single SKU in a rate master. The two masters (Distributor & Institutional)
- * are the same collection distinguished by `kitType`. MRP caps the editable net
- * rate when a kit is built; suggestiveMargin only applies to the distributor
- * master.
+ * A single SKU in a rate master. The masters (Distributor, Institutional &
+ * B2C) are the same collection distinguished by `kitType`. MRP caps the
+ * editable net rate when a kit is built; suggestiveMargin only applies to the
+ * distributor master. On the B2C master the MRP itself is the price (inclusive
+ * of all taxes), so its netRate mirrors the MRP and gst is 0.
  */
 const rateItemSchema = new mongoose.Schema(
   {

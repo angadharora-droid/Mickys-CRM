@@ -19,6 +19,7 @@ const ACTION_POINTS = [
   'Send distributor kit',
   'Send institutional kit',
   'Send export kit',
+  'Send B2C kit',
 ];
 
 // ---------- Auth ----------
@@ -85,7 +86,7 @@ const rateItemSchema = z.object({
   productName: z.string().min(2),
   packSize: z.string().optional().or(z.literal('')),
   category: z.string().optional().or(z.literal('')),
-  kitType: z.enum(['distributor', 'institutional']),
+  kitType: z.enum(['distributor', 'institutional', 'b2c']),
   mrp: z.coerce.number().min(0),
   netRate: z.coerce.number().min(0),
   suggestiveMargin: z.coerce.number().min(0).max(100).optional(),
@@ -128,7 +129,7 @@ const bulkReassignSchema = z.object({
 });
 
 const kitTypeSchema = z.object({
-  kitType: z.enum(['distributor', 'stockist', 'institutional', 'export']),
+  kitType: z.enum(['distributor', 'stockist', 'institutional', 'export', 'b2c']),
 });
 
 const rateLineInputSchema = z.object({

@@ -63,18 +63,24 @@ async function nextRefNumber(city) {
  * × 0.95; the DLP itself is fixed and re-derived from `basic` wherever it's
  * displayed. Institutional card: `netRate` is the editable net rate as before.
  * All rate-card prices are stated exclusive of GST — no GST is added anywhere.
+ * B2C card: the price IS the printed MRP (inclusive of all taxes), so the
+ * line's netRate mirrors the MRP and nothing is added on top.
  */
 function snapshotLine(item, kitType, dspBySku) {
   const isStockist = kitType === 'stockist';
   const isDistLike = kitType === 'distributor' || isStockist;
+  const isB2c = kitType === 'b2c';
   const basic = item.netRate;
   const dsp = isDistLike ? (dspBySku?.get(item.sku) || 0) : 0;
-  // Distributor: DLP · Stockist: Stockist Price · Institutional: net rate.
+  // Distributor: DLP · Stockist: Stockist Price · Institutional: net rate ·
+  // B2C: the MRP itself.
   const netRate = isStockist
     ? stockistPrice(dlp(basic))
     : isDistLike
       ? dlp(basic)
-      : basic;
+      : isB2c
+        ? item.mrp
+        : basic;
   return {
     rateItemId: item._id,
     sku: item.sku,
@@ -91,8 +97,9 @@ function snapshotLine(item, kitType, dspBySku) {
     gst: item.gst,
     // Rate-card prices are exclusive of GST, so the dist-like cards carry the
     // editable price as-is (the field name is legacy); the institutional
-    // quotation still derives its Net+GST display value.
-    netInclGst: isDistLike ? netRate : round2(netRate * (1 + item.gst / 100)),
+    // quotation still derives its Net+GST display value. B2C MRPs are already
+    // tax-inclusive, so nothing is ever added on top of them.
+    netInclGst: isDistLike || isB2c ? netRate : round2(netRate * (1 + item.gst / 100)),
     deviationPct: 0,
   };
 }
@@ -641,13 +648,14 @@ const confirmRates = asyncHandler(async (req, res) => {
         : 0;
     // For the distributor card the edited value is the DLP and for the stockist
     // card it's the Stockist Price — both stated exclusive of GST, like the
-    // institutional net rates.
-    const isDist = lead.kitType === 'distributor' || lead.kitType === 'stockist';
+    // institutional net rates. B2C prices are tax-inclusive MRPs, so they too
+    // pass through unchanged.
+    const isFlat = lead.kitType === 'distributor' || lead.kitType === 'stockist' || lead.kitType === 'b2c';
     return {
       ...line.toObject(),
       included,
       netRate: newRate,
-      netInclGst: isDist ? newRate : round2(newRate * (1 + line.gst / 100)),
+      netInclGst: isFlat ? newRate : round2(newRate * (1 + line.gst / 100)),
       deviationPct,
     };
   });

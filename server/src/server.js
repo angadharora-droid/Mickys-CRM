@@ -9,6 +9,7 @@ const { backfillLeadStates } = require('./scripts/backfill-states');
 const { backfillMetaUsage } = require('./scripts/backfill-meta-usage');
 const { ensureMetaSheets } = require('./scripts/ensure-meta-sheets');
 const { ensureFobCatalogue } = require('./scripts/ensure-fob-catalogue');
+const { ensureB2cCatalogue } = require('./scripts/ensure-b2c-catalogue');
 const { updateRateCardTerms } = require('./scripts/update-rate-card-terms');
 
 async function main() {
@@ -54,6 +55,11 @@ async function main() {
     ensureFobCatalogue()
       .then((n) => n && console.log(`[fob] seeded ${n} FOB cost item(s)`))
       .catch((err) => console.error('[fob] catalogue seed failed:', err.message));
+    // Same for the B2C (retail MRP) rate master — the Phase 1 Nagpur Pilot
+    // SKUs from the MRP decision sheet, loaded once and admin-editable after.
+    ensureB2cCatalogue()
+      .then((n) => n && console.log(`[b2c] seeded ${n} B2C MRP item(s)`))
+      .catch((err) => console.error('[b2c] catalogue seed failed:', err.message));
     // Rate-card terms changed (no exchange-rate clause, 48-hour validity):
     // rewrite the old default clauses still stored in settings / lead terms.
     updateRateCardTerms()

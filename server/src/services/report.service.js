@@ -25,6 +25,7 @@ const KIT_TYPE_LABELS = {
   stockist: 'Stockist Kit',
   institutional: 'Institutional Kit',
   export: 'Export Kit',
+  b2c: 'B2C Kit',
 };
 
 /** Calendar day (YYYY-MM-DD) a timestamp falls on in IST. */

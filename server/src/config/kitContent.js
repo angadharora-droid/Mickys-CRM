@@ -95,6 +95,16 @@ const PRICE_CARD_TERMS = [
   'All disputes will be subjected to Nagpur jurisdiction.',
 ];
 
+// B2C MRP price-card terms & conditions. Unlike the trade cards, every price
+// on the B2C card is a printed Maximum Retail Price, inclusive of all taxes.
+const B2C_PRICE_CARD_TERMS = [
+  'All prices are Maximum Retail Prices (MRP) in Rs., inclusive of all taxes.',
+  'Prices can be changed without any prior notice.',
+  'Orders will be billed at prevailing prices at the time of dispatch.',
+  'Returns are not accepted unless there are verified quality issues.',
+  'All disputes will be subjected to Nagpur jurisdiction.',
+];
+
 // Monthly incentive scheme slabs — [Slab, Incentive %].
 const INCENTIVE_SLABS = [
   ['500 – 999 Kg', '3%'],
@@ -139,6 +149,7 @@ module.exports = {
   DISTRIBUTOR_AGREEMENT_TERMS,
   ONBOARDING_CHECKLIST,
   PRICE_CARD_TERMS,
+  B2C_PRICE_CARD_TERMS,
   INCENTIVE_SLABS,
   INCENTIVE_VALIDITY,
   QUOTATION_TERMS,

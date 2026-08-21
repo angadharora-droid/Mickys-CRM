@@ -77,6 +77,7 @@ export const ACTION_POINTS = [
   'Send distributor kit',
   'Send institutional kit',
   'Send export kit',
+  'Send B2C kit',
 ];
 
 /** Optional lead fields worth completing. Keys match both the create form and
@@ -99,6 +100,7 @@ export const KIT_TYPES = [
   { value: 'stockist', label: 'Stockist Kit' },
   { value: 'institutional', label: 'Institutional Kit' },
   { value: 'export', label: 'Export Kit' },
+  { value: 'b2c', label: 'B2C Kit' },
 ];
 
 export const KIT_TYPE_LABELS = {
@@ -106,6 +108,7 @@ export const KIT_TYPE_LABELS = {
   stockist: 'Stockist Kit',
   institutional: 'Institutional Kit',
   export: 'Export Kit',
+  b2c: 'B2C Kit',
 };
 
 /** Document set per kit type (matches the developer brief). */
@@ -132,6 +135,10 @@ export const KIT_DOCS = {
   ],
   export: [
     'Standard FOB Price List',
+    "Micky's Brochure",
+  ],
+  b2c: [
+    'B2C MRP Price Card',
     "Micky's Brochure",
   ],
 };
@@ -185,6 +192,14 @@ export const DEFAULT_KIT_TERMS = {
   ],
   // Export kits are FOB-only: the standard FOB quotation conditions.
   export: DEFAULT_FOB_TERMS,
+  // B2C prices are printed MRPs — inclusive of all taxes, nothing added on top.
+  b2c: [
+    'All prices are Maximum Retail Prices (MRP) in Rs., inclusive of all taxes.',
+    'Prices can be changed without any prior notice.',
+    'Orders will be billed at prevailing prices at the time of dispatch.',
+    'Returns are not accepted unless there are verified quality issues.',
+    'All disputes will be subjected to Nagpur jurisdiction.',
+  ],
 };
 
 export const DEFAULT_DISTRIBUTOR_AGREEMENT_TERMS = [
