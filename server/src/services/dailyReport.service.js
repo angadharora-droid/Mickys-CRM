@@ -31,6 +31,7 @@ const KIT_TYPE_LABELS = {
   stockist: 'Stockist Kit',
   institutional: 'Institutional Kit',
   export: 'Export Kit',
+  b2c: 'B2C Kit',
 };
 
 // ------------------------------------------------------------- date utils ----

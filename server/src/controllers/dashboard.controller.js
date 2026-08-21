@@ -80,7 +80,7 @@ const adminAnalytics = asyncHandler(async (_req, res) => {
     byField('city'),
     byField('businessType'),
     Lead.aggregate([
-      { $match: { kitType: { $in: ['distributor', 'stockist', 'institutional'] } } },
+      { $match: { kitType: { $in: ['distributor', 'stockist', 'institutional', 'b2c'] } } },
       { $group: { _id: '$kitType', count: { $sum: 1 } } },
       { $project: { _id: 0, name: '$_id', count: 1 } },
     ]),

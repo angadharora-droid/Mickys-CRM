@@ -522,6 +522,92 @@ function drawStockistPriceCard(doc, ctx) {
   incentiveBlock(doc, y + 4, footerLabel);
 }
 
+// ---------------- B2C MRP Price Card ----------------
+// The consumer-facing price list for the Phase 1 B2C range: Sr / Product /
+// Pack / MRP. Every price is the printed Maximum Retail Price, inclusive of
+// all taxes — there are no trade rates, margins or GST break-outs on this card.
+function b2cPriceTable(doc, y, ctx) {
+  const W = contentWidth(doc);
+  const right = M + W;
+  const footerLabel = 'B2C MRP Price Card';
+
+  const defs = [
+    ['sr', 'Sr', 30, 'left'],
+    ['name', 'Product Name', 290, 'left'],
+    ['wt', 'Pack', 90, 'left'],
+    ['mrp', 'MRP (incl. of all taxes)', W - 410, 'right'],
+  ];
+  let cx = M;
+  const cols = defs.map(([key, label, w, align]) => {
+    const c = { key, label, x: cx, w, align };
+    cx += w;
+    return c;
+  });
+
+  const HEAD_H = 18;
+  const drawHead = (yy) => {
+    doc.rect(M, yy, W, HEAD_H).fill(MAROON);
+    doc.font('Helvetica-Bold').fontSize(7.5).fill('#ffffff');
+    cols.forEach((c) => doc.text(c.label, c.x + 3, yy + 5, { width: c.w - 6, align: c.align }));
+    return yy + HEAD_H;
+  };
+  y = drawHead(y);
+
+  const groups = {};
+  (ctx.catalog || []).forEach((it) => {
+    (groups[it.category] = groups[it.category] || []).push(it);
+  });
+  const categoryOrder = [
+    ...content.CATEGORY_ORDER,
+    ...Object.keys(groups).filter((cat) => !content.CATEGORY_ORDER.includes(cat)),
+  ];
+  categoryOrder.forEach((cat) => {
+    const rows = groups[cat];
+    if (!rows || !rows.length) return;
+    if (y > bottomLimit(doc) - 28) { y = newPage(doc, footerLabel); y = drawHead(y); }
+    doc.rect(M, y, W, 16).fill(BAND);
+    doc.font('Helvetica-Bold').fontSize(8).fill(MAROON).text(cat, M + 6, y + 4);
+    y += 16;
+    rows.forEach((it, i) => {
+      if (y > bottomLimit(doc)) { y = newPage(doc, footerLabel); y = drawHead(y); }
+      if (i % 2 === 1) doc.rect(M, y, W, 16).fill('#faf7f2');
+      const vals = {
+        sr: String(i + 1),
+        name: it.productName,
+        wt: it.packSize || '',
+        mrp: inr(it.mrp),
+      };
+      doc.font('Helvetica').fontSize(8);
+      cols.forEach((c) => doc.fill(c.key === 'mrp' ? MAROON : INK).text(vals[c.key], c.x + 3, y + 4, { width: c.w - 6, align: c.align, lineBreak: false }));
+      y += 16;
+      doc.moveTo(M, y).lineTo(right, y).stroke(BORDER);
+    });
+  });
+  return y + 6;
+}
+
+function drawB2cPriceCard(doc, ctx) {
+  const footerLabel = 'B2C MRP Price Card';
+  const W = contentWidth(doc);
+  let y = brandHeader(doc, 'B2C MRP Price Card', ctx, {
+    subtitle: 'Phase 1 · Nagpur Pilot',
+    showRef: false,
+  });
+  pageFooter(doc, footerLabel);
+
+  // "MRP PRICE LIST" band
+  doc.rect(M, y, W, 18).fill(MAROON);
+  doc.font('Helvetica-Bold').fontSize(9).fill('#ffffff')
+    .text('MRP PRICE LIST', M, y + 5, { width: W, align: 'center' });
+  y += 24;
+
+  doc.font('Helvetica').fontSize(7.5).fill(SLATE)
+    .text('All prices are Maximum Retail Prices in Rs., inclusive of all taxes.', M, y, { width: W });
+  y += 14;
+  y = b2cPriceTable(doc, y, ctx);
+  y = termsBlock(doc, y + 6, 'TERMS & CONDITIONS', termsFor(ctx, content.B2C_PRICE_CARD_TERMS), footerLabel);
+}
+
 // ---------------- Distributor Agreement ----------------
 function drawAgreement(doc, ctx, role = KIT_ROLE.distributor) {
   const { lead } = ctx;
@@ -777,6 +863,11 @@ const DOC_PLANS = {
     // The institutional price card is intentionally omitted — the quotation
     // (with categorised items) is the single pricing document for this kit.
     { docType: 'Quotation', label: 'Quotation with Terms & Conditions', draw: drawQuotation },
+    BROCHURE_DOC,
+  ],
+  b2c: [
+    // Consumer MRP list only — no trade agreement or onboarding documents.
+    { docType: 'PriceCard', label: 'B2C MRP Price Card', draw: drawB2cPriceCard },
     BROCHURE_DOC,
   ],
 };

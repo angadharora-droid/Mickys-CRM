@@ -11,7 +11,7 @@ const BUSINESS_TYPES = [
   'Other',
 ];
 
-const KIT_TYPES = ['distributor', 'stockist', 'institutional', 'export'];
+const KIT_TYPES = ['distributor', 'stockist', 'institutional', 'export', 'b2c'];
 
 const LEAD_STATUSES = ['new', 'kit_selected', 'rates_confirmed', 'generated', 'delivered'];
 
@@ -22,6 +22,7 @@ const ACTION_POINTS = [
   'Send distributor kit',
   'Send institutional kit',
   'Send export kit',
+  'Send B2C kit',
 ];
 
 /** Allowed forward transitions of the kit pipeline (later steps may be re-run). */

@@ -47,6 +47,9 @@ export default function RateMaster() {
   const [expandedRows, setExpandedRows] = useState({});
 
   const isDistributor = kitType === 'distributor';
+  // B2C items are priced by their printed MRP (inclusive of all taxes) — the
+  // net rate mirrors the MRP and GST is 0, so neither is edited directly.
+  const isB2c = kitType === 'b2c';
   const { register, handleSubmit, reset, formState: { errors } } = useForm({ resolver: zodResolver(schema), defaultValues: EMPTY });
 
   const fetchItems = useCallback(async () => {
@@ -71,7 +74,7 @@ export default function RateMaster() {
 
   const toggleRow = (id) => setExpandedRows((c) => ({ ...c, [id]: !c[id] }));
 
-  const openCreate = () => { setEditing(null); reset(EMPTY); setDialogOpen(true); };
+  const openCreate = () => { setEditing(null); reset(isB2c ? { ...EMPTY, gst: 0 } : EMPTY); setDialogOpen(true); };
   const openEdit = (p) => {
     setEditing(p);
     reset({
@@ -84,7 +87,11 @@ export default function RateMaster() {
   const onSubmit = async (values) => {
     setSaving(true);
     try {
-      const payload = { ...values, kitType };
+      // The B2C master has no separate net rate: the MRP is the price and it
+      // is tax-inclusive, so the pipeline fields stay pinned to it.
+      const payload = isB2c
+        ? { ...values, kitType, netRate: values.mrp, gst: 0 }
+        : { ...values, kitType };
       if (editing) {
         await api.put(`/rate-items/${editing._id}`, payload);
         toast.success('Rate updated');
@@ -125,6 +132,7 @@ export default function RateMaster() {
         <TabsList>
           <TabsTrigger value="distributor">Distributor</TabsTrigger>
           <TabsTrigger value="institutional">Institutional</TabsTrigger>
+          <TabsTrigger value="b2c">B2C (MRP)</TabsTrigger>
         </TabsList>
       </Tabs>
 
@@ -149,9 +157,9 @@ export default function RateMaster() {
                   <TableHead>Product</TableHead>
                   <TableHead className="hidden sm:table-cell">SKU</TableHead>
                   <TableHead className="text-right">MRP</TableHead>
-                  <TableHead className="text-right">Net</TableHead>
+                  {!isB2c && <TableHead className="text-right">Net</TableHead>}
                   {isDistributor && <TableHead className="text-right hidden md:table-cell">Margin</TableHead>}
-                  <TableHead className="text-right hidden lg:table-cell">GST</TableHead>
+                  {!isB2c && <TableHead className="text-right hidden lg:table-cell">GST</TableHead>}
                   <TableHead>Status</TableHead>
                   <TableHead className="w-24" />
                 </TableRow>
@@ -174,9 +182,9 @@ export default function RateMaster() {
                         </TableCell>
                         <TableCell className="hidden sm:table-cell font-mono text-xs">{p.sku}</TableCell>
                         <TableCell className="text-right tabular-nums">{formatCurrency(p.mrp)}</TableCell>
-                        <TableCell className="text-right tabular-nums font-medium">{formatCurrency(p.netRate)}</TableCell>
+                        {!isB2c && <TableCell className="text-right tabular-nums font-medium">{formatCurrency(p.netRate)}</TableCell>}
                         {isDistributor && <TableCell className="text-right tabular-nums hidden md:table-cell">{p.suggestiveMargin || 0}%</TableCell>}
-                        <TableCell className="text-right tabular-nums hidden lg:table-cell">{p.gst}%</TableCell>
+                        {!isB2c && <TableCell className="text-right tabular-nums hidden lg:table-cell">{p.gst}%</TableCell>}
                         <TableCell><Badge variant={p.isActive ? 'secondary' : 'outline'}>{p.isActive ? 'Active' : 'Inactive'}</Badge></TableCell>
                         <TableCell>
                           <div className="flex gap-1 justify-end">
@@ -191,7 +199,7 @@ export default function RateMaster() {
                         <TableRow className="bg-muted/25 hover:bg-muted/25 lg:hidden">
                           <TableCell colSpan={9} className="px-4 py-3">
                             <dl className="grid gap-3 text-sm grid-cols-2 sm:grid-cols-4">
-                              <div><dt className="text-xs uppercase text-muted-foreground">GST</dt><dd className="mt-1 font-medium">{p.gst}%</dd></div>
+                              {!isB2c && <div><dt className="text-xs uppercase text-muted-foreground">GST</dt><dd className="mt-1 font-medium">{p.gst}%</dd></div>}
                               {isDistributor && <div><dt className="text-xs uppercase text-muted-foreground">Margin</dt><dd className="mt-1 font-medium">{p.suggestiveMargin || 0}%</dd></div>}
                               <div><dt className="text-xs uppercase text-muted-foreground">SKU</dt><dd className="mt-1 font-mono text-xs">{p.sku}</dd></div>
                             </dl>
@@ -211,7 +219,7 @@ export default function RateMaster() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{editing ? 'Edit Rate' : 'New Rate'} · {isDistributor ? 'Distributor' : 'Institutional'}</DialogTitle>
+            <DialogTitle>{editing ? 'Edit Rate' : 'New Rate'} · {isDistributor ? 'Distributor' : isB2c ? 'B2C (MRP)' : 'Institutional'}</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2">
@@ -238,16 +246,20 @@ export default function RateMaster() {
                 <Input type="number" step="any" min="0" {...register('mrp')} />
                 {errors.mrp && <p className="text-sm text-destructive">{errors.mrp.message}</p>}
               </div>
-              <div className="space-y-2">
-                <Label>Net rate (₹) *</Label>
-                <Input type="number" step="any" min="0" {...register('netRate')} />
-                {errors.netRate && <p className="text-sm text-destructive">{errors.netRate.message}</p>}
-              </div>
-              <div className="space-y-2">
-                <Label>GST % *</Label>
-                <Input type="number" step="any" min="0" max="100" {...register('gst')} />
-                {errors.gst && <p className="text-sm text-destructive">{errors.gst.message}</p>}
-              </div>
+              {!isB2c && (
+                <div className="space-y-2">
+                  <Label>Net rate (₹) *</Label>
+                  <Input type="number" step="any" min="0" {...register('netRate')} />
+                  {errors.netRate && <p className="text-sm text-destructive">{errors.netRate.message}</p>}
+                </div>
+              )}
+              {!isB2c && (
+                <div className="space-y-2">
+                  <Label>GST % *</Label>
+                  <Input type="number" step="any" min="0" max="100" {...register('gst')} />
+                  {errors.gst && <p className="text-sm text-destructive">{errors.gst.message}</p>}
+                </div>
+              )}
               {isDistributor && (
                 <div className="space-y-2">
                   <Label>Suggestive margin %</Label>
@@ -255,7 +267,11 @@ export default function RateMaster() {
                 </div>
               )}
             </div>
-            <p className="text-xs text-muted-foreground">Net rate must be ≤ MRP. The net rate pre-fills the kit and can be edited per lead.</p>
+            <p className="text-xs text-muted-foreground">
+              {isB2c
+                ? 'B2C items are listed at their printed MRP (inclusive of all taxes) on the price card — no net rate or GST is added.'
+                : 'Net rate must be ≤ MRP. The net rate pre-fills the kit and can be edited per lead.'}
+            </p>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setDialogOpen(false)} disabled={saving}>Cancel</Button>
               <Button type="submit" disabled={saving}>{saving ? 'Saving…' : editing ? 'Save changes' : 'Create rate'}</Button>

@@ -36,7 +36,7 @@ import {
 } from '@/components/ui/dialog';
 import {
   Loader2, Package, Download, Mail, Trash2, RotateCcw, FileText, CheckCircle2,
-  AlertTriangle, ArrowLeft, Boxes, Building2, Ship, Sparkles, Eye, EyeOff, Lock, Pencil, ExternalLink,
+  AlertTriangle, ArrowLeft, Boxes, Building2, Ship, Store, Sparkles, Eye, EyeOff, Lock, Pencil, ExternalLink,
   MessageSquare, CalendarCheck, Paperclip, Upload, Image as ImageIcon, Target,
   ClipboardList, Plus, History, UserCog, UserCheck, X, NotebookPen,
 } from 'lucide-react';
@@ -247,7 +247,7 @@ export default function LeadDetail() {
     // Prefill the email draft so it reads as an editable preview (never blank).
     const kitLabel =
       lead.kitType === 'stockist' ? 'Stockist' : lead.kitType === 'institutional' ? 'Institutional'
-        : lead.kitType === 'export' ? 'Export' : 'Distributor';
+        : lead.kitType === 'export' ? 'Export' : lead.kitType === 'b2c' ? 'B2C' : 'Distributor';
     const docNoun = lead.kitType === 'institutional' ? 'quotation' : 'term sheet';
     const defaultSubject = lead.kitType === 'export'
       ? `Micky's Export Kit for ${lead.businessName} — Ref: ${lead.refNumber}`
@@ -256,9 +256,13 @@ export default function LeadDetail() {
       ? `Dear ${lead.contactPerson || lead.businessName},\n\n` +
         `Please find attached your Micky's Export kit. It includes our export rate card and product brochure. ` +
         `We look forward to partnering with you.`
-      : `Dear ${lead.contactPerson || lead.businessName},\n\n` +
-        `Please find attached your Micky's ${kitLabel} sales kit. It includes our rate card, ` +
-        `${docNoun} and supporting documents. We look forward to partnering with you.`;
+      : lead.kitType === 'b2c'
+        ? `Dear ${lead.contactPerson || lead.businessName},\n\n` +
+          `Please find attached your Micky's B2C kit. It includes our MRP price list and product brochure. ` +
+          `We look forward to partnering with you.`
+        : `Dear ${lead.contactPerson || lead.businessName},\n\n` +
+          `Please find attached your Micky's ${kitLabel} sales kit. It includes our rate card, ` +
+          `${docNoun} and supporting documents. We look forward to partnering with you.`;
     setEmailForm((f) => {
       // Replace the draft only when it's blank or still the previous auto text —
       // a kit switch/regeneration refreshes it, a hand-edited draft is kept.
@@ -300,6 +304,9 @@ export default function LeadDetail() {
   const isStockist = lead.kitType === 'stockist';
   const isDistLike = isDistributor || isStockist;
   const isExport = lead.kitType === 'export';
+  // B2C kits list fixed printed MRPs (inclusive of all taxes) — no editable
+  // trade rates, so the rate review only controls which SKUs are included.
+  const isB2c = lead.kitType === 'b2c';
   const hasKit = Boolean(lead.kitType);
   const statusIdx = LEAD_STATUSES.indexOf(lead.status);
   const ratesEdited = statusIdx >= LEAD_STATUSES.indexOf('rates_confirmed');
@@ -1486,7 +1493,7 @@ export default function LeadDetail() {
           {hasKit && !switching ? (
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-3">
-                {isDistributor ? <Boxes className="h-8 w-8 text-primary" /> : isStockist ? <Package className="h-8 w-8 text-primary" /> : isExport ? <Ship className="h-8 w-8 text-primary" /> : <Building2 className="h-8 w-8 text-primary" />}
+                {isDistributor ? <Boxes className="h-8 w-8 text-primary" /> : isStockist ? <Package className="h-8 w-8 text-primary" /> : isExport ? <Ship className="h-8 w-8 text-primary" /> : isB2c ? <Store className="h-8 w-8 text-primary" /> : <Building2 className="h-8 w-8 text-primary" />}
                 <div>
                   <p className="font-semibold">{KIT_TYPE_LABELS[lead.kitType]} selected</p>
                   <p className="text-xs text-muted-foreground">
@@ -1507,6 +1514,7 @@ export default function LeadDetail() {
                 { type: 'stockist', icon: Package },
                 { type: 'institutional', icon: Building2 },
                 { type: 'export', icon: Ship },
+                { type: 'b2c', icon: Store },
               ].map(({ type, icon: Icon }) => (
                 <button
                   key={type}
@@ -1586,6 +1594,13 @@ export default function LeadDetail() {
                     DSP = Distributor Selling Price (the product&rsquo;s institutional rate).
                   </p>
                 )}
+                {isB2c && (
+                  <p className="text-xs text-muted-foreground">
+                    B2C prices are the <span className="font-medium text-foreground">printed MRPs</span> from the B2C rate master —
+                    inclusive of all taxes and not editable per lead. Use the Include toggle to control which SKUs appear on the price card.
+                  </p>
+                )}
+                {!isB2c && (
                 <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/40 px-4 py-3">
                   <div>
                     <Label htmlFor="bulk-discount" className="text-sm font-medium">Discount on all products</Label>
@@ -1613,6 +1628,7 @@ export default function LeadDetail() {
                     </Button>
                   </div>
                 </div>
+                )}
                 <div className="overflow-x-auto">
                   <Table>
                     <TableHeader>
@@ -1635,7 +1651,7 @@ export default function LeadDetail() {
                             <TableHead className="text-right hidden lg:table-cell">vs DSP (Margin %)</TableHead>
                             <TableHead className="text-right hidden lg:table-cell">vs MRP (Margin %)</TableHead>
                           </>
-                        ) : (
+                        ) : isB2c ? null : (
                           <>
                             <TableHead className="text-right hidden sm:table-cell">Std net</TableHead>
                             <TableHead className="text-right">Net rate</TableHead>
@@ -1697,7 +1713,7 @@ export default function LeadDetail() {
                                 <TableCell className="text-right tabular-nums hidden lg:table-cell text-muted-foreground">{fmtPct(d.vsDsp)}</TableCell>
                                 <TableCell className="text-right tabular-nums hidden lg:table-cell text-muted-foreground">{fmtPct(d.vsMrp)}</TableCell>
                               </>
-                            ) : (
+                            ) : isB2c ? null : (
                               <>
                                 <TableCell className="text-right tabular-nums hidden sm:table-cell text-muted-foreground">{formatCurrency(r.standardNetRate)}</TableCell>
                                 {priceCell}
@@ -1750,7 +1766,7 @@ export default function LeadDetail() {
                   <Label>
                     Terms &amp; Conditions
                     <span className="ml-1 text-xs font-normal text-muted-foreground">
-                      one clause per line - printed on the {isDistLike ? 'price card' : 'quotation'}
+                      one clause per line - printed on the {isDistLike || isB2c ? 'price card' : 'quotation'}
                     </span>
                   </Label>
                   <Textarea
