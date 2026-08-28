@@ -3,7 +3,7 @@ import { toast } from 'sonner';
 import api, { apiError } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { ROLES } from '@/lib/constants';
-import { formatCurrency, formatDateTime } from '@/lib/utils';
+import { formatCurrency, formatDate, formatDateTime } from '@/lib/utils';
 import PageHeader from '@/components/shared/PageHeader';
 import Pagination from '@/components/shared/Pagination';
 import EmptyState from '@/components/shared/EmptyState';
@@ -25,7 +25,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import {
   Search, ReceiptText, Plus, Download, Pencil, Trash2, Loader2, X, Eye, ExternalLink, Snowflake,
-  AlertTriangle, Mail, MoreVertical, Lock, History, PackageCheck, Ban,
+  AlertTriangle, Mail, MoreVertical, Lock, History, PackageCheck, Ban, MessageCircle, CheckCircle2, Undo2,
 } from 'lucide-react';
 
 const ALL = '__all__';
@@ -926,6 +926,263 @@ function EmailDialog({ open, order, onClose, onSent }) {
   );
 }
 
+/**
+ * The order as a WhatsApp message: wa.me links carry text only, so the
+ * "attached" order is a formatted summary of the voucher rather than the PDF
+ * itself — WhatsApp renders the *stars* as bold.
+ */
+const buildWhatsAppText = (o) => {
+  const items = (o?.items || [])
+    .map(
+      (i, n) =>
+        `${n + 1}. ${i.name}\n   ${qty(i.qty, i.baseUnits)} × ${formatCurrency(i.rate)} = ${formatCurrency(
+          i.amount != null ? i.amount : (Number(i.qty) || 0) * (Number(i.rate) || 0)
+        )}`
+    )
+    .join('\n');
+  return [
+    `Hello ${o?.customerName || ''},`,
+    '',
+    'Thank you for your order! Here are the details:',
+    '',
+    `*Sales Order ${o?.number || ''}*`,
+    `Date: ${formatDate(o?.createdAt)}`,
+    '',
+    '*Items*',
+    items,
+    '',
+    `*Total: ${formatCurrency(o?.total)}*`,
+  ].join('\n');
+};
+
+/**
+ * A number the wa.me link accepts: digits only, no leading zeros, and a bare
+ * 10-digit Indian mobile gets the 91 country code it needs — wa.me refuses
+ * numbers without one.
+ */
+const waNumber = (raw) => {
+  const digits = String(raw || '').replace(/\D/g, '').replace(/^0+/, '');
+  if (!digits) return null;
+  return digits.length === 10 ? `91${digits}` : digits;
+};
+
+/**
+ * Sends the order to the customer's WhatsApp via a wa.me link. The payment
+ * link is kept as its own field and appended to the end of the message at
+ * send time, so editing either never means retyping the other. The PDF cannot
+ * ride along on a wa.me link — the download button here exists so it can be
+ * attached by hand in the chat that opens.
+ */
+function WhatsAppDialog({ open, order, onClose, onDownloadPdf }) {
+  const [phone, setPhone] = useState('');
+  const [paymentLink, setPaymentLink] = useState('');
+  const [message, setMessage] = useState('');
+
+  useEffect(() => {
+    if (!open || !order) return;
+    // Only an appointed customer has a mobile on file — an order booked
+    // against a free-typed Tally name starts blank and must be typed.
+    setPhone(order.customer?.mobile || '');
+    setPaymentLink('');
+    setMessage(buildWhatsAppText(order));
+  }, [open, order]);
+
+  const send = () => {
+    const num = waNumber(phone);
+    if (!num || num.length < 10) {
+      return toast.error("Type the customer's WhatsApp number", {
+        description: 'A 10-digit Indian mobile works as-is; other countries need the country code.',
+      });
+    }
+    const text = paymentLink.trim()
+      ? `${message.trim()}\n\nPay online: ${paymentLink.trim()}`
+      : message.trim();
+    window.open(`https://wa.me/${num}?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer');
+    onClose();
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-2xl max-h-[92dvh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Send {order?.number} on WhatsApp</DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <p className="text-sm font-medium mb-1.5">WhatsApp number</p>
+              <Input
+                type="tel"
+                inputMode="tel"
+                placeholder="10-digit mobile or with country code"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+              />
+              {!order?.customer?.mobile && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  No mobile on file for {order?.customerName} — type one to send.
+                </p>
+              )}
+            </div>
+            <div>
+              <p className="text-sm font-medium mb-1.5">Payment link (optional)</p>
+              <Input
+                placeholder="UPI / payment gateway link"
+                value={paymentLink}
+                onChange={(e) => setPaymentLink(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground mt-1">Added at the end of the message.</p>
+            </div>
+          </div>
+
+          <div>
+            <p className="text-sm font-medium mb-1.5">Message</p>
+            <Textarea
+              rows={10}
+              className="font-mono text-xs"
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+            />
+            {paymentLink.trim() && (
+              <p className="text-xs text-muted-foreground mt-1 break-all">
+                Ends with: <span className="font-medium">Pay online: {paymentLink.trim()}</span>
+              </p>
+            )}
+          </div>
+
+          <div className="rounded-lg border bg-muted/50 p-3 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs text-muted-foreground">
+              WhatsApp links carry text only — to send the PDF too, download it and attach it in the chat.
+            </p>
+            <Button variant="outline" size="sm" onClick={() => onDownloadPdf(order)}>
+              <Download className="h-4 w-4" /> Download PDF
+            </Button>
+          </div>
+        </div>
+
+        <DialogFooter className="mt-2">
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button className="bg-emerald-600 hover:bg-emerald-700 text-white" onClick={send}>
+            <MessageCircle className="h-4 w-4" /> Open WhatsApp
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Read view of one order, opened from its row. Confirming lives HERE and not
+ * on the list — an order should be looked at before it is agreed, so the
+ * confirm button only exists once the order is open on screen. Un-confirming
+ * stays an admin's call, same as everywhere else.
+ */
+function DetailDialog({ open, order: o, onClose, isAdmin, canManage, onChangeStatus, onEmail, onWhatsApp, onDownloadPdf }) {
+  const [busy, setBusy] = useState(false);
+
+  const act = async (next) => {
+    setBusy(true);
+    await onChangeStatus(o, next);
+    setBusy(false);
+  };
+
+  if (!o) return null;
+  const manage = canManage(o);
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-2xl max-h-[92dvh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 flex-wrap pr-8">
+            {o.number}
+            <Badge className={`border ${STATUS_STYLES[o.status] || ''}`} variant="outline">
+              {o.status === 'confirmed' && <Lock className="h-3 w-3 mr-1" />}
+              {STATUS_LABELS[o.status] || o.status}
+            </Badge>
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="sm:col-span-2 min-w-0">
+              <p className="text-xs text-muted-foreground">Customer</p>
+              <p className="text-sm font-medium truncate">{o.customerName}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Booked</p>
+              <p className="text-sm">{formatDateTime(o.createdAt)}</p>
+              {o.createdBy?.name && <p className="text-xs text-muted-foreground">by {o.createdBy.name}</p>}
+            </div>
+          </div>
+
+          <div className="rounded-lg border divide-y">
+            {(o.items || []).map((i) => (
+              <div key={i.name} className="flex items-center justify-between gap-3 px-3 py-2">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium leading-tight truncate">{i.name}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {qty(i.qty, i.baseUnits)} × {formatCurrency(i.rate)}
+                    {i.packSize ? ` · ${i.packSize}` : ''}
+                  </p>
+                </div>
+                <p className="text-sm font-semibold tabular-nums shrink-0">
+                  {formatCurrency(i.amount != null ? i.amount : (Number(i.qty) || 0) * (Number(i.rate) || 0))}
+                </p>
+              </div>
+            ))}
+            <div className="flex items-center justify-between px-3 py-2 bg-muted/50">
+              <p className="text-sm font-medium">Total</p>
+              <p className="text-base font-bold tabular-nums">{formatCurrency(o.total)}</p>
+            </div>
+          </div>
+
+          {o.notes && (
+            <div>
+              <p className="text-xs text-muted-foreground mb-1">Notes</p>
+              <p className="text-sm whitespace-pre-wrap rounded-lg border p-3">{o.notes}</p>
+            </div>
+          )}
+
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" size="sm" onClick={() => onDownloadPdf(o)}>
+              <Download className="h-4 w-4" /> PDF
+            </Button>
+            <Button variant="outline" size="sm" disabled={o.status === 'cancelled'} onClick={() => onEmail(o)}>
+              <Mail className="h-4 w-4" /> Email
+            </Button>
+            <Button variant="outline" size="sm" disabled={o.status === 'cancelled'} onClick={() => onWhatsApp(o)}>
+              <MessageCircle className="h-4 w-4" /> WhatsApp
+            </Button>
+          </div>
+
+          {manage && o.status === 'open' && (
+            <p className="text-xs text-muted-foreground">
+              Confirming marks the order as agreed with the customer and locks it against edits.
+            </p>
+          )}
+        </div>
+
+        <DialogFooter className="mt-2">
+          <Button variant="outline" onClick={onClose} disabled={busy}>Close</Button>
+          {isAdmin && o.status === 'confirmed' && (
+            <Button variant="outline" onClick={() => act('open')} disabled={busy}>
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Undo2 className="h-4 w-4" />}
+              Re-open for editing
+            </Button>
+          )}
+          {manage && o.status === 'open' && (
+            <Button onClick={() => act('confirmed')} disabled={busy}>
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+              Confirm order
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function SalesOrders() {
   const { user } = useAuth();
   const isAdmin = user?.role === ROLES.ADMIN;
@@ -938,6 +1195,8 @@ export default function SalesOrders() {
   const [status, setStatus] = useState(ALL);
   const [dialog, setDialog] = useState({ open: false, order: null });
   const [emailDialog, setEmailDialog] = useState({ open: false, order: null });
+  const [waDialog, setWaDialog] = useState({ open: false, order: null });
+  const [detailDialog, setDetailDialog] = useState({ open: false, order: null });
   const [previewFile, setPreviewFile] = useState(null); // { url, filename }
 
   const canManage = (o) => isAdmin || String(o.createdBy?._id || o.createdBy) === String(user?._id || '');
@@ -1025,8 +1284,20 @@ export default function SalesOrders() {
       warnShortfalls(data.data?.warnings);
       reportAccountsEmail(data.data?.accountsEmail);
       fetchOrders();
+      return data.data;
     } catch (err) {
       toast.error(apiError(err));
+      return null;
+    }
+  };
+
+  // Status moves made inside the detail view keep the dialog on screen — the
+  // order it shows has to move with them, or a just-confirmed order would
+  // still offer its confirm button.
+  const changeStatusFromDetail = async (o, next) => {
+    const updated = await changeStatus(o, next);
+    if (updated) {
+      setDetailDialog((d) => (d.order && String(d.order._id) === String(o._id) ? { ...d, order: updated } : d));
     }
   };
 
@@ -1115,7 +1386,11 @@ export default function SalesOrders() {
               </TableHeader>
               <TableBody>
                 {orders.map((o) => (
-                  <TableRow key={o._id}>
+                  <TableRow
+                    key={o._id}
+                    className="cursor-pointer"
+                    onClick={() => setDetailDialog({ open: true, order: o })}
+                  >
                     <TableCell>
                       <p className="font-medium leading-tight whitespace-nowrap">{o.number}</p>
                       <p className="text-xs text-muted-foreground mt-0.5">{formatDateTime(o.createdAt)}</p>
@@ -1126,34 +1401,32 @@ export default function SalesOrders() {
                     <TableCell className="text-right tabular-nums hidden sm:table-cell">{o.items?.length || 0}</TableCell>
                     <TableCell className="text-right tabular-nums font-semibold">{formatCurrency(o.total)}</TableCell>
                     <TableCell>
-                      {/* Two choices only: an order is being worked on, or it is
-                          agreed. Un-confirming is an admin's call — an exec who
-                          could flip it back would make the lock decorative. */}
-                      {canManage(o) && (o.status === 'open' || (o.status === 'confirmed' && isAdmin)) ? (
-                        <Select value={o.status} onValueChange={(v) => changeStatus(o, v)}>
-                          <SelectTrigger className={`h-7 w-[122px] text-xs border ${STATUS_STYLES[o.status] || ''}`}>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="open">Open</SelectItem>
-                            <SelectItem value="confirmed">Confirmed</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      ) : (
-                        <Badge
-                          className={`border ${STATUS_STYLES[o.status] || ''}`}
-                          variant="outline"
-                          title={o.status === 'confirmed' ? 'Confirmed and locked — only an admin can re-open it for editing' : undefined}
-                        >
-                          {o.status === 'confirmed' && <Lock className="h-3 w-3 mr-1" />}
-                          {STATUS_LABELS[o.status] || o.status}
-                        </Badge>
-                      )}
+                      {/* Deliberately a badge, never a control: confirming from
+                          the list was a one-click slip on a row nobody had read.
+                          The confirm button lives in the detail view the row
+                          click opens, so the order is on screen before it can be
+                          agreed. */}
+                      <Badge
+                        className={`border ${STATUS_STYLES[o.status] || ''}`}
+                        variant="outline"
+                        title={
+                          o.status === 'open'
+                            ? 'Open — click the row to view and confirm the order'
+                            : o.status === 'confirmed'
+                              ? 'Confirmed and locked — only an admin can re-open it for editing'
+                              : undefined
+                        }
+                      >
+                        {o.status === 'confirmed' && <Lock className="h-3 w-3 mr-1" />}
+                        {STATUS_LABELS[o.status] || o.status}
+                      </Badge>
                     </TableCell>
                     <TableCell className="hidden lg:table-cell text-sm text-muted-foreground">
                       {o.createdBy?.name || '—'}
                     </TableCell>
-                    <TableCell className="text-right">
+                    {/* Buttons in this cell act on the order, they never open
+                        it — the row click stops at the cell boundary. */}
+                    <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center justify-end gap-1">
                         <Button variant="ghost" size="icon" className="h-8 w-8" title="Preview PDF" onClick={() => previewPdf(o)}>
                           <Eye className="h-4 w-4" />
@@ -1182,11 +1455,20 @@ export default function SalesOrders() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="w-56">
+                            <DropdownMenuItem onSelect={() => setDetailDialog({ open: true, order: o })}>
+                              <ReceiptText /> View order
+                            </DropdownMenuItem>
                             <DropdownMenuItem
                               disabled={o.status === 'cancelled'}
                               onSelect={() => setEmailDialog({ open: true, order: o })}
                             >
                               <Mail /> Email to customer
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              disabled={o.status === 'cancelled'}
+                              onSelect={() => setWaDialog({ open: true, order: o })}
+                            >
+                              <MessageCircle /> Send on WhatsApp
                             </DropdownMenuItem>
                             {canManage(o) && (o.status === 'open' || o.status === 'confirmed') && (
                               <>
@@ -1238,6 +1520,25 @@ export default function SalesOrders() {
         order={emailDialog.order}
         onClose={() => setEmailDialog({ open: false, order: null })}
         onSent={fetchOrders}
+      />
+
+      <WhatsAppDialog
+        open={waDialog.open}
+        order={waDialog.order}
+        onClose={() => setWaDialog({ open: false, order: null })}
+        onDownloadPdf={downloadPdf}
+      />
+
+      <DetailDialog
+        open={detailDialog.open}
+        order={detailDialog.order}
+        onClose={() => setDetailDialog({ open: false, order: null })}
+        isAdmin={isAdmin}
+        canManage={canManage}
+        onChangeStatus={changeStatusFromDetail}
+        onEmail={(o) => setEmailDialog({ open: true, order: o })}
+        onWhatsApp={(o) => setWaDialog({ open: true, order: o })}
+        onDownloadPdf={downloadPdf}
       />
 
       <Dialog open={Boolean(previewFile)} onOpenChange={closePreview}>

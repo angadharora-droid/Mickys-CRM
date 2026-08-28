@@ -183,9 +183,10 @@ const listSalesOrders = asyncHandler(async (req, res) => {
       .skip(skip)
       .limit(limit)
       .populate('createdBy', 'name')
-      // The customer's email rides along so the row's "email to customer"
-      // action can prefill without fetching the order first.
-      .populate('customer', 'companyName email'),
+      // The customer's email and mobile ride along so the row's "email to
+      // customer" and "send on WhatsApp" actions can prefill without fetching
+      // the order first.
+      .populate('customer', 'companyName email mobile'),
     SalesOrder.countDocuments(filter),
   ]);
   res.json({ success: true, data: orders, meta: buildMeta(total, page, limit) });
