@@ -313,6 +313,16 @@ export default function LeadDetail() {
   // A generated kit freezes the lead until the user clicks Edit (unlock).
   const locked = Boolean(lead.locked);
   const editedAfterGen = Boolean(lead.editedAfterGeneration);
+  // The delivery record describes the kit that was actually sent. Switching the
+  // kit after delivery takes the lead out of Delivered, so from then on the
+  // record refers to the earlier kit and the new one still has to be sent.
+  const priorKitDelivered = Boolean(lead.delivery?.sentAt) && lead.status !== 'delivered';
+  const deliveredWhen = lead.delivery?.sentAt ? formatDateTime(lead.delivery.sentAt) : '';
+  const deliveryLine = !lead.delivery?.sentAt
+    ? ''
+    : lead.delivery.method === 'manual'
+      ? `${priorKitDelivered ? 'Previous kit manually delivered' : 'Manually delivered'}${lead.delivery.note ? ` (${lead.delivery.note})` : ''} on ${deliveredWhen}`
+      : `${priorKitDelivered ? 'Previous kit emailed' : 'Emailed'} to ${lead.delivery.sentTo} on ${deliveredWhen}`;
   // Client details are editable at any stage (incl. after kit selection) —
   // but never while a generated kit has the lead locked (unlock first).
   const canEditClient = !locked;
@@ -1921,12 +1931,12 @@ export default function LeadDetail() {
               <Button variant="outline" onClick={() => download(`/leads/${lead._id}/kit.zip`, lead.zipFile?.fileName || 'kit.zip')}>
                 <Download className="h-4 w-4" /> Download ZIP
               </Button>
-              {lead.delivery?.sentAt && (
-                <span className="text-xs text-muted-foreground flex items-center gap-1">
-                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
-                  {lead.delivery.method === 'manual'
-                    ? `Manually delivered${lead.delivery.note ? ` (${lead.delivery.note})` : ''} on ${formatDateTime(lead.delivery.sentAt)}`
-                    : `Emailed to ${lead.delivery.sentTo} on ${formatDateTime(lead.delivery.sentAt)}`}
+              {deliveryLine && (
+                <span className={cn('text-xs flex items-center gap-1', priorKitDelivered ? 'text-amber-700' : 'text-muted-foreground')}>
+                  {priorKitDelivered
+                    ? <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600" />
+                    : <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" />}
+                  {deliveryLine}{priorKitDelivered ? ' — the new kit still has to be sent' : ''}
                 </span>
               )}
             </div>
@@ -2069,7 +2079,9 @@ export default function LeadDetail() {
         open={Boolean(confirmSwitch)}
         onOpenChange={(o) => !o && setConfirmSwitch(null)}
         title="Switch kit type?"
-        description="Switching reloads the rate master and discards your current rate overrides for this lead. You'll need to confirm rates and regenerate."
+        description={lead.status === 'delivered'
+          ? "The client has already received the current kit. Switching reloads the rate master and discards your rate overrides — you'll need to confirm rates, regenerate and send the new kit again."
+          : "Switching reloads the rate master and discards your current rate overrides for this lead. You'll need to confirm rates and regenerate."}
         confirmLabel="Switch kit"
         variant="default"
         onConfirm={() => { const k = confirmSwitch; setConfirmSwitch(null); selectKit(k); }}

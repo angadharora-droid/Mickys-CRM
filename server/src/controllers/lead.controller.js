@@ -549,7 +549,15 @@ const selectKitType = asyncHandler(async (req, res) => {
   if (!lead) throw ApiError.notFound('Lead not found');
   assertCanView(lead, req.user);
   assertNotLocked(lead);
-  if (lead.status === 'delivered') throw ApiError.badRequest('This lead has already been delivered');
+
+  // A delivered lead may switch kits as well (e.g. the client saw the
+  // distributor offer and now wants the institutional one): the kit lock is the
+  // explicit gate, and the switch takes the lead back to Kit Selected so the
+  // new kit has to be confirmed, generated and delivered afresh. The earlier
+  // delivery stays on record in statusHistory, delivery and emailLog.
+  const switchedAfterDelivery = lead.status === 'delivered';
+  const historyNote = (kit) => `Kit: ${kit}${switchedAfterDelivery ? ' · switched after delivery' : ''}`;
+  const switchedSuffix = switchedAfterDelivery ? ' (switched after delivery)' : '';
 
   // The export kit has no upfront rate snapshot — its products, quantities and
   // shipment configuration are all chosen in the export step and snapshotted
@@ -568,12 +576,12 @@ const selectKitType = asyncHandler(async (req, res) => {
     lead.status = 'kit_selected';
     markEditedIfGenerated(lead);
     lead.modifiedBy = req.user._id;
-    lead.statusHistory.push({ from, to: 'kit_selected', changedBy: req.user._id, note: 'Kit: export' });
+    lead.statusHistory.push({ from, to: 'kit_selected', changedBy: req.user._id, note: historyNote('export') });
     await lead.save();
 
     await logActivity({
       userId: req.user._id, action: 'LEAD_KIT_SELECTED', entity: 'Lead', entityId: lead._id,
-      details: `${lead.refNumber}: selected export kit`, ip: req.ip,
+      details: `${lead.refNumber}: selected export kit${switchedSuffix}`, ip: req.ip,
     });
     const populated = await Lead.findById(lead._id).populate(POPULATE);
     return res.json({ success: true, data: populated });
@@ -606,12 +614,12 @@ const selectKitType = asyncHandler(async (req, res) => {
   lead.status = 'kit_selected';
   markEditedIfGenerated(lead);
   lead.modifiedBy = req.user._id;
-  lead.statusHistory.push({ from, to: 'kit_selected', changedBy: req.user._id, note: `Kit: ${kitType}` });
+  lead.statusHistory.push({ from, to: 'kit_selected', changedBy: req.user._id, note: historyNote(kitType) });
   await lead.save();
 
   await logActivity({
     userId: req.user._id, action: 'LEAD_KIT_SELECTED', entity: 'Lead', entityId: lead._id,
-    details: `${lead.refNumber}: selected ${kitType} kit (${items.length} rates loaded)`, ip: req.ip,
+    details: `${lead.refNumber}: selected ${kitType} kit (${items.length} rates loaded)${switchedSuffix}`, ip: req.ip,
   });
 
   const populated = await Lead.findById(lead._id).populate(POPULATE);
