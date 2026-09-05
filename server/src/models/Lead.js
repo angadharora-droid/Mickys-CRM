@@ -31,7 +31,7 @@ const LEAD_TRANSITIONS = {
   kit_selected: ['rates_confirmed', 'kit_selected'], // re-selecting kit stays here
   rates_confirmed: ['generated', 'kit_selected'], // can re-edit rates or switch kit
   generated: ['delivered', 'rates_confirmed'], // can regenerate after re-confirming
-  delivered: ['delivered', 'generated'], // can re-deliver / regenerate
+  delivered: ['delivered', 'generated', 'kit_selected'], // can re-deliver / regenerate / switch kit (then confirm, generate and deliver again)
 };
 
 /** Snapshot of one priced line at the time the kit's rates were confirmed. */

@@ -111,7 +111,9 @@ New Lead → Kit Selected → Rates Confirmed → Kit Generated → Delivered
    (`MKY-[CITY]-[DDMMYY]-[###]`) is generated automatically and appears on every kit document.
 2. **Kit Type** — the exec picks **Distributor** or **Institutional**; the matching rate master is
    snapshotted onto the lead and the client form locks. Switching kit type later (after rates are
-   edited) requires confirmation.
+   edited, or after the kit has already been delivered) requires confirmation. A delivered lead is
+   unlocked with **Edit** first; the switch takes it back to Kit Selected, so the new kit is
+   confirmed, generated and delivered afresh.
 3. **Rate Review** — rates pre-fill from the master. The exec can override any net rate within
    `floor ≤ net ≤ MRP`; deviations from standard show in orange, net+GST recomputes live, and every
    override is logged. "Confirm rates" locks them in.
