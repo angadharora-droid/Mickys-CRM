@@ -118,6 +118,7 @@ async function buildDailyDigest(dayKey) {
         refNumber: l.refNumber,
         businessName: l.businessName,
         city: l.city,
+        visitType: v.visitType === 'call' ? 'Call' : 'Field visit',
         note: v.note || '',
         loggedBy: v.createdBy?.name || l.assignedExecId?.name || '—',
       });
@@ -201,12 +202,13 @@ function renderDigestHtml(d) {
 
   const visitsHtml = d.visits.length
     ? groupedTable(
-        ['Ref', 'Business', 'City', 'Visit Note'],
+        ['Ref', 'Business', 'City', 'Type', 'Visit Note'],
         visitGroups,
         (v) => [
           escapeHtml(v.refNumber),
           escapeHtml(v.businessName),
           escapeHtml(v.city || '—'),
+          escapeHtml(v.visitType),
           escapeHtml(clip(v.note)),
         ],
         'visit'

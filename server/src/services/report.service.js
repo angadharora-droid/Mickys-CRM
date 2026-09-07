@@ -87,6 +87,7 @@ async function visitRows(ctx) {
       if (!inRange(v.visitDate, ctx)) continue;
       rows.push({
         visitDate: new Date(v.visitDate),
+        visitType: v.visitType === 'call' ? 'Call' : 'Field visit',
         ...leadBasics(l),
         contactPerson: l.contactPerson || '',
         mobileNumber: l.mobileNumber || '',
@@ -374,7 +375,7 @@ async function instructionRows(ctx) {
 function activityScan(ctx) {
   return Lead.find(ctx.scope)
     .select(
-      'assignedExecId leadDate visitReports.visitDate generatedAt delivery.sentAt status ' +
+      'assignedExecId leadDate visitReports.visitDate visitReports.visitType generatedAt delivery.sentAt status ' +
       'followUp.status followUp.date crmHistory.type crmHistory.at emailLog.createdAt actionPoint ' +
       'instructions.status instructions.createdAt instructions.doneAt'
     )
@@ -386,14 +387,14 @@ async function execPerformanceRows(ctx) {
   const leads = await activityScan(ctx);
   const todayKey = istDayKey(new Date());
   const byExec = new Map();
-  const fieldDays = new Map(); // exec id -> Set of IST days with at least one visit
+  const fieldDays = new Map(); // exec id -> Set of IST days with at least one field visit
 
   for (const l of leads) {
     const id = String(l.assignedExecId?._id || 'unassigned');
     if (!byExec.has(id)) {
       byExec.set(id, {
         executive: l.assignedExecId?.name || 'Unassigned',
-        totalLeads: 0, leadsAdded: 0, visits: 0, activeDays: 0, kitsGenerated: 0, kitsDelivered: 0,
+        totalLeads: 0, leadsAdded: 0, visits: 0, calls: 0, activeDays: 0, kitsGenerated: 0, kitsDelivered: 0,
         followUpsClosed: 0, instructionsDone: 0, emailsSent: 0, openFollowUps: 0, overdueFollowUps: 0,
         openActionPoints: 0, openInstructions: 0,
       });
@@ -404,6 +405,8 @@ async function execPerformanceRows(ctx) {
     if (inRange(l.leadDate, ctx)) s.leadsAdded += 1;
     for (const v of l.visitReports || []) {
       if (!inRange(v.visitDate, ctx)) continue;
+      // Phone calls are counted on their own and don't make a day a field day.
+      if (v.visitType === 'call') { s.calls += 1; continue; }
       s.visits += 1;
       fieldDays.get(id).add(istDayKey(v.visitDate));
     }
@@ -439,7 +442,7 @@ async function dailySummaryRows(ctx) {
   const days = new Map(); // 'YYYY-MM-DD' -> counters
   for (let t = ctx.from.getTime(); t <= ctx.to.getTime(); t += 86400000) {
     days.set(istDayKey(new Date(t)), {
-      newLeads: 0, visits: 0, kitsGenerated: 0, kitsDelivered: 0, followUpsClosed: 0,
+      newLeads: 0, visits: 0, calls: 0, kitsGenerated: 0, kitsDelivered: 0, followUpsClosed: 0,
       actionPointsCleared: 0, instructionsGiven: 0, instructionsDone: 0, emailsSent: 0,
     });
   }
@@ -451,7 +454,9 @@ async function dailySummaryRows(ctx) {
 
   for (const l of leads) {
     if (inRange(l.leadDate, ctx)) bump(l.leadDate, 'newLeads');
-    (l.visitReports || []).forEach((v) => inRange(v.visitDate, ctx) && bump(v.visitDate, 'visits'));
+    (l.visitReports || []).forEach(
+      (v) => inRange(v.visitDate, ctx) && bump(v.visitDate, v.visitType === 'call' ? 'calls' : 'visits')
+    );
     if (inRange(l.generatedAt, ctx)) bump(l.generatedAt, 'kitsGenerated');
     if (inRange(l.delivery?.sentAt, ctx)) bump(l.delivery.sentAt, 'kitsDelivered');
     (l.crmHistory || []).forEach((h) => {
@@ -479,10 +484,11 @@ async function dailySummaryRows(ctx) {
 const REPORTS = {
   visits: {
     label: 'Visit Report',
-    description: 'Every client visit in the period — who was visited, what happened in the meeting, and who logged it.',
+    description: 'Every client visit or call in the period — who was reached, whether in person or by phone, what happened, and who logged it.',
     build: visitRows,
     columns: [
       { key: 'visitDate', header: 'Visit Date', type: 'date', width: 13 },
+      { key: 'visitType', header: 'Visit Type', width: 12 },
       { key: 'refNumber', header: 'Ref', width: 20 },
       { key: 'businessName', header: 'Business', width: 26 },
       { key: 'contactPerson', header: 'Contact', width: 18 },
@@ -646,14 +652,15 @@ const REPORTS = {
   },
   'exec-performance': {
     label: 'Executive Performance',
-    description: 'Per-executive totals for the period: leads added, visits, kits, follow-ups closed and open workload.',
+    description: 'Per-executive totals for the period: leads added, field visits, calls, kits, follow-ups closed and open workload.',
     build: execPerformanceRows,
     totals: true,
     columns: [
       { key: 'executive', header: 'Executive', width: 20 },
       { key: 'totalLeads', header: 'Total Leads', type: 'number', width: 11 },
       { key: 'leadsAdded', header: 'Leads Added', type: 'number', width: 12 },
-      { key: 'visits', header: 'Visits', type: 'number', width: 8 },
+      { key: 'visits', header: 'Field Visits', type: 'number', width: 12 },
+      { key: 'calls', header: 'Calls', type: 'number', width: 8 },
       { key: 'activeDays', header: 'Field Days', type: 'number', width: 10 },
       { key: 'kitsGenerated', header: 'Kits Generated', type: 'number', width: 14 },
       { key: 'kitsDelivered', header: 'Kits Delivered', type: 'number', width: 13 },
@@ -668,13 +675,14 @@ const REPORTS = {
   },
   'daily-summary': {
     label: 'Daily Summary',
-    description: 'Day-by-day activity across the period: new leads, visits, kits, follow-ups closed and emails.',
+    description: 'Day-by-day activity across the period: new leads, field visits, calls, kits, follow-ups closed and emails.',
     build: dailySummaryRows,
     totals: true,
     columns: [
       { key: 'day', header: 'Date', type: 'day', width: 13 },
       { key: 'newLeads', header: 'New Leads', type: 'number', width: 11 },
-      { key: 'visits', header: 'Visits', type: 'number', width: 8 },
+      { key: 'visits', header: 'Field Visits', type: 'number', width: 12 },
+      { key: 'calls', header: 'Calls', type: 'number', width: 8 },
       { key: 'kitsGenerated', header: 'Kits Generated', type: 'number', width: 14 },
       { key: 'kitsDelivered', header: 'Kits Delivered', type: 'number', width: 13 },
       { key: 'followUpsClosed', header: 'Follow-ups Closed', type: 'number', width: 16 },
