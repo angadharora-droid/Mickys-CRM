@@ -38,12 +38,40 @@ import {
   Loader2, Package, Download, Mail, Trash2, RotateCcw, FileText, CheckCircle2,
   AlertTriangle, ArrowLeft, Boxes, Building2, Ship, Store, Sparkles, Eye, EyeOff, Lock, Pencil, ExternalLink,
   MessageSquare, CalendarCheck, Paperclip, Upload, Image as ImageIcon, Target,
-  ClipboardList, Plus, History, UserCog, UserCheck, X, NotebookPen,
+  ClipboardList, Plus, History, UserCog, UserCheck, X, NotebookPen, Phone, MapPin,
 } from 'lucide-react';
 import ExportKitStep from './ExportKitStep';
 import CityCombobox from '@/components/shared/CityCombobox';
 
 const NO_ACTION = '__none__';
+
+/** How the client was reached for a visit report: in person or by phone. */
+const VISIT_TYPES = [
+  { value: 'field', label: 'Field visit', icon: MapPin },
+  { value: 'call', label: 'Call', icon: Phone },
+];
+const visitTypeLabel = (type) => (type === 'call' ? 'Call' : 'Field visit');
+
+/** Two-way toggle between a field visit and a call, shared by the add and edit forms. */
+function VisitTypeToggle({ value, onChange, disabled }) {
+  return (
+    <div className="grid grid-cols-2 gap-2">
+      {VISIT_TYPES.map(({ value: type, label, icon: Icon }) => (
+        <Button
+          key={type}
+          type="button"
+          size="sm"
+          variant={value === type ? 'default' : 'outline'}
+          aria-pressed={value === type}
+          disabled={disabled}
+          onClick={() => onChange(type)}
+        >
+          <Icon className="h-4 w-4" /> {label}
+        </Button>
+      ))}
+    </div>
+  );
+}
 
 const STEPS = ['Client Data', 'Kit Type', 'Rate Review', 'Generate', 'Deliver'];
 
@@ -189,12 +217,13 @@ export default function LeadDetail() {
   const [followUpForm, setFollowUpForm] = useState({ note: '', date: '' });
   const [visitForm, setVisitForm] = useState({
     visitDate: new Date().toISOString().slice(0, 10),
+    visitType: 'field',
     note: '',
     followUpDate: '',
     followUpNote: '',
     actionPoint: '',
   });
-  const [visitEdit, setVisitEdit] = useState(null); // { id, visitDate, note }
+  const [visitEdit, setVisitEdit] = useState(null); // { id, visitDate, visitType, note }
   const [confirmVisitId, setConfirmVisitId] = useState(null);
   const [closingOpen, setClosingOpen] = useState(false);
   const [closeNote, setCloseNote] = useState('');
@@ -377,6 +406,12 @@ export default function LeadDetail() {
   const instructions = [...(lead.instructions || [])].sort(
     (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
   );
+  const callCount = visitReports.filter((v) => v.visitType === 'call').length;
+  const fieldVisitCount = visitReports.length - callCount;
+  const visitCountLabel = [
+    fieldVisitCount ? `${fieldVisitCount} visit${fieldVisitCount === 1 ? '' : 's'}` : '',
+    callCount ? `${callCount} call${callCount === 1 ? '' : 's'}` : '',
+  ].filter(Boolean).join(' · ');
   const openInstructionCount = instructions.filter((i) => i.status === 'open').length;
 
   // Unified history of completed CRM items: cleared action points + closed
@@ -589,6 +624,7 @@ export default function LeadDetail() {
   const addVisitReport = () =>
     run('visit-add', () => api.post(`/leads/${lead._id}/visit-reports`, {
       visitDate: visitForm.visitDate,
+      visitType: visitForm.visitType,
       note: visitForm.note.trim(),
       followUpDate: visitForm.followUpDate,
       followUpNote: visitForm.followUpNote,
@@ -596,14 +632,15 @@ export default function LeadDetail() {
     })).then(() => {
       setVisitForm({
         visitDate: new Date().toISOString().slice(0, 10),
-        note: '', followUpDate: '', followUpNote: '', actionPoint: '',
+        visitType: 'field', note: '', followUpDate: '', followUpNote: '', actionPoint: '',
       });
-      toast.success('Visit report added');
+      toast.success(visitForm.visitType === 'call' ? 'Call report added' : 'Visit report added');
     }).catch(() => {});
 
   const saveVisitEdit = () =>
     run('visit-edit', () => api.put(`/leads/${lead._id}/visit-reports/${visitEdit.id}`, {
       visitDate: visitEdit.visitDate,
+      visitType: visitEdit.visitType,
       note: visitEdit.note.trim(),
     })).then(() => { setVisitEdit(null); toast.success('Visit report updated'); }).catch(() => {});
 
@@ -1110,7 +1147,7 @@ export default function LeadDetail() {
               <NotebookPen className="h-4 w-4 text-muted-foreground" /> Visit Report
             </span>
             {visitReports.length > 0 && (
-              <Badge variant="secondary">{visitReports.length} visit{visitReports.length > 1 ? 's' : ''}</Badge>
+              <Badge variant="secondary">{visitCountLabel}</Badge>
             )}
           </CardTitle>
         </CardHeader>
@@ -1125,12 +1162,20 @@ export default function LeadDetail() {
                   onChange={(e) => setVisitForm((f) => ({ ...f, visitDate: e.target.value }))}
                 />
               </div>
+              <div className="space-y-1.5">
+                <Label>Visit type</Label>
+                <VisitTypeToggle
+                  value={visitForm.visitType}
+                  onChange={(visitType) => setVisitForm((f) => ({ ...f, visitType }))}
+                  disabled={action === 'visit-add'}
+                />
+              </div>
             </div>
             <div className="space-y-1.5">
               <Label>Visit note</Label>
               <Textarea
                 rows={3}
-                placeholder="What happened in the meeting?…"
+                placeholder={visitForm.visitType === 'call' ? 'What was discussed on the call?…' : 'What happened in the meeting?…'}
                 value={visitForm.note}
                 onChange={(e) => setVisitForm((f) => ({ ...f, note: e.target.value }))}
               />
@@ -1186,7 +1231,7 @@ export default function LeadDetail() {
           </div>
 
           {visitReports.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No visits recorded yet.</p>
+            <p className="text-sm text-muted-foreground">No visits or calls recorded yet.</p>
           ) : (
             <ul className="space-y-2">
               {visitReports.map((v) => {
@@ -1201,6 +1246,11 @@ export default function LeadDetail() {
                             type="date"
                             value={visitEdit.visitDate}
                             onChange={(e) => setVisitEdit((s) => ({ ...s, visitDate: e.target.value }))}
+                          />
+                          <VisitTypeToggle
+                            value={visitEdit.visitType}
+                            onChange={(visitType) => setVisitEdit((s) => ({ ...s, visitType }))}
+                            disabled={action === 'visit-edit'}
                           />
                         </div>
                         <Textarea
@@ -1225,8 +1275,11 @@ export default function LeadDetail() {
                     ) : (
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <p className="text-xs font-medium text-muted-foreground">
-                            Visited {formatDate(v.visitDate)}
+                          <p className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                            {v.visitType === 'call'
+                              ? <Phone className="h-3.5 w-3.5 shrink-0" />
+                              : <MapPin className="h-3.5 w-3.5 shrink-0" />}
+                            {visitTypeLabel(v.visitType)} · {formatDate(v.visitDate)}
                           </p>
                           <p className="mt-1 text-sm whitespace-pre-wrap break-words">{v.note}</p>
                           <p className="mt-1 text-xs text-muted-foreground">
@@ -1242,6 +1295,7 @@ export default function LeadDetail() {
                               onClick={() => setVisitEdit({
                                 id: v._id,
                                 visitDate: v.visitDate ? new Date(v.visitDate).toISOString().slice(0, 10) : '',
+                                visitType: v.visitType === 'call' ? 'call' : 'field',
                                 note: v.note,
                               })}
                             >

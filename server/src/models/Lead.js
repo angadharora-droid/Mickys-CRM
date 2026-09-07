@@ -108,12 +108,18 @@ const noteSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+/** How the client was reached for a visit report: an in-person field visit
+ *  or a phone call. */
+const VISIT_TYPES = ['field', 'call'];
+
 /** A record of one client visit: when it happened and what was discussed in
  *  the meeting. The next follow-up and action point are typically derived from
  *  the latest visit (the add endpoint can set both in the same save). */
 const visitReportSchema = new mongoose.Schema(
   {
     visitDate: { type: Date, required: true },
+    // Reports logged before this field existed were all in-person visits.
+    visitType: { type: String, enum: VISIT_TYPES, default: 'field' },
     note: { type: String, required: true, trim: true, maxlength: 4000 },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   },
@@ -362,4 +368,5 @@ Lead.KIT_TYPES = KIT_TYPES;
 Lead.LEAD_STATUSES = LEAD_STATUSES;
 Lead.LEAD_TRANSITIONS = LEAD_TRANSITIONS;
 Lead.ACTION_POINTS = ACTION_POINTS;
+Lead.VISIT_TYPES = VISIT_TYPES;
 module.exports = Lead;

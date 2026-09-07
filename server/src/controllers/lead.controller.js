@@ -1063,8 +1063,9 @@ const addVisitReport = asyncHandler(async (req, res) => {
   if (!note) throw ApiError.badRequest('Visit note is required');
   if (!req.body.visitDate) throw ApiError.badRequest('Visit date is required');
   const visitDate = new Date(req.body.visitDate);
+  const visitType = req.body.visitType === 'call' ? 'call' : 'field';
 
-  lead.visitReports.push({ visitDate, note, createdBy: req.user._id });
+  lead.visitReports.push({ visitDate, visitType, note, createdBy: req.user._id });
 
   // Derived follow-up: scheduling needs a date — a follow-up note without one
   // is ignored rather than wiping any follow-up already on the lead.
@@ -1095,7 +1096,8 @@ const addVisitReport = asyncHandler(async (req, res) => {
 
   await logActivity({
     userId: req.user._id, action: 'LEAD_VISIT_ADDED', entity: 'Lead', entityId: lead._id,
-    details: `Added a visit report on ${lead.refNumber} (visited ${visitDate.toISOString().slice(0, 10)})`,
+    details: `Added a ${visitType === 'call' ? 'call' : 'field visit'} report on ${lead.refNumber} ` +
+      `(${visitType === 'call' ? 'called' : 'visited'} ${visitDate.toISOString().slice(0, 10)})`,
     ip: req.ip,
   });
 
@@ -1103,7 +1105,7 @@ const addVisitReport = asyncHandler(async (req, res) => {
   res.status(201).json({ success: true, data: populated });
 });
 
-// PUT /api/leads/:id/visit-reports/:visitId  (edit a visit's date / note)
+// PUT /api/leads/:id/visit-reports/:visitId  (edit a visit's date / type / note)
 const updateVisitReport = asyncHandler(async (req, res) => {
   const lead = await Lead.findById(req.params.id);
   if (!lead) throw ApiError.notFound('Lead not found');
@@ -1118,6 +1120,7 @@ const updateVisitReport = asyncHandler(async (req, res) => {
   if (!req.body.visitDate) throw ApiError.badRequest('Visit date is required');
 
   visit.visitDate = new Date(req.body.visitDate);
+  if (req.body.visitType) visit.visitType = req.body.visitType === 'call' ? 'call' : 'field';
   visit.note = note;
   lead.modifiedBy = req.user._id;
   await lead.save();

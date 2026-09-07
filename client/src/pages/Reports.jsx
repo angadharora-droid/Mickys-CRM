@@ -91,10 +91,14 @@ function summarize(type, report) {
   switch (type) {
     case 'visits':
       return [
-        { label: 'Visits', value: rows.length, tone: 'sky' },
+        { label: 'Field visits', value: count((r) => r.visitType !== 'Call'), tone: 'sky' },
+        { label: 'Calls', value: count((r) => r.visitType === 'Call') },
         { label: 'Businesses', value: uniq('refNumber') },
         { label: 'Cities', value: uniq('city') },
-        { label: 'Days in field', value: new Set(rows.map((r) => String(r.visitDate).slice(0, 10))).size },
+        {
+          label: 'Days in field',
+          value: new Set(rows.filter((r) => r.visitType !== 'Call').map((r) => String(r.visitDate).slice(0, 10))).size,
+        },
       ];
     case 'leads':
       return [
@@ -136,7 +140,8 @@ function summarize(type, report) {
     case 'exec-performance':
       return [
         { label: 'Leads added', value: t.leadsAdded ?? 0, tone: 'sky' },
-        { label: 'Visits', value: t.visits ?? 0 },
+        { label: 'Field visits', value: t.visits ?? 0 },
+        { label: 'Calls', value: t.calls ?? 0 },
         { label: 'Kits generated', value: t.kitsGenerated ?? 0 },
         { label: 'Kits delivered', value: t.kitsDelivered ?? 0, tone: 'green' },
         { label: 'Follow-ups closed', value: t.followUpsClosed ?? 0 },
@@ -145,7 +150,8 @@ function summarize(type, report) {
     case 'daily-summary':
       return [
         { label: 'New leads', value: t.newLeads ?? 0, tone: 'sky' },
-        { label: 'Visits', value: t.visits ?? 0 },
+        { label: 'Field visits', value: t.visits ?? 0 },
+        { label: 'Calls', value: t.calls ?? 0 },
         { label: 'Kits generated', value: t.kitsGenerated ?? 0 },
         { label: 'Kits delivered', value: t.kitsDelivered ?? 0, tone: 'green' },
         { label: 'Follow-ups closed', value: t.followUpsClosed ?? 0 },
