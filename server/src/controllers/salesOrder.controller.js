@@ -21,6 +21,7 @@ const {
   funnel,
 } = require('../services/orderPipeline.service');
 const { dayRangeContext } = require('../services/report.service');
+const { onCustomerOrdersChanged } = require('../services/leadScore.service');
 const { getPagination, buildMeta } = require('../utils/pagination');
 const { logActivity } = require('../services/activity.service');
 const { searchRegex } = require('../utils/sanitize');
@@ -171,6 +172,9 @@ const createSalesOrder = asyncHandler(async (req, res) => {
     details: `Created sales order ${number} for ${customerName} (${built.length} items, Rs. ${total.toLocaleString('en-IN')})`,
     ip: req.ip,
   });
+  // First order = "sample order bought", every later one a repeat order on the
+  // lead's score card.
+  await onCustomerOrdersChanged(order.customer, req.user);
 
   res
     .status(201)
@@ -243,6 +247,7 @@ const updateSalesOrder = asyncHandler(async (req, res) => {
   }
 
   const { customerName, customerId, items, notes } = req.body;
+  const previousCustomer = order.customer;
   // An edit that leaves customerId out is not permission to drop the freeze:
   // the dialog clears its frozen-customer selection the moment the typed name
   // differs by a character, and taking that at face value would re-price an
@@ -273,6 +278,11 @@ const updateSalesOrder = asyncHandler(async (req, res) => {
     details: `Updated sales order ${order.number}`,
     ip: req.ip,
   });
+  // Re-score the lead(s) involved when the order changed hands.
+  if (String(previousCustomer || '') !== String(order.customer || '')) {
+    await onCustomerOrdersChanged(previousCustomer, req.user);
+    await onCustomerOrdersChanged(order.customer, req.user);
+  }
 
   res.json({
     success: true,
@@ -470,6 +480,11 @@ const updateStatus = asyncHandler(async (req, res) => {
           : ` — accounts email NOT sent: ${accountsEmail.reason}`)
   );
   announce(order, req.user);
+  // Cancelling (or un-cancelling) changes what counts as an order on the
+  // lead's score card.
+  if (status === 'cancelled' || previousStatus === 'cancelled') {
+    await onCustomerOrdersChanged(order.customer?._id || order.customer, req.user);
+  }
 
   res.json({
     success: true,
@@ -575,6 +590,8 @@ const submitFeedback = asyncHandler(async (req, res) => {
     });
   }
   await populatePipeline(order);
+  // Order feedback counts as "feedback taken" on the lead's score card.
+  await onCustomerOrdersChanged(order.customer?._id || order.customer, req.user);
 
   res.json({
     success: true,
@@ -696,6 +713,7 @@ const deleteSalesOrder = asyncHandler(async (req, res) => {
     details: `Deleted sales order ${order.number} (${order.customerName})`,
     ip: req.ip,
   });
+  await onCustomerOrdersChanged(order.customer, req.user);
 
   res.json({ success: true, message: `Sales order ${order.number} deleted` });
 });

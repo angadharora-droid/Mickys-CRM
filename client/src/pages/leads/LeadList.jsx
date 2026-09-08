@@ -5,10 +5,13 @@ import api, { apiError } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import {
   ROLES, ROLE_LABELS, LEAD_STATUSES, STATUS_LABELS, BUSINESS_TYPES, KIT_TYPES, KIT_TYPE_LABELS,
+  LEAD_STAGES, STAGE_LABELS,
 } from '@/lib/constants';
 import { formatDate } from '@/lib/utils';
 import PageHeader from '@/components/shared/PageHeader';
 import StatusBadge from '@/components/shared/StatusBadge';
+import StageBadge from '@/components/shared/StageBadge';
+import ScoreBadge from '@/components/shared/ScoreBadge';
 import Pagination from '@/components/shared/Pagination';
 import EmptyState from '@/components/shared/EmptyState';
 import TableSkeleton from '@/components/shared/TableSkeleton';
@@ -40,6 +43,8 @@ export default function LeadList() {
   const [searchParams, setSearchParams] = useSearchParams();
   const search = searchParams.get('q') || '';
   const status = searchParams.get('status') || ALL;
+  const stage = searchParams.get('stage') || ALL;
+  const sort = searchParams.get('sort') || 'newest';
   const kitType = searchParams.get('kit') || ALL;
   // Business type, state and daily usage are multi-select: comma-separated
   // lists in the URL, empty = all. The raw strings are what effects/deps key
@@ -132,6 +137,8 @@ export default function LeadList() {
       const params = { page, limit: 100 };
       if (search) params.search = search;
       if (status !== ALL) params.status = status;
+      if (stage !== ALL) params.stage = stage;
+      if (sort === 'score') params.sort = 'score';
       if (kitType !== ALL) params.kitType = kitType;
       if (bizParam) params.businessType = bizParam;
       if (usageParam) params.dailyUsage = usageParam;
@@ -147,7 +154,7 @@ export default function LeadList() {
     } finally {
       setLoading(false);
     }
-  }, [page, search, status, kitType, bizParam, usageParam, execId, creatorId, city, stateParam]);
+  }, [page, search, status, stage, sort, kitType, bizParam, usageParam, execId, creatorId, city, stateParam]);
 
   useEffect(() => {
     const t = setTimeout(fetchLeads, search ? 350 : 0);
@@ -162,7 +169,7 @@ export default function LeadList() {
 
   const toggleRow = (id) => setExpandedRows((c) => ({ ...c, [id]: !c[id] }));
   const hasFilters =
-    search || status !== ALL || kitType !== ALL || businessTypes.length > 0 ||
+    search || status !== ALL || stage !== ALL || sort !== 'newest' || kitType !== ALL || businessTypes.length > 0 ||
     usages.length > 0 || execId !== ALL || creatorId !== ALL || city !== ALL ||
     selectedStates.length > 0;
 
@@ -256,6 +263,15 @@ export default function LeadList() {
               onChange={(e) => setFilter('q', e.target.value)}
             />
           </div>
+
+          {/* Funnel stage: New / Live / Client made / Turned down */}
+          <Select value={stage} onValueChange={(v) => setFilter('stage', v)}>
+            <SelectTrigger><SelectValue placeholder="Funnel stage" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL}>All stages</SelectItem>
+              {LEAD_STAGES.map((s) => <SelectItem key={s} value={s}>{STAGE_LABELS[s]}</SelectItem>)}
+            </SelectContent>
+          </Select>
 
           <Select value={status} onValueChange={(v) => setFilter('status', v)}>
             <SelectTrigger><SelectValue placeholder="Status" /></SelectTrigger>
@@ -415,6 +431,15 @@ export default function LeadList() {
               </SelectContent>
             </Select>
           )}
+
+          {/* Order: newest first, or the score card's hottest leads first */}
+          <Select value={sort} onValueChange={(v) => setFilter('sort', v === 'newest' ? '' : v)}>
+            <SelectTrigger><SelectValue placeholder="Sort" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="newest">Newest first</SelectItem>
+              <SelectItem value="score">Highest score first</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
         {hasFilters && (
           <Button variant="ghost" size="sm" className="mt-3" onClick={clearFilters}>
@@ -474,6 +499,7 @@ export default function LeadList() {
                   <TableHead className="hidden lg:table-cell">Daily usage</TableHead>
                   <TableHead className="hidden lg:table-cell">Owner</TableHead>
                   <TableHead className="hidden lg:table-cell">Created by</TableHead>
+                  <TableHead className="hidden md:table-cell">Score</TableHead>
                   <TableHead>Status</TableHead>
                 </TableRow>
               </TableHeader>
@@ -518,8 +544,10 @@ export default function LeadList() {
                         <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">{lead.dailyUsage || ''}</TableCell>
                         <TableCell className="hidden lg:table-cell">{lead.assignedExecId?.name || '—'}</TableCell>
                         <TableCell className="hidden lg:table-cell text-muted-foreground">{lead.createdBy?.name || '—'}</TableCell>
+                        <TableCell className="hidden md:table-cell"><ScoreBadge score={lead.score || 0} /></TableCell>
                         <TableCell>
                           <div className="flex flex-col items-start gap-1">
+                            <StageBadge stage={lead.stage} />
                             <div className="flex items-center gap-1.5">
                               <StatusBadge status={lead.status} />
                               {lead.locked && <Lock className="h-3 w-3 text-muted-foreground" aria-label="Locked" />}
@@ -534,8 +562,12 @@ export default function LeadList() {
                       </TableRow>
                       {isExpanded && (
                         <TableRow className="bg-muted/25 hover:bg-muted/25 lg:hidden">
-                          <TableCell colSpan={canSeeAll ? 10 : 9} className="px-4 py-3">
+                          <TableCell colSpan={canSeeAll ? 11 : 10} className="px-4 py-3">
                             <dl className="grid gap-3 text-sm sm:grid-cols-3">
+                              <div>
+                                <dt className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Score</dt>
+                                <dd className="mt-1"><ScoreBadge score={lead.score || 0} /></dd>
+                              </div>
                               <div>
                                 <dt className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">City</dt>
                                 <dd className="mt-1 font-medium">{[lead.city, lead.state].filter(Boolean).join(', ')}</dd>

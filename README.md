@@ -123,6 +123,41 @@ New Lead → Kit Selected → Rates Confirmed → Kit Generated → Delivered
 5. **Deliver** — email the ZIP to the client (sent via the shared SMTP account but presented as the
    exec, with reply-to set to them and the kit inbox BCC'd) or download it / individual PDFs.
 
+## Lead Status Funnel & Score Card
+
+Alongside the kit pipeline, every lead sits on a commercial **funnel** and carries a **score card**.
+
+```
+New → Live → Client made          (Turned down sits beside the funnel, with a reason)
+```
+
+- A lead goes **Live** automatically on its first activity (kit selected, visit or call logged,
+  samples given, feedback taken), becomes **Client made** when appointed as a sales-order customer
+  (or when its first order is booked), and is **Turned down** by hand with a mandatory reason. Every
+  stage can also be set by hand on the lead page; each move is kept in `stageHistory`.
+- The **score card** awards points once per milestone (repeat orders per order). Defaults:
+
+  | # | Milestone | Points | Earned when |
+  |---|---|---|---|
+  | 1 | New lead | 0 | the lead exists |
+  | 2 | Kit generated | 10 | Step 4 |
+  | 3 | Kit delivered | 10 | Step 5 (email or manual) |
+  | 4 | Samples given | 10 | logged under *Samples & Feedback* |
+  | 5 | Visit done | 20 | first field visit in the Visit Report |
+  | 6 | Feedback taken | 5 | client feedback logged (or order feedback) |
+  | 7 | Calls done (at least 2) | 10 | calls in the Visit Report |
+  | 8 | Client made | 20 | appointed as customer / marked Client made |
+  | 9 | Sample order bought | 10 | first sales order for the customer |
+  | 10 | Repeat order | 5 / order | every further sales order |
+
+  Weights are editable under **Settings → Lead Score** (saving recomputes every lead). The score
+  shows on the lead page (with the full checklist), the leads list (sortable, filterable by stage),
+  both dashboards (funnel + top leads + per-owner league), the Lead Tracker and the
+  **Lead Score Card** / **Executive Performance** reports.
+- After deploying to an existing database run `cd server && npm run backfill:lead-scores -- --apply`
+  once: it infers a stage for old leads (client if appointed, live if already worked) and stores
+  their scores. A dry run without `--apply` only reports what it would do.
+
 ## Feature Highlights
 
 - **RBAC** - `admin`, `sales_exec`; execs see only their own leads, admins see all; rate master,

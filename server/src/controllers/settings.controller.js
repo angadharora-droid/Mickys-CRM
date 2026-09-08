@@ -5,6 +5,7 @@ const { logActivity } = require('../services/activity.service');
 const ApiError = require('../utils/ApiError');
 const { parseSheetUrl, syncMetaLeads } = require('../services/metaSync.service');
 const { resolveSchedule, rescheduleDailyReport } = require('../services/dailyReport.service');
+const { recomputeAllScores, RULES: SCORE_RULES } = require('../services/leadScore.service');
 
 const pad2 = (n) => String(n).padStart(2, '0');
 
@@ -33,18 +34,38 @@ async function withReportSchedule(obj) {
   return obj;
 }
 
+/** The score-card rule list rides along so the settings screen can label the
+ *  weights without a copy of the rules on the client. */
+const withScoreRules = (obj) => {
+  obj.leadScore = {
+    ...(obj.leadScore || {}),
+    rules: SCORE_RULES.map(({ key, label, defaultPoints, perEvent }) => ({ key, label, defaultPoints, perEvent: Boolean(perEvent) })),
+  };
+  return obj;
+};
+
 // GET /api/settings
 const getSettings = asyncHandler(async (_req, res) => {
   const settings = await Setting.getGlobal();
   const obj = settings.toObject();
   if (obj.email?.pass) obj.email.pass = '********'; // never expose the SMTP password
-  res.json({ success: true, data: await withReportSchedule(obj) });
+  res.json({ success: true, data: withScoreRules(await withReportSchedule(obj)) });
 });
 
 // PUT /api/settings
 const updateSettings = asyncHandler(async (req, res) => {
   const settings = await Setting.getGlobal();
-  const { email, company, kit, salesOrder, dailyReport, export: exportCfg } = req.body;
+  const { email, company, kit, salesOrder, dailyReport, leadScore, export: exportCfg } = req.body;
+
+  let scoresRecomputed = null;
+  if (leadScore) {
+    const current = settings.leadScore.toObject();
+    settings.leadScore = {
+      ...current,
+      ...leadScore,
+      points: { ...current.points, ...(leadScore.points || {}) },
+    };
+  }
 
   if (email) {
     // Keep the stored password when the client sends back the mask
@@ -78,6 +99,14 @@ const updateSettings = asyncHandler(async (req, res) => {
       console.error(`[settings] daily report reschedule failed: ${err.message}`)
     );
   }
+  // New weights apply to every lead straight away, not just the next one
+  // touched — the stored totals are what lists and dashboards sort on.
+  if (leadScore) {
+    scoresRecomputed = await recomputeAllScores().catch((err) => {
+      console.error(`[settings] lead score recompute failed: ${err.message}`);
+      return null;
+    });
+  }
 
   await logActivity({
     userId: req.user._id, action: 'SETTINGS_UPDATED', entity: 'Setting', entityId: settings._id,
@@ -85,13 +114,20 @@ const updateSettings = asyncHandler(async (req, res) => {
       'Updated system settings' +
       (dailyReport
         ? ` — daily report ${dailyReport.enabled === false ? 'switched off' : `at ${pad2(settings.dailyReport.hourIst ?? '--')}:${pad2(settings.dailyReport.minuteIst ?? '--')} IST`}`
-        : ''),
+        : '') +
+      (scoresRecomputed ? ` — lead score weights changed, ${scoresRecomputed.updated} of ${scoresRecomputed.leads} lead scores updated` : ''),
     ip: req.ip,
   });
 
   const obj = settings.toObject();
   if (obj.email?.pass) obj.email.pass = '********';
-  res.json({ success: true, data: await withReportSchedule(obj) });
+  res.json({
+    success: true,
+    message: scoresRecomputed
+      ? `Settings saved — ${scoresRecomputed.updated} of ${scoresRecomputed.leads} lead scores updated`
+      : 'Settings saved',
+    data: withScoreRules(await withReportSchedule(obj)),
+  });
 });
 
 // POST /api/settings/test-email — sends a test message to the current admin

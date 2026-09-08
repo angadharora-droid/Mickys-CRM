@@ -5,6 +5,7 @@ const Lead = require('../models/Lead');
 const { logActivity } = require('../services/activity.service');
 const { searchRegex } = require('../utils/sanitize');
 const { istDayStart, istDateLabel } = require('../utils/istDate');
+const { setStage, refreshLeadScore, refreshLeadScoreById } = require('../services/leadScore.service');
 
 const pickBody = (body) => ({
   companyName: body.companyName,
@@ -64,6 +65,14 @@ const createCustomer = asyncHandler(async (req, res) => {
     frozenAt: new Date(),
     appointedBy: req.user._id,
   });
+
+  // Appointing is the client being made: the lead moves to the "client" stage
+  // of the funnel and earns the score-card points for it.
+  if (setStage(lead, 'client', { user: req.user, source: 'system', reason: 'Appointed as sales-order customer' })) {
+    lead.modifiedBy = req.user._id;
+    await lead.save();
+  }
+  await refreshLeadScore(lead);
 
   await logActivity({
     userId: req.user._id,
@@ -131,6 +140,9 @@ const updateCustomer = asyncHandler(async (req, res) => {
 const deleteCustomer = asyncHandler(async (req, res) => {
   const customer = await AppointedCustomer.findByIdAndDelete(req.params.id);
   if (!customer) throw ApiError.notFound('Customer not found');
+  // The lead's orders are no longer reachable through this customer, so its
+  // order-based points go; its stage is left as it is for the team to judge.
+  if (customer.lead) await refreshLeadScoreById(customer.lead);
 
   await logActivity({
     userId: req.user._id,

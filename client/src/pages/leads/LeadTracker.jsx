@@ -2,10 +2,12 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import api, { apiError } from '@/lib/api';
-import { LEAD_STATUSES, STATUS_LABELS, ROLE_LABELS, CHART_COLORS, CHART_TOOLTIP_STYLE } from '@/lib/constants';
+import { LEAD_STATUSES, STATUS_LABELS, STAGE_LABELS, ROLE_LABELS, CHART_COLORS, CHART_TOOLTIP_STYLE } from '@/lib/constants';
 import { formatDate, cn } from '@/lib/utils';
 import PageHeader from '@/components/shared/PageHeader';
 import StatusBadge from '@/components/shared/StatusBadge';
+import StageBadge from '@/components/shared/StageBadge';
+import ScoreBadge from '@/components/shared/ScoreBadge';
 import Pagination from '@/components/shared/Pagination';
 import EmptyState from '@/components/shared/EmptyState';
 import TableSkeleton from '@/components/shared/TableSkeleton';
@@ -30,6 +32,14 @@ const STATUS_COLS = [
   ['rates_confirmed', 'Rates'],
   ['generated', 'Generated'],
   ['delivered', 'Delivered'],
+];
+
+// Funnel stage counts + score-card points per owner, shown beside the statuses.
+const STAGE_COLS = [
+  ['live', 'Live'],
+  ['clients', 'Clients'],
+  ['turnedDown', 'Turned down'],
+  ['points', 'Points'],
 ];
 
 const DATE_PRESETS = [
@@ -99,6 +109,8 @@ const DETAIL_COLUMNS = [
   ['Business type', (l) => l.businessType],
   ['City', (l) => l.city],
   ['Owner', (l) => l.assignedExecId?.name || ''],
+  ['Funnel stage', (l) => STAGE_LABELS[l.stage] || 'New'],
+  ['Score', (l) => l.score || 0],
   ['Action point', (l) => l.actionPoint],
   ['Internal note', (l) => internalNoteText(l)],
   ['Follow-up note', (l) => l.followUp?.note],
@@ -214,7 +226,7 @@ export default function LeadTracker() {
 
     const ownerRows = [
       ...metaRows,
-      excelXmlRow(['Owner', 'Role', 'Total', 'New', 'Kit', 'Rates', 'Generated', 'Delivered', 'First created', 'Last created'], 'Header'),
+      excelXmlRow(['Owner', 'Role', 'Total', 'New', 'Kit', 'Rates', 'Generated', 'Delivered', 'Live', 'Clients made', 'Turned down', 'Score points', 'First created', 'Last created'], 'Header'),
       ...owners.map((c) => excelXmlRow([
         c.name,
         ROLE_LABELS[c.role] || c.role || '',
@@ -224,6 +236,10 @@ export default function LeadTracker() {
         c.rates_confirmed,
         c.generated,
         c.delivered,
+        c.live || 0,
+        c.clients || 0,
+        c.turnedDown || 0,
+        c.points || 0,
         formatDate(c.firstAt),
         formatDate(c.lastAt),
       ])),
@@ -372,6 +388,9 @@ export default function LeadTracker() {
                     {STATUS_COLS.map(([k, label]) => (
                       <TableHead key={k} className="text-right whitespace-nowrap">{label}</TableHead>
                     ))}
+                    {STAGE_COLS.map(([k, label]) => (
+                      <TableHead key={k} className={cn('text-right whitespace-nowrap', k === 'live' && 'border-l')}>{label}</TableHead>
+                    ))}
                     <TableHead className="whitespace-nowrap">Last created</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -392,6 +411,20 @@ export default function LeadTracker() {
                         {STATUS_COLS.map(([k]) => (
                           <TableCell key={k} className={cn('text-right tabular-nums', !c[k] && 'text-muted-foreground/50')}>
                             {c[k]}
+                          </TableCell>
+                        ))}
+                        {STAGE_COLS.map(([k]) => (
+                          <TableCell
+                            key={k}
+                            className={cn(
+                              'text-right tabular-nums',
+                              k === 'live' && 'border-l',
+                              k === 'points' && 'font-semibold',
+                              k === 'clients' && c[k] && 'text-emerald-700 dark:text-emerald-400',
+                              !c[k] && 'text-muted-foreground/50'
+                            )}
+                          >
+                            {(c[k] || 0).toLocaleString('en-IN')}
                           </TableCell>
                         ))}
                         <TableCell className="whitespace-nowrap text-muted-foreground">{formatDate(c.lastAt)}</TableCell>
@@ -451,6 +484,8 @@ export default function LeadTracker() {
                       <TableHead className="hidden sm:table-cell">Reference</TableHead>
                       <TableHead>Client</TableHead>
                       <TableHead className="hidden md:table-cell">Owner</TableHead>
+                      <TableHead className="hidden md:table-cell">Funnel</TableHead>
+                      <TableHead className="hidden md:table-cell">Score</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead className="hidden sm:table-cell whitespace-nowrap">Lead date</TableHead>
                       <TableHead className="hidden lg:table-cell whitespace-nowrap">Created</TableHead>
@@ -465,6 +500,8 @@ export default function LeadTracker() {
                           <p className="text-xs text-muted-foreground mt-0.5">{lead.contactPerson} · {lead.city}</p>
                         </TableCell>
                         <TableCell className="hidden md:table-cell">{lead.assignedExecId?.name || '—'}</TableCell>
+                        <TableCell className="hidden md:table-cell"><StageBadge stage={lead.stage} /></TableCell>
+                        <TableCell className="hidden md:table-cell"><ScoreBadge score={lead.score || 0} /></TableCell>
                         <TableCell><StatusBadge status={lead.status} /></TableCell>
                         <TableCell className="hidden sm:table-cell whitespace-nowrap text-muted-foreground">{formatDate(lead.leadDate)}</TableCell>
                         <TableCell className="hidden lg:table-cell whitespace-nowrap text-muted-foreground">{formatDate(lead.createdAt)}</TableCell>
@@ -518,6 +555,7 @@ export default function LeadTracker() {
                       <TableHead>Owner</TableHead>
                       <TableHead className="text-right">Total</TableHead>
                       {STATUS_COLS.map(([k, label]) => <TableHead key={k} className="text-right">{label}</TableHead>)}
+                      {STAGE_COLS.map(([k, label]) => <TableHead key={k} className="text-right whitespace-nowrap">{label}</TableHead>)}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -526,6 +564,7 @@ export default function LeadTracker() {
                         <TableCell>{c.name}</TableCell>
                         <TableCell className="text-right font-semibold">{c.total}</TableCell>
                         {STATUS_COLS.map(([k]) => <TableCell key={k} className="text-right tabular-nums">{c[k]}</TableCell>)}
+                        {STAGE_COLS.map(([k]) => <TableCell key={k} className="text-right tabular-nums">{c[k] || 0}</TableCell>)}
                       </TableRow>
                     ))}
                   </TableBody>
@@ -542,6 +581,8 @@ export default function LeadTracker() {
                       <TableHead>Reference</TableHead>
                       <TableHead>Client</TableHead>
                       <TableHead>Owner</TableHead>
+                      <TableHead>Funnel</TableHead>
+                      <TableHead className="text-right">Score</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Created</TableHead>
                     </TableRow>
@@ -555,6 +596,8 @@ export default function LeadTracker() {
                           <p className="text-xs text-muted-foreground">{lead.contactPerson} · {lead.city}</p>
                         </TableCell>
                         <TableCell>{lead.assignedExecId?.name || '-'}</TableCell>
+                        <TableCell>{STAGE_LABELS[lead.stage] || 'New'}</TableCell>
+                        <TableCell className="text-right tabular-nums">{lead.score || 0}</TableCell>
                         <TableCell>{STATUS_LABELS[lead.status] || lead.status}</TableCell>
                         <TableCell>{formatDate(lead.createdAt)}</TableCell>
                       </TableRow>

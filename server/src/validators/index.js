@@ -165,6 +165,41 @@ const noteSchema = z.object({
   text: z.string().trim().min(1, 'Note text is required').max(4000),
 });
 
+// ---------- Lead status funnel + score card ----------
+const leadStageSchema = z
+  .object({
+    stage: z.enum(['new', 'live', 'client', 'turned_down']),
+    reason: z.string().trim().max(1000).optional().or(z.literal('')),
+  })
+  .refine((d) => d.stage !== 'turned_down' || Boolean(d.reason), {
+    message: 'Record why the lead turned down',
+    path: ['reason'],
+  });
+
+const sampleSchema = z.object({
+  givenOn: z.coerce.date(),
+  products: z.string().trim().max(500).optional().or(z.literal('')),
+  note: z.string().trim().max(4000).optional().or(z.literal('')),
+});
+
+const leadFeedbackSchema = z.object({
+  takenOn: z.coerce.date(),
+  note: z.string().trim().min(1, 'Write down what the client said').max(4000),
+});
+
+const leadScorePointsSchema = z.object({
+  newLead: z.coerce.number().min(0).max(1000).optional(),
+  kitGenerated: z.coerce.number().min(0).max(1000).optional(),
+  kitDelivered: z.coerce.number().min(0).max(1000).optional(),
+  sampleGiven: z.coerce.number().min(0).max(1000).optional(),
+  visitDone: z.coerce.number().min(0).max(1000).optional(),
+  feedbackTaken: z.coerce.number().min(0).max(1000).optional(),
+  callsDone: z.coerce.number().min(0).max(1000).optional(),
+  clientMade: z.coerce.number().min(0).max(1000).optional(),
+  sampleOrder: z.coerce.number().min(0).max(1000).optional(),
+  repeatOrder: z.coerce.number().min(0).max(1000).optional(),
+});
+
 const instructionSchema = z.object({
   text: z.string().trim().min(1, 'Instruction text is required').max(4000),
 });
@@ -379,6 +414,13 @@ const settingsSchema = z.object({
       accountsEmails: accountsEmailsSchema.optional(),
       emailAccountsOnConfirm: z.boolean().optional(),
       monthlyRevenueTarget: z.coerce.number().min(0).optional(),
+    })
+    .optional(),
+  // Lead score card weights (points per milestone) and the calls threshold.
+  leadScore: z
+    .object({
+      points: leadScorePointsSchema.optional(),
+      callsRequired: z.coerce.number().int().min(1).max(20).optional(),
     })
     .optional(),
   // The morning digest's schedule. Hour/minute are IST wall-clock; null
@@ -622,6 +664,9 @@ module.exports = {
   generateKitSchema,
   saveTermsSchema,
   noteSchema,
+  leadStageSchema,
+  sampleSchema,
+  leadFeedbackSchema,
   instructionSchema,
   visitReportSchema,
   updateVisitReportSchema,
