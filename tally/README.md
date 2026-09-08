@@ -146,10 +146,14 @@ Two ways, both hitting `POST /api/stock/sync` on the backend:
 > CRM (`TallyInvoice`), and the morning daily-report email totals the ones
 > dated the previous day as "Invoiced revenue", month-to-date, against the
 > monthly target set under Sales Orders → Settings. Revenue is the voucher's
-> **basic value before GST** (`BASICVALUE` = total of its ledger entries under
-> Sales Accounts — the sales register's "Basic Value" column); the billed
-> total with GST (`AMOUNT`) is shown beside it. A release that exports
-> BASICVALUE empty makes the report fall back to the billed total and say so.
+> **basic value before GST** (the sales register's "Basic Value" / "Sales
+> A/c" column). Because TallyPrime releases differ in which method they
+> evaluate, the TDL sends it three ways — `BASICVALUE` (Sales Accounts
+> ledger total), `ITEMVALUE` (item-line total) and `TAX` (Duties & Taxes
+> total, so basic = amount − tax) — and the backend keeps whichever arrives
+> (the lower of the first two where both do). The billed total with GST
+> (`AMOUNT`) is shown beside it. If none arrives the register and the
+> report fall back to the billed total and mark the row with `*`.
 >
 > If a push arrives with stock but **zero invoices**, the Tally machine is
 > still running the old TDL — re-download it from the URL and replace the

@@ -22,9 +22,14 @@ const tallyInvoiceSchema = new mongoose.Schema(
     date: { type: Date, default: null, index: true },
     party: { type: String, default: '', index: true },
     // As billed (with GST), and the pre-GST basic value the revenue report
-    // runs on. basicValue stays 0 for vouchers sent by a TDL without it.
+    // runs on — chosen from the three figures the TDL sends (kept below so a
+    // wrong choice can be seen). basicValue stays 0 for vouchers sent by a
+    // TDL without them.
     amount: { type: Number, default: 0 },
     basicValue: { type: Number, default: 0 },
+    salesLedgerValue: { type: Number, default: 0 },
+    itemValue: { type: Number, default: 0 },
+    tax: { type: Number, default: 0 },
     reference: { type: String, default: '' },
     narration: { type: String, default: '' },
     orderNos: { type: String, default: '' },

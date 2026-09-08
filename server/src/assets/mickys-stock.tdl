@@ -322,7 +322,8 @@
 
 [Line: MickysInvoiceLine]
     Fields : MIGuid, MIVchNo, MIVchType, MIDate, MIParty
-    Fields : MIReference, MIOrderNos, MINarration, MIAmount, MIBasicValue
+    Fields : MIReference, MIOrderNos, MINarration
+    Fields : MIAmount, MIBasicValue, MIItemValue, MITax
     XMLTag : "SALESINVOICE"
 
 [Field: MIGuid]
@@ -373,14 +374,27 @@
     Set as : $Amount
     XMLTag : "AMOUNT"
 
-;; Basic value before GST - the total of the voucher's ledger entries that
-;; belong to Sales Accounts, i.e. the "Basic Value" column of Tally's sales
-;; register. The CRM's daily revenue report uses this figure and falls back
-;; to AMOUNT if a release exports it empty.
+;; Basic value before GST - the "Basic Value" / "Sales A/c" column of
+;; Tally's sales register - sent three ways, because which method a
+;; release evaluates correctly differs; the CRM keeps whichever arrives:
+;;   BASICVALUE  total of the voucher's ledger entries under Sales Accounts
+;;   ITEMVALUE   total of the voucher's item lines (the register's "Value")
+;;   TAX         total of its Duties & Taxes ledger entries (CGST + SGST),
+;;               from which basic = AMOUNT - TAX when the other two are empty
 [Field: MIBasicValue]
     Type   : Amount
     Set as : $$FilterAmtTotal:AllLedgerEntries:MickysIsSalesLedger:Amount
     XMLTag : "BASICVALUE"
+
+[Field: MIItemValue]
+    Type   : Amount
+    Set as : $$CollAmtTotal:AllInventoryEntries:Amount
+    XMLTag : "ITEMVALUE"
+
+[Field: MITax]
+    Type   : Amount
+    Set as : $$FilterAmtTotal:AllLedgerEntries:MickysIsTaxLedger:Amount
+    XMLTag : "TAX"
 
 [Collection: MickysSalesInvoices]
     Type   : Voucher
@@ -392,3 +406,4 @@
     MickysInvoiceFrom   : $$MachineDate - 60
     MickysIsSalesVch    : ($VoucherTypeName = "Sales") AND (NOT $IsCancelled) AND (NOT $IsOptional) AND ($Date >= @@MickysInvoiceFrom)
     MickysIsSalesLedger : $$IsLedOfGrp:$LedgerName:$$GroupSales
+    MickysIsTaxLedger   : $$IsLedOfGrp:$LedgerName:"Duties & Taxes"
