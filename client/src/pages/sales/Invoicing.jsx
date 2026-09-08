@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import api, { apiError } from '@/lib/api';
 import { PAYMENT_MODE_LABELS, daysSince } from '@/lib/constants';
@@ -22,6 +22,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   Search, Banknote, FileCheck2, Link2, Loader2, RefreshCw, AlertTriangle, Landmark, Clock, Eye, CheckCircle2,
+  FileSpreadsheet,
 } from 'lucide-react';
 
 const paymentText = (p) => {
@@ -210,6 +211,9 @@ export default function Invoicing() {
       >
         <Button variant="outline" onClick={fetchQueue}>
           <RefreshCw className="h-4 w-4" /> Refresh
+        </Button>
+        <Button asChild variant="outline">
+          <Link to="/sales/register"><FileSpreadsheet className="h-4 w-4" /> Sales register</Link>
         </Button>
       </PageHeader>
 

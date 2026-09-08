@@ -2,12 +2,14 @@ const asyncHandler = require('../utils/asyncHandler');
 const ApiError = require('../utils/ApiError');
 const SalesOrder = require('../models/SalesOrder');
 const StockSyncLog = require('../models/StockSyncLog');
+const TallyInvoice = require('../models/TallyInvoice');
 const { linkInvoiceManually, announce, paymentLabel } = require('../services/orderPipeline.service');
+const { dayRangeContext, buildWorkbook } = require('../services/report.service');
 const { withDocumentRefs, populatePipeline } = require('./salesOrder.controller');
 const { getPagination, buildMeta } = require('../utils/pagination');
 const { logActivity } = require('../services/activity.service');
 const { searchRegex } = require('../utils/sanitize');
-const { istDayStart } = require('../utils/istDate');
+const { istDayStart, istDateKey } = require('../utils/istDate');
 
 /**
  * The accounts desk's view of the pipeline. Accounts do their real work in
@@ -157,4 +159,149 @@ const linkInvoice = asyncHandler(async (req, res) => {
   });
 });
 
-module.exports = { listQueue, verifyPayment, linkInvoice };
+// ---------------------------------------------------------------------------
+// The Tally sales register — every sales invoice the push has mirrored
+// (models/TallyInvoice.js), laid out as Tally's own register reads: date,
+// party, voucher type and number, basic value (the Sales A/c amount), GST
+// with round-off, gross total, and which CRM order (if any) it settled.
+// ---------------------------------------------------------------------------
+
+const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+/** Basic value before GST when the TDL sent it, else the billed total. */
+const revenueOf = (i) => (Number(i.basicValue) > 0 ? Number(i.basicValue) : Number(i.amount) || 0);
+const REVENUE_EXPR = { $cond: [{ $gt: ['$basicValue', 0] }, '$basicValue', '$amount'] };
+
+/**
+ * The register's window: the dates asked for, or the current IST month —
+ * the way the register is normally pulled in Tally.
+ */
+function registerContext(query) {
+  const today = istDateKey(new Date());
+  return dayRangeContext({ from: query.from || `${today.slice(0, 7)}-01`, to: query.to || today });
+}
+
+function registerFilter(query, range) {
+  const filter = { date: { $gte: range.from, $lte: range.to } };
+  // Invoices no CRM order claimed — keyed without the order number, or for a
+  // sale that never went through the CRM.
+  if (query.unmatched === 'true') filter.orders = { $size: 0 };
+  if (query.search) {
+    const rx = searchRegex(query.search);
+    filter.$or = [{ party: rx }, { voucherNumber: rx }, { reference: rx }, { orderNumbers: rx }];
+  }
+  return filter;
+}
+
+const registerQuery = (filter) =>
+  TallyInvoice.find(filter)
+    .populate({ path: 'orders', select: 'number customerName createdBy', populate: { path: 'createdBy', select: 'name' } })
+    .sort({ date: 1, voucherNumber: 1 });
+
+async function registerTotals(filter) {
+  const [t] = await TallyInvoice.aggregate([
+    { $match: filter },
+    {
+      $group: {
+        _id: null,
+        count: { $sum: 1 },
+        basicValue: { $sum: REVENUE_EXPR },
+        amount: { $sum: '$amount' },
+        matched: { $sum: { $cond: [{ $gt: [{ $size: { $ifNull: ['$orders', []] } }, 0] }, 1, 0] } },
+      },
+    },
+  ]);
+  return {
+    count: t?.count || 0,
+    matched: t?.matched || 0,
+    basicValue: round2(t?.basicValue),
+    // GST and round-off together: what separates the Sales A/c amount from
+    // the billed total. Zero for vouchers the TDL sent without a basic value.
+    other: round2((t?.amount || 0) - (t?.basicValue || 0)),
+    amount: round2(t?.amount),
+  };
+}
+
+const registerRow = (i) => ({
+  _id: i._id,
+  date: i.date,
+  party: i.party,
+  voucherType: i.voucherType,
+  voucherNumber: i.voucherNumber,
+  reference: i.reference,
+  basicValue: round2(revenueOf(i)),
+  basicValueKnown: Number(i.basicValue) > 0,
+  gstAndRoundOff: Number(i.basicValue) > 0 ? round2(i.amount - i.basicValue) : null,
+  amount: round2(i.amount),
+  orders: (i.orders || []).map((o) => ({
+    _id: o._id,
+    number: o.number,
+    customerName: o.customerName,
+    bookedBy: o.createdBy?.name || '',
+  })),
+  orderNumbers: i.orderNumbers || [],
+  narration: i.narration,
+  lastSeenAt: i.lastSeenAt,
+});
+
+// GET /api/invoicing/register?from=&to=&search=&unmatched=&page=&limit=
+const listRegister = asyncHandler(async (req, res) => {
+  const range = registerContext(req.query);
+  const filter = registerFilter(req.query, range);
+  const { page, limit, skip } = getPagination(req.query);
+  const [rows, totals] = await Promise.all([registerQuery(filter).skip(skip).limit(limit).lean(), registerTotals(filter)]);
+  res.json({
+    success: true,
+    data: rows.map(registerRow),
+    meta: {
+      ...buildMeta(totals.count, page, limit),
+      totals,
+      range: { from: range.fromStr, to: range.toStr, label: range.rangeLabel },
+    },
+  });
+});
+
+// GET /api/invoicing/register/export?from=&to=&search=&unmatched= — the same
+// rows as an Excel sheet, in the register's column order.
+const exportRegister = asyncHandler(async (req, res) => {
+  const range = registerContext(req.query);
+  const filter = registerFilter(req.query, range);
+  const [rows, totals] = await Promise.all([registerQuery(filter).lean(), registerTotals(filter)]);
+  const report = {
+    label: 'Sales Register (Tally)',
+    rangeLabel: range.rangeLabel,
+    columns: [
+      { key: 'date', header: 'Date', type: 'date', width: 12 },
+      { key: 'party', header: 'Particulars', width: 36 },
+      { key: 'voucherType', header: 'Voucher Type', width: 13 },
+      { key: 'voucherNumber', header: 'Voucher No.', width: 16 },
+      { key: 'reference', header: 'Voucher Ref. No.', width: 16 },
+      { key: 'basicValue', header: 'Basic Value (Sales A/c)', type: 'number', width: 22 },
+      { key: 'gstAndRoundOff', header: 'GST + Round Off', type: 'number', width: 16 },
+      { key: 'amount', header: 'Gross Total', type: 'number', width: 14 },
+      { key: 'orderNos', header: 'CRM Order', width: 18 },
+      { key: 'bookedBy', header: 'Booked By', width: 18 },
+    ],
+    rows: rows.map(registerRow).map((r) => ({
+      ...r,
+      date: r.date ? new Date(r.date) : null,
+      orderNos: r.orders.length ? r.orders.map((o) => o.number).join(', ') : r.orderNumbers.join(', '),
+      bookedBy: r.orders.map((o) => o.bookedBy).filter(Boolean).join(', '),
+    })),
+    totals: { basicValue: totals.basicValue, gstAndRoundOff: totals.other, amount: totals.amount },
+  };
+  const buffer = await buildWorkbook([report], { rangeLabel: range.rangeLabel }, req.user.name);
+  await logActivity({
+    userId: req.user._id,
+    action: 'SALES_REGISTER_EXPORTED',
+    entity: 'TallyInvoice',
+    details: `Exported the Tally sales register (${range.rangeLabel}, ${totals.count} invoices) to Excel`,
+    ip: req.ip,
+  });
+  res.setHeader('Content-Type', XLSX_MIME);
+  res.setHeader('Content-Disposition', `attachment; filename="mickys-sales-register_${range.fromStr}_to_${range.toStr}.xlsx"`);
+  res.send(Buffer.from(buffer));
+});
+
+module.exports = { listQueue, verifyPayment, linkInvoice, listRegister, exportRegister };
