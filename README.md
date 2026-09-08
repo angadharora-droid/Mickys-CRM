@@ -156,7 +156,7 @@ New → Live → Client made          (Turned down sits beside the funnel, with 
 
   Weights are editable under **Settings → Lead Score** (saving recomputes every lead). The score
   shows on the lead page (with the full checklist), the leads list (sortable, filterable by stage),
-  both dashboards (funnel + top leads + per-owner league), the Lead Tracker and the
+  both dashboards (top leads + per-owner score league), the Lead Tracker and the
   **Lead Score Card** / **Executive Performance** reports.
 - After deploying to an existing database run `cd server && npm run backfill:lead-scores -- --apply`
   once: it infers a stage for old leads (client if appointed, live if already worked) and stores

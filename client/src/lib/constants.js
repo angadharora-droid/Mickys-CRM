@@ -177,13 +177,6 @@ export const STAGE_STYLES = {
   turned_down: 'bg-red-50 text-red-700 ring-red-300/70 dark:bg-red-950 dark:text-red-300 dark:ring-red-800',
 };
 
-/** Funnel bar colours per stage (LeadFunnel). */
-export const STAGE_BAR_STYLES = {
-  new: 'from-stone-400 to-stone-300',
-  live: 'from-sky-600 to-sky-400',
-  client: 'from-emerald-600 to-emerald-400',
-  turned_down: 'from-red-500 to-red-300',
-};
 
 /**
  * The score card's milestones in display order, with the default points. The
