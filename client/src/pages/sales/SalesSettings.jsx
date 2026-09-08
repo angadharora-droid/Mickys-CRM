@@ -8,23 +8,35 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { AlertTriangle, Loader2, Save, TriangleAlert } from 'lucide-react';
+import { AlertTriangle, Loader2, Save, TriangleAlert, Send, Clock } from 'lucide-react';
 
 // The accounts list is stored as an array but edited as one comma-separated
 // line; the API accepts either and hands back the normalised array on save.
 const emailListText = (v) => (Array.isArray(v) ? v.join(', ') : v || '');
 const emailListCount = (v) => emailListText(v).split(',').filter((e) => e.trim()).length;
 
+const pad2 = (n) => String(n).padStart(2, '0');
+/** "HH:MM" for the time input from the stored hour/minute (blank = default). */
+const timeText = (dr) => (dr?.hourIst == null ? '' : `${pad2(dr.hourIst)}:${pad2(dr.minuteIst ?? 0)}`);
+const yesterdayInput = () => new Date(Date.now() - 86400000).toLocaleDateString('en-CA');
+
 export default function SalesSettings() {
   const [salesOrder, setSalesOrder] = useState(null);
+  const [dailyReport, setDailyReport] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savingReport, setSavingReport] = useState(false);
+  const [sendDay, setSendDay] = useState(yesterdayInput);
+  const [sendTo, setSendTo] = useState('');
+  const [sending, setSending] = useState(false);
 
   const fetchSettings = useCallback(async () => {
     setLoading(true);
     try {
       const { data } = await api.get('/settings');
       setSalesOrder(data.data?.salesOrder || {});
+      const dr = data.data?.dailyReport || {};
+      setDailyReport({ ...dr, time: timeText(dr) });
     } catch (err) {
       toast.error(apiError(err));
     } finally {
@@ -37,6 +49,55 @@ export default function SalesSettings() {
   }, [fetchSettings]);
 
   const setField = (key, value) => setSalesOrder((s) => ({ ...s, [key]: value }));
+  const setReportField = (key, value) => setDailyReport((s) => ({ ...s, [key]: value }));
+
+  // The schedule: a blank time keeps the server default. Only the dailyReport
+  // section goes up, so the salesOrder card's unsaved edits are untouched.
+  const saveDailyReport = async () => {
+    setSavingReport(true);
+    try {
+      const [h, m] = (dailyReport.time || '').split(':');
+      const { data } = await api.put('/settings', {
+        dailyReport: {
+          enabled: dailyReport.enabled !== false,
+          to: emailListText(dailyReport.to),
+          hourIst: h === undefined || h === '' ? null : Number(h),
+          minuteIst: m === undefined || m === '' ? null : Number(m),
+        },
+      });
+      const dr = data.data?.dailyReport || {};
+      setDailyReport({ ...dr, time: timeText(dr) });
+      toast.success(
+        dr.enabled === false
+          ? 'Daily report switched off'
+          : `Daily report will go out at ${timeText(dr) || dr.effective?.time || 'the default time'} IST`
+      );
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setSavingReport(false);
+    }
+  };
+
+  // One report, now, for the chosen day — to the usual recipients, or to a
+  // test address typed here.
+  const sendNow = async () => {
+    setSending(true);
+    try {
+      const body = { date: sendDay };
+      if (sendTo.trim()) body.to = sendTo.trim();
+      const { data } = await api.post('/reports/daily-email', body);
+      const c = data.data?.counts || {};
+      toast.success(data.message || `Daily report for ${data.data?.day} sent`, {
+        description: `${c.invoices ?? 0} invoices · ${c.ordersBooked ?? 0} orders booked · ${c.newLeads ?? 0} leads · ${c.visits ?? 0} visits`,
+        duration: 8000,
+      });
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setSending(false);
+    }
+  };
 
   // Only the salesOrder section goes up — the email, company and kit sections
   // are edited elsewhere and must not be overwritten by this screen.
@@ -181,6 +242,97 @@ export default function SalesSettings() {
           </Button>
         </CardContent>
       </Card>
+
+      {dailyReport && (
+        <Card className="mt-4">
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <Clock className="h-4 w-4 text-primary" /> Daily report — schedule &amp; send
+            </CardTitle>
+            <CardDescription>
+              The report for a day goes out the next day at this time (IST), to these addresses. It carries that
+              day&rsquo;s Tally invoices, orders, leads and visits.
+              {dailyReport.effective && (
+                <>
+                  {' '}Currently: {dailyReport.effective.enabled ? `daily at ${dailyReport.effective.time} IST` : 'switched off'} to{' '}
+                  {dailyReport.effective.to?.join(', ') || '—'}
+                  {dailyReport.lastSentDay ? ` · last sent for ${dailyReport.lastSentDay}` : ''}.
+                </>
+              )}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div className="space-y-2">
+                <Label htmlFor="dailyReportTime">Send time (IST)</Label>
+                <Input
+                  id="dailyReportTime"
+                  type="time"
+                  value={dailyReport.time || ''}
+                  onChange={(e) => setReportField('time', e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">Leave blank for the server default (12:00).</p>
+              </div>
+              <div className="space-y-2 sm:col-span-2">
+                <Label htmlFor="dailyReportTo">Send to</Label>
+                <Input
+                  id="dailyReportTo"
+                  type="text"
+                  inputMode="email"
+                  placeholder="report@cpgh.in, md@cpgh.in"
+                  value={emailListText(dailyReport.to)}
+                  onChange={(e) => setReportField('to', e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">Comma-separated. Blank keeps the server default address.</p>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-4">
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 accent-primary"
+                  checked={dailyReport.enabled !== false}
+                  onChange={(e) => setReportField('enabled', e.target.checked)}
+                />
+                Send the report every day
+              </label>
+              <Button onClick={saveDailyReport} disabled={savingReport}>
+                {savingReport ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                {savingReport ? 'Saving…' : 'Save schedule'}
+              </Button>
+            </div>
+
+            <div className="rounded-lg border bg-muted/40 p-4 space-y-3">
+              <p className="text-sm font-medium">Send one now</p>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="sendDay">Report for</Label>
+                  <Input id="sendDay" type="date" value={sendDay} max={yesterdayInput()} onChange={(e) => setSendDay(e.target.value)} />
+                </div>
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label htmlFor="sendTo">Send to (optional)</Label>
+                  <Input
+                    id="sendTo"
+                    type="email"
+                    placeholder="Blank = the addresses above"
+                    value={sendTo}
+                    onChange={(e) => setSendTo(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <Button variant="outline" onClick={sendNow} disabled={sending || !sendDay}>
+                  {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                  {sending ? 'Sending…' : 'Send report now'}
+                </Button>
+                <p className="text-xs text-muted-foreground">
+                  Type your own address to preview it without mailing everyone. Today&rsquo;s report is available tomorrow.
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

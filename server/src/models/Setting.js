@@ -109,10 +109,17 @@ const settingSchema = new mongoose.Schema(
       // and calls it on track or behind; 0 means no target, no verdict.
       monthlyRevenueTarget: { type: Number, default: 0 },
     },
-    // Daily email digest bookkeeping: the last IST day (YYYY-MM-DD) whose
-    // report was emailed, so restarts/redeploys never send a day twice.
+    // Daily email digest. lastSentDay is bookkeeping — the last IST day
+    // (YYYY-MM-DD) whose report was emailed, so restarts/redeploys never send
+    // a day twice. The rest is the schedule an admin sets in the app; a null
+    // hour/minute or an empty recipient list falls back to the environment
+    // (DAILY_REPORT_HOUR_IST / _MINUTE_IST / _TO), see dailyReport.service.
     dailyReport: {
       lastSentDay: { type: String, default: '' },
+      enabled: { type: Boolean, default: true },
+      to: { type: [String], default: [] },
+      hourIst: { type: Number, default: null, min: 0, max: 23 },
+      minuteIst: { type: Number, default: null, min: 0, max: 59 },
     },
     // Meta (Facebook/Instagram) lead-form sheets the sync job pulls from (see
     // services/metaSync.service.js). Ad accounts land leads in whichever sheet
