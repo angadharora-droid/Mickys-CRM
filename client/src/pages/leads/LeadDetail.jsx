@@ -45,6 +45,7 @@ import {
   AlertTriangle, ArrowLeft, Boxes, Building2, Ship, Store, Sparkles, Eye, EyeOff, Lock, Pencil, ExternalLink,
   MessageSquare, CalendarCheck, Paperclip, Upload, Image as ImageIcon, Target,
   ClipboardList, Plus, History, UserCog, UserCheck, X, NotebookPen, Phone, MapPin,
+  Trophy, ChevronDown, ChevronUp,
 } from 'lucide-react';
 import ExportKitStep from './ExportKitStep';
 import CityCombobox from '@/components/shared/CityCombobox';
@@ -204,6 +205,7 @@ export default function LeadDetail() {
   const [confirmSwitch, setConfirmSwitch] = useState(null); // pending kitType
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [scorePanelOpen, setScorePanelOpen] = useState(false); // funnel + score card panel, hidden until asked for
   const [emailForm, setEmailForm] = useState({ to: '', cc: '', subject: '', message: '' });
   // Last auto-generated email draft — lets the prefill refresh when the kit
   // type changes (e.g. distributor → institutional) without clobbering text
@@ -821,6 +823,15 @@ export default function LeadDetail() {
       <div className="flex flex-wrap items-center gap-3">
         <StageBadge stage={lead.stage} />
         <ScoreBadge score={lead.scoreCard?.total ?? lead.score ?? 0} scale={lead.scoreCard?.scale} />
+        <Button
+          variant="outline" size="sm" className="h-7 px-2 text-xs"
+          onClick={() => setScorePanelOpen((o) => !o)}
+          aria-expanded={scorePanelOpen}
+        >
+          <Trophy className="h-3.5 w-3.5" />
+          {scorePanelOpen ? 'Hide funnel & score card' : 'Funnel & score card'}
+          {scorePanelOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+        </Button>
         <StatusBadge status={lead.status} />
         {hasKit && <Badge variant="outline">{KIT_TYPE_LABELS[lead.kitType]}</Badge>}
         <Badge variant="secondary">{lead.businessType}</Badge>
@@ -964,11 +975,15 @@ export default function LeadDetail() {
       <Card><CardContent className="pt-5"><Stepper status={lead.status} /></CardContent></Card>
 
       {/* Lead status funnel (New → Live → Client made / Turned down) and the
-          score card that accumulates as the lead is worked. */}
-      <div className="grid gap-6 xl:grid-cols-5">
-        <div className="xl:col-span-2"><StageControl lead={lead} onChange={setLeadStage} busy={action === 'stage'} /></div>
-        <LeadScoreCard scoreCard={lead.scoreCard} className="xl:col-span-3" />
-      </div>
+          score card that accumulates as the lead is worked. Folded away by
+          default — the header badges show the stage and score at a glance;
+          the button opens the full panel. */}
+      {scorePanelOpen && (
+        <div className="grid gap-6 xl:grid-cols-5">
+          <div className="xl:col-span-2"><StageControl lead={lead} onChange={setLeadStage} busy={action === 'stage'} /></div>
+          <LeadScoreCard scoreCard={lead.scoreCard} className="xl:col-span-3" />
+        </div>
+      )}
 
       {/* Client summary */}
       <Card>

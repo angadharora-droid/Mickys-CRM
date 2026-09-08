@@ -135,6 +135,10 @@ New → Live → Client made          (Turned down sits beside the funnel, with 
   samples given, feedback taken), becomes **Client made** when appointed as a sales-order customer
   (or when its first order is booked), and is **Turned down** by hand with a mandatory reason. Every
   stage can also be set by hand on the lead page; each move is kept in `stageHistory`.
+- **Lead Pipeline** (`/pipeline`, sidebar) is the board view: one column per stage with the leads as
+  cards (score, kit status, owner, days in stage, follow-up due). Drag a card to another column to
+  change its stage, or use the card's ⋯ menu on touch screens. Columns show the top 100 leads by
+  score; the counts and points in each header always cover the whole column.
 - The **score card** awards points once per milestone (repeat orders per order). Defaults:
 
   | # | Milestone | Points | Earned when |

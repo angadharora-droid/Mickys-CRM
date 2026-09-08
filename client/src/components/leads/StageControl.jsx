@@ -1,13 +1,8 @@
 import { useState } from 'react';
 import { cn, formatDateTime } from '@/lib/utils';
 import { LEAD_STAGES, STAGE_LABELS, STAGE_HINTS } from '@/lib/constants';
-import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import {
-  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
-} from '@/components/ui/dialog';
+import TurnDownDialog from './TurnDownDialog';
 import { Filter, Loader2, Sparkles, UserCheck, ThumbsDown, CircleDashed, ChevronRight } from 'lucide-react';
 
 const ICONS = { new: CircleDashed, live: Sparkles, client: UserCheck, turned_down: ThumbsDown };
@@ -26,24 +21,17 @@ const ACTIVE = {
  */
 export default function StageControl({ lead, onChange, busy }) {
   const [turnDownOpen, setTurnDownOpen] = useState(false);
-  const [reason, setReason] = useState('');
   const current = lead.stage || 'new';
   const lastMove = [...(lead.stageHistory || [])].reverse()[0];
 
   const pick = (stage) => {
     if (stage === current || busy) return;
     if (stage === 'turned_down') {
-      setReason('');
       setTurnDownOpen(true);
       return;
     }
     onChange(stage, '').catch(() => {});
   };
-
-  const confirmTurnDown = () =>
-    onChange('turned_down', reason.trim())
-      .then(() => setTurnDownOpen(false))
-      .catch(() => {});
 
   return (
     <Card>
@@ -98,37 +86,17 @@ export default function StageControl({ lead, onChange, busy }) {
         )}
         <p className="text-[11px] text-muted-foreground">
           A new lead goes Live on its first kit, visit, call, sample or feedback; it becomes Client made when
-          appointed as a customer. Both can also be set here by hand.
+          appointed as a customer. Both can also be set here by hand, or by dragging the lead on the Pipeline board.
         </p>
       </CardContent>
 
-      <Dialog open={turnDownOpen} onOpenChange={(o) => { if (!o && !busy) setTurnDownOpen(false); }}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Turn down {lead.businessName}?</DialogTitle>
-            <DialogDescription>
-              The lead leaves the active funnel. Its score stays on record and it can be revived to Live later.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2">
-            <Label htmlFor="turn-down-reason">Reason *</Label>
-            <Textarea
-              id="turn-down-reason"
-              rows={3}
-              placeholder="e.g. Already tied up with another supplier, price too high, closed down…"
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-            />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setTurnDownOpen(false)} disabled={busy}>Cancel</Button>
-            <Button variant="destructive" onClick={confirmTurnDown} disabled={!reason.trim() || busy}>
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ThumbsDown className="h-4 w-4" />}
-              Mark turned down
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <TurnDownDialog
+        lead={lead}
+        open={turnDownOpen}
+        busy={busy}
+        onOpenChange={setTurnDownOpen}
+        onConfirm={(reason) => onChange('turned_down', reason)}
+      />
     </Card>
   );
 }

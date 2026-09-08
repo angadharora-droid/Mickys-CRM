@@ -14,6 +14,7 @@ import LeadList from '@/pages/leads/LeadList';
 import LeadCreate from '@/pages/leads/LeadCreate';
 import LeadDetail from '@/pages/leads/LeadDetail';
 import LeadTracker from '@/pages/leads/LeadTracker';
+import LeadPipeline from '@/pages/leads/LeadPipeline';
 import MyRecords from '@/pages/leads/MyRecords';
 import FollowUps from '@/pages/FollowUps';
 import Reports from '@/pages/Reports';
@@ -93,6 +94,7 @@ export default function App() {
           }
         />
         <Route path="/leads/:id" element={<LeadDetail />} />
+        <Route path="/pipeline" element={<LeadPipeline />} />
         <Route path="/follow-ups" element={<FollowUps />} />
         <Route path="/reports" element={<Reports />} />
         <Route
