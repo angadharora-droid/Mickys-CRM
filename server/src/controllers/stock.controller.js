@@ -15,8 +15,11 @@ const {
   parseTallyCustomers,
   parseTallyCompany,
   parseTallyInvoices,
+  isSalesVoucher,
+  SALES_VOUCHER_TYPE,
 } = require('../services/tallyStock.service');
 const { matchInvoices } = require('../services/orderPipeline.service');
+const TallyInvoice = require('../models/TallyInvoice');
 const {
   nameKeyOf,
   reservedByNameKey,
@@ -202,7 +205,14 @@ const syncStock = asyncHandler(async (req, res) => {
   // step accounts complete in Tally, not in the CRM. A matching failure must
   // not fail the stock sync it arrived with: the stock is already mirrored,
   // and the next push retries the invoices anyway.
-  const invoices = parseTallyInvoices(xml);
+  //
+  // Only the voucher type named "Sales" counts. The TDL filters on the same
+  // rule, but the check is repeated here so a Tally machine still running an
+  // older TDL (which sent every type under Sales) cannot put rental or
+  // job-work income into the sales figures.
+  const allVouchers = parseTallyInvoices(xml);
+  const invoices = allVouchers.filter(isSalesVoucher);
+  const otherTypes = [...new Set(allVouchers.filter((v) => !isSalesVoucher(v)).map((v) => v.voucherType || '(blank)'))];
   let invoiceResult = null;
   if (invoices.length) {
     try {
@@ -211,6 +221,12 @@ const syncStock = asyncHandler(async (req, res) => {
       console.error(`[stock-sync] invoice matching failed: ${err.message}`);
     }
   }
+  // Vouchers of other types mirrored by an earlier version of this sync are
+  // removed, so the register and the daily report show sales alone.
+  const purged = await TallyInvoice.deleteMany({ voucherType: { $not: SALES_VOUCHER_TYPE } }).catch((err) => {
+    console.error(`[stock-sync] could not purge non-sales vouchers: ${err.message}`);
+    return { deletedCount: 0 };
+  });
 
   const log = await StockSyncLog.create({
     syncedAt,
@@ -234,6 +250,10 @@ const syncStock = asyncHandler(async (req, res) => {
       `Synced ${items.length} stock items from Tally (${req.tallyPush ? 'Tally push' : 'manual upload'})` +
       (vendors.length ? `, ${vendors.length} vendors` : '') +
       (customers.length ? `, ${customers.length} customers` : '') +
+      (otherTypes.length
+        ? `; skipped ${allVouchers.length - invoices.length} voucher(s) of other types (${otherTypes.join(', ')})`
+        : '') +
+      (purged.deletedCount ? `; removed ${purged.deletedCount} earlier non-sales voucher(s) from the register` : '') +
       (invoices.length
         ? `, ${invoices.length} sales invoices (${invoiceResult?.matched || 0} matched to orders` +
           (invoiceResult?.advanced?.length ? `; moved to invoiced: ${invoiceResult.advanced.join(', ')}` : '') +

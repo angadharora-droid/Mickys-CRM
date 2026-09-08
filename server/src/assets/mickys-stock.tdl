@@ -305,13 +305,16 @@
     Fetch      : Name, Parent
 
 ;; ------------------------ Sales invoices ------------------------------
-;; Recent sales vouchers -> one <SALESINVOICE> element each. The CRM
-;; looks for its sales order number (SO-YYYY-NNNN) in ORDERNOS (the
-;; invoice's "Order No(s)" field), REFERENCE (the "Ref" beside the
-;; voucher number) or NARRATION - accounts write it in any one of them
-;; when keying the invoice - and moves the matched order to Invoiced.
-;; Only the last 60 days are sent so the payload stays small; cancelled
-;; and optional vouchers are skipped. DATE is exported as YYYYMMDD.
+;; Recent vouchers of the voucher type named "Sales" -> one <SALESINVOICE>
+;; element each. Only that exact type: voucher types created under Sales
+;; (RENTAL INCOME, FILLING & RETORTING INCOME) are not product sales and
+;; are left out, as are credit notes. The CRM looks for its sales order
+;; number (SO-YYYY-NNNN) in ORDERNOS (the invoice's "Order No(s)" field),
+;; REFERENCE (the "Ref" beside the voucher number) or NARRATION - accounts
+;; write it in any one of them when keying the invoice - and moves the
+;; matched order to Invoiced. Only the last 60 days are sent so the
+;; payload stays small; cancelled and optional vouchers are skipped. DATE
+;; is exported as YYYYMMDD.
 [Part: MickysInvoicePart]
     Lines    : MickysInvoiceLine
     Repeat   : MickysInvoiceLine : MickysSalesInvoices
@@ -387,5 +390,5 @@
 
 [System: Formula]
     MickysInvoiceFrom   : $$MachineDate - 60
-    MickysIsSalesVch    : ($$IsSales:$VoucherTypeName) AND (NOT $IsCancelled) AND (NOT $IsOptional) AND ($Date >= @@MickysInvoiceFrom)
+    MickysIsSalesVch    : ($VoucherTypeName = "Sales") AND (NOT $IsCancelled) AND (NOT $IsOptional) AND ($Date >= @@MickysInvoiceFrom)
     MickysIsSalesLedger : $$IsLedOfGrp:$LedgerName:$$GroupSales

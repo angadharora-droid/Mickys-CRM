@@ -116,10 +116,13 @@ Two ways, both hitting `POST /api/stock/sync` on the backend:
 > tab). They start appearing once the updated `mickys-stock.tdl` is loaded
 > on the Tally PC (quit & reopen Tally after replacing the file).
 
-> **Sales invoices → order pipeline.** The export also carries every sales
-> voucher of the last 60 days as a `<SALESINVOICE>` element (GUID, voucher
-> number, date as YYYYMMDD, party, Reference, Order No(s), Narration,
-> amount). The CRM reads the CRM sales order number — `SO-2026-0042` — out
+> **Sales invoices → order pipeline.** The export also carries every voucher
+> of the voucher type named exactly **Sales** from the last 60 days as a
+> `<SALESINVOICE>` element (GUID, voucher number, date as YYYYMMDD, party,
+> Reference, Order No(s), Narration, amount, basic value). Voucher types
+> created under Sales — RENTAL INCOME, FILLING & RETORTING INCOME — and
+> credit notes are not product sales and are excluded; the backend applies
+> the same rule again, so an older TDL still loaded cannot slip them in. The CRM reads the CRM sales order number — `SO-2026-0042` — out
 > of any of the three text fields and moves that order from **Confirmed** to
 > **Invoiced**, which puts it in the Dispatch queue.
 >

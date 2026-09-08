@@ -5,6 +5,7 @@ const StockSyncLog = require('../models/StockSyncLog');
 const TallyInvoice = require('../models/TallyInvoice');
 const { linkInvoiceManually, announce, paymentLabel } = require('../services/orderPipeline.service');
 const { dayRangeContext, buildWorkbook } = require('../services/report.service');
+const { SALES_VOUCHER_TYPE } = require('../services/tallyStock.service');
 const { withDocumentRefs, populatePipeline } = require('./salesOrder.controller');
 const { getPagination, buildMeta } = require('../utils/pagination');
 const { logActivity } = require('../services/activity.service');
@@ -183,7 +184,8 @@ function registerContext(query) {
 }
 
 function registerFilter(query, range) {
-  const filter = { date: { $gte: range.from, $lte: range.to } };
+  // Sales vouchers only, whatever an older sync may have mirrored.
+  const filter = { voucherType: SALES_VOUCHER_TYPE, date: { $gte: range.from, $lte: range.to } };
   // Invoices no CRM order claimed — keyed without the order number, or for a
   // sale that never went through the CRM.
   if (query.unmatched === 'true') filter.orders = { $size: 0 };
