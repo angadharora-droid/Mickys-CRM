@@ -135,6 +135,16 @@ function parseLedgers(xml, tag) {
 const parseTallyVendors = (xml) => parseLedgers(xml, 'VENDOR');
 const parseTallyCustomers = (xml) => parseLedgers(xml, 'CUSTOMER');
 
+/**
+ * Only vouchers of the voucher type named exactly "Sales" are sales. Tally's
+ * own $$IsSales also says yes to every voucher type created under Sales —
+ * this company keeps RENTAL INCOME and FILLING & RETORTING INCOME there —
+ * and those are not product sales, so they are dropped here whatever the
+ * TDL sent.
+ */
+const SALES_VOUCHER_TYPE = /^\s*sales\s*$/i;
+const isSalesVoucher = (inv) => SALES_VOUCHER_TYPE.test(inv?.voucherType || '');
+
 const MONTHS ={ jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
 
 /**
@@ -212,4 +222,6 @@ module.exports = {
   parseTallyCompany,
   parseTallyInvoices,
   parseTallyDate,
+  isSalesVoucher,
+  SALES_VOUCHER_TYPE,
 };

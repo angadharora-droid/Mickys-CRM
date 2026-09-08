@@ -22,6 +22,7 @@ const Lead = require('../models/Lead');
 const SalesOrder = require('../models/SalesOrder');
 const TallyInvoice = require('../models/TallyInvoice');
 const Setting = require('../models/Setting');
+const { SALES_VOUCHER_TYPE } = require('./tallyStock.service');
 require('../models/User'); // registers the ref model the populates below need
 const ApiError = require('../utils/ApiError');
 const { sendMail } = require('./email.service');
@@ -178,16 +179,20 @@ async function buildSalesDigest(dayKey) {
     SalesOrder.aggregate([{ $match: match }, { $group: { _id: null, count: { $sum: 1 }, value: { $sum: field } } }]);
   const execRef = { path: 'createdBy', select: 'name' };
 
+  // Sales vouchers only — the sync keeps other voucher types out of the
+  // mirror, and the report asks for the same so nothing else can ever be
+  // counted as a sale.
+  const salesOnly = { voucherType: SALES_VOUCHER_TYPE };
   const [
     invoices, mtdInvoiced, bookedOrders, confirmedOrders, mtdBooked, mtdConfirmed,
     dispatchedCount, deliveredCount, waitingRows, invoiceFeed, settings,
   ] = await Promise.all([
-    TallyInvoice.find({ date: { $gte: from, $lte: to } })
+    TallyInvoice.find({ ...salesOnly, date: { $gte: from, $lte: to } })
       .populate({ path: 'orders', select: 'number customerName createdBy', populate: execRef })
       .sort({ voucherNumber: 1 })
       .lean(),
     TallyInvoice.aggregate([
-      { $match: { date: { $gte: monthStart, $lte: to } } },
+      { $match: { ...salesOnly, date: { $gte: monthStart, $lte: to } } },
       { $group: { _id: null, count: { $sum: 1 }, value: { $sum: REVENUE_EXPR }, billed: { $sum: '$amount' } } },
     ]),
     SalesOrder.find({ createdAt: { $gte: from, $lte: to } })
