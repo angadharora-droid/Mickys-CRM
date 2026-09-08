@@ -171,6 +171,28 @@ function parseTallyDate(raw) {
 }
 
 /**
+ * The invoice's basic value before GST — the sales register's "Basic Value"
+ * (Sales A/c) column. The TDL sends it three ways, since which one a
+ * TallyPrime release evaluates correctly is not something the CRM can know:
+ * the Sales Accounts ledger total, the item-line total, and the GST total
+ * (from which basic = billed − GST). A candidate is trusted only when it is
+ * positive and no more than the billed total; where two candidates disagree
+ * the lower wins, because the known failure mode is a filter that summed too
+ * much, not too little. 0 means none arrived — callers fall back to the
+ * billed total and say so.
+ */
+function pickBasicValue({ salesLedgerValue, itemValue, tax, amount }) {
+  const billed = Number(amount) || 0;
+  const usable = [salesLedgerValue, itemValue]
+    .map((v) => Number(v) || 0)
+    .filter((v) => v > 0 && (billed === 0 || v <= billed + 1));
+  if (usable.length) return Math.round(Math.min(...usable) * 100) / 100;
+  const gst = Number(tax) || 0;
+  if (gst > 0 && gst < billed) return Math.round((billed - gst) * 100) / 100;
+  return 0;
+}
+
+/**
  * Sales vouchers (<SALESINVOICE>) that the updated TDL appends after the
  * ledgers: the invoice's number, date, party and the three free-text fields an
  * accountant can write the CRM order number into. Older TDL versions send
@@ -193,12 +215,15 @@ function parseTallyInvoices(xml) {
       reference: tagValue(block, 'REFERENCE'),
       orderNos: tagValue(block, 'ORDERNOS'),
       narration: tagValue(block, 'NARRATION'),
-      // As billed (GST and round-off included) and the pre-GST basic value —
-      // the sales register's "Basic Value", which is what revenue is reported
-      // on. 0 when the TDL in use predates the field.
+      // As billed (GST and round-off included), the three figures the TDL
+      // offers for the pre-GST basic value, and the one the CRM settles on
+      // (see pickBasicValue). All 0 when the TDL in use predates the fields.
       amount: toAmount(tagValue(block, 'AMOUNT')),
-      basicValue: toAmount(tagValue(block, 'BASICVALUE')),
+      salesLedgerValue: toAmount(tagValue(block, 'BASICVALUE')),
+      itemValue: toAmount(tagValue(block, 'ITEMVALUE')),
+      tax: toAmount(tagValue(block, 'TAX')),
     };
+    inv.basicValue = pickBasicValue(inv);
     // A voucher with neither a number nor a GUID cannot be told apart from
     // the next one and is dropped.
     if (!inv.guid && !inv.voucherNumber) continue;
@@ -222,6 +247,7 @@ module.exports = {
   parseTallyCompany,
   parseTallyInvoices,
   parseTallyDate,
+  pickBasicValue,
   isSalesVoucher,
   SALES_VOUCHER_TYPE,
 };
