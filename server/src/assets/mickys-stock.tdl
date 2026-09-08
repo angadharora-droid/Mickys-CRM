@@ -319,7 +319,7 @@
 
 [Line: MickysInvoiceLine]
     Fields : MIGuid, MIVchNo, MIVchType, MIDate, MIParty
-    Fields : MIReference, MIOrderNos, MINarration, MIAmount
+    Fields : MIReference, MIOrderNos, MINarration, MIAmount, MIBasicValue
     XMLTag : "SALESINVOICE"
 
 [Field: MIGuid]
@@ -364,10 +364,20 @@
     Set as : $Narration
     XMLTag : "NARRATION"
 
+;; Invoice total as billed (party ledger amount, GST and round-off included).
 [Field: MIAmount]
     Type   : Amount
     Set as : $Amount
     XMLTag : "AMOUNT"
+
+;; Basic value before GST - the total of the voucher's ledger entries that
+;; belong to Sales Accounts, i.e. the "Basic Value" column of Tally's sales
+;; register. The CRM's daily revenue report uses this figure and falls back
+;; to AMOUNT if a release exports it empty.
+[Field: MIBasicValue]
+    Type   : Amount
+    Set as : $$FilterAmtTotal:AllLedgerEntries:MickysIsSalesLedger:Amount
+    XMLTag : "BASICVALUE"
 
 [Collection: MickysSalesInvoices]
     Type   : Voucher
@@ -376,5 +386,6 @@
     Fetch  : Reference, Narration, Amount, GUID, IsCancelled, IsOptional
 
 [System: Formula]
-    MickysInvoiceFrom : $$MachineDate - 60
-    MickysIsSalesVch  : ($$IsSales:$VoucherTypeName) AND (NOT $IsCancelled) AND (NOT $IsOptional) AND ($Date >= @@MickysInvoiceFrom)
+    MickysInvoiceFrom   : $$MachineDate - 60
+    MickysIsSalesVch    : ($$IsSales:$VoucherTypeName) AND (NOT $IsCancelled) AND (NOT $IsOptional) AND ($Date >= @@MickysInvoiceFrom)
+    MickysIsSalesLedger : $$IsLedOfGrp:$LedgerName:$$GroupSales

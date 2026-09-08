@@ -139,6 +139,15 @@ Two ways, both hitting `POST /api/stock/sync` on the backend:
 > ("Link invoice"). A voucher naming a **cancelled** order is recorded on it
 > and flagged in the sync log — it is never used to revive the order.
 >
+> Every voucher the push carries — matched or not — is also mirrored into the
+> CRM (`TallyInvoice`), and the morning daily-report email totals the ones
+> dated the previous day as "Invoiced revenue", month-to-date, against the
+> monthly target set under Sales Orders → Settings. Revenue is the voucher's
+> **basic value before GST** (`BASICVALUE` = total of its ledger entries under
+> Sales Accounts — the sales register's "Basic Value" column); the billed
+> total with GST (`AMOUNT`) is shown beside it. A release that exports
+> BASICVALUE empty makes the report fall back to the billed total and say so.
+>
 > If a push arrives with stock but **zero invoices**, the Tally machine is
 > still running the old TDL — re-download it from the URL and replace the
 > file. If the TDL refuses to load after this change, the details are under

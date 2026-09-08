@@ -104,6 +104,10 @@ const settingSchema = new mongoose.Schema(
     salesOrder: {
       accountsEmails: { type: [String], default: [] },
       emailAccountsOnConfirm: { type: Boolean, default: false },
+      // Monthly invoiced-revenue target (Rs., as billed in Tally). The daily
+      // report compares month-to-date invoicing against the pro-rated target
+      // and calls it on track or behind; 0 means no target, no verdict.
+      monthlyRevenueTarget: { type: Number, default: 0 },
     },
     // Daily email digest bookkeeping: the last IST day (YYYY-MM-DD) whose
     // report was emailed, so restarts/redeploys never send a day twice.
