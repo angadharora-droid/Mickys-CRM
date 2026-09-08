@@ -9,7 +9,7 @@ import LeadScoreSummary from '@/components/leads/LeadScoreSummary';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { CalendarDays, CalendarRange, Clock, Package, Send, Plus, Filter, UserCheck, Trophy } from 'lucide-react';
+import { CalendarDays, CalendarRange, Clock, Package, Send, Plus, Filter, UserCheck, Trophy, SquareKanban } from 'lucide-react';
 
 export default function ExecDashboard() {
   const navigate = useNavigate();
@@ -65,6 +65,9 @@ export default function ExecDashboard() {
             <CardTitle className="text-base flex items-center gap-2">
               <Filter className="h-4 w-4 text-muted-foreground" /> My Lead Funnel
               <span className="text-xs font-normal text-muted-foreground">· click a stage to open those leads</span>
+              <Button asChild variant="outline" size="sm" className="ml-auto h-7">
+                <Link to="/pipeline"><SquareKanban className="h-3.5 w-3.5" /> Open board</Link>
+              </Button>
             </CardTitle>
           </CardHeader>
           <CardContent>

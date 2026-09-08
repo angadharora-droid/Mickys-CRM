@@ -455,6 +455,63 @@ const listLeads = asyncHandler(async (req, res) => {
   res.json({ success: true, data: leads, meta: buildMeta(total, page, limit) });
 });
 
+// GET /api/leads/pipeline  (the status funnel as a board: every lead the
+// caller can see, grouped by stage, hottest first, capped per column — the
+// counts and points above each column always cover the whole column)
+const leadPipeline = asyncHandler(async (req, res) => {
+  const filter = { ...scopeFilter(req.user) };
+  const q = req.query;
+  if (q.execId && req.user.role === 'admin') filter.assignedExecId = q.execId;
+  if (q.businessType) filter.businessType = q.businessType;
+  if (q.kitType) filter.kitType = q.kitType;
+  if (q.city) filter.city = q.city;
+  if (q.search) {
+    const rx = searchRegex(q.search);
+    filter.$or = [{ refNumber: rx }, { businessName: rx }, { contactPerson: rx }, { email: rx }, { mobileNumber: rx }, { city: rx }];
+  }
+  const perStage = Math.min(Math.max(parseInt(q.limit, 10) || 100, 10), 300);
+  // Leads captured before the funnel existed carry no stage — they are new.
+  const stageMatch = (s) => (s === 'new' ? { $in: ['new', null] } : s);
+
+  const [counts, ...columns] = await Promise.all([
+    Lead.aggregate([
+      { $match: filter },
+      { $group: { _id: { $ifNull: ['$stage', 'new'] }, count: { $sum: 1 }, points: { $sum: { $ifNull: ['$score', 0] } } } },
+    ]),
+    ...Lead.LEAD_STAGES.map((s) =>
+      Lead.find({ ...filter, stage: stageMatch(s) })
+        .select(
+          'refNumber businessName contactPerson mobileNumber city state businessType kitType status stage score ' +
+          'turnDownReason clientMadeAt assignedExecId followUp.date followUp.status actionPoint createdAt updatedAt'
+        )
+        .slice('stageHistory', -1) // only the latest move: when the lead entered its stage
+        .populate({ path: 'assignedExecId', select: 'name' })
+        .sort({ score: -1, updatedAt: -1 })
+        .limit(perStage)
+        .lean()
+    ),
+  ]);
+  const byStage = Object.fromEntries(counts.map((c) => [c._id, c]));
+
+  res.json({
+    success: true,
+    data: {
+      total: counts.reduce((n, c) => n + c.count, 0),
+      perStage,
+      stages: Lead.LEAD_STAGES.map((key, i) => ({
+        key,
+        count: byStage[key]?.count || 0,
+        points: byStage[key]?.points || 0,
+        leads: columns[i].map(({ stageHistory, ...l }) => ({
+          ...l,
+          stage: l.stage || 'new',
+          stageSince: stageHistory?.[0]?.at || l.createdAt,
+        })),
+      })),
+    },
+  });
+});
+
 // GET /api/leads/:id
 const getLead = asyncHandler(async (req, res) => {
   const lead = await Lead.findById(req.params.id).select('assignedExecId');
@@ -1837,6 +1894,7 @@ module.exports = {
   listCreators,
   createLead,
   listLeads,
+  leadPipeline,
   getLead,
   setLeadStage,
   addSample,

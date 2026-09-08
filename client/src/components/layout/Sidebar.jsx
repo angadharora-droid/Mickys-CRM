@@ -13,6 +13,7 @@ import {
   CalendarClock,
   FileSpreadsheet,
   ReceiptText,
+  SquareKanban,
   Settings as SettingsIcon,
   X,
 } from 'lucide-react';
@@ -25,6 +26,7 @@ const NAV_SECTIONS = [
     items: [
       { to: '/', label: 'Dashboard', icon: LayoutDashboard, roles: ['*'], module: MODULES.LEADS },
       { to: '/leads', label: 'Leads & Kits', icon: Contact, roles: ['*'], module: MODULES.LEADS },
+      { to: '/pipeline', label: 'Lead Pipeline', icon: SquareKanban, roles: ['*'], module: MODULES.LEADS },
       { to: '/follow-ups', label: 'Follow-ups', icon: CalendarClock, roles: ['*'], module: MODULES.LEADS },
       { to: '/reports', label: 'Reports', icon: FileSpreadsheet, roles: ['*'], module: MODULES.LEADS },
       { to: '/my-records', label: 'My Records', icon: ClipboardList, roles: [ROLES.SALES_EXEC, ROLES.PR_MANAGER], module: MODULES.LEADS },

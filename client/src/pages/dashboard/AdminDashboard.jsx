@@ -1,15 +1,16 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import api, { apiError } from '@/lib/api';
 import PageHeader from '@/components/shared/PageHeader';
 import StatCard from '@/components/shared/StatCard';
 import LeadFunnel from '@/components/leads/LeadFunnel';
 import LeadScoreSummary from '@/components/leads/LeadScoreSummary';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Contact, Sparkles, Package, Send, Users, Filter, UserCheck, Trophy, Medal } from 'lucide-react';
+import { Contact, Sparkles, Package, Send, Users, Filter, UserCheck, Trophy, Medal, SquareKanban } from 'lucide-react';
 
 export default function AdminDashboard() {
   const navigate = useNavigate();
@@ -62,6 +63,9 @@ export default function AdminDashboard() {
             <CardTitle className="text-base flex items-center gap-2">
               <Filter className="h-4 w-4 text-muted-foreground" /> Lead Status Funnel
               <span className="text-xs font-normal text-muted-foreground">· click a stage to open those leads</span>
+              <Button asChild variant="outline" size="sm" className="ml-auto h-7">
+                <Link to="/pipeline"><SquareKanban className="h-3.5 w-3.5" /> Open board</Link>
+              </Button>
             </CardTitle>
           </CardHeader>
           <CardContent>
