@@ -54,6 +54,76 @@ const statusBreakdown = (match = {}) =>
     { $project: { _id: 0, status: '$_id', count: 1 } },
   ]);
 
+// ---------------------------------------------------------------------------
+// Lead status funnel + score card
+// ---------------------------------------------------------------------------
+
+const STAGES = ['new', 'live', 'client', 'turned_down'];
+const STAGE_LABELS = { new: 'New', live: 'Live', client: 'Client made', turned_down: 'Turned down' };
+// Leads captured before the funnel existed carry no stage — they read as new.
+const STAGE_EXPR = { $ifNull: ['$stage', 'new'] };
+
+/**
+ * The funnel: how many leads sit at each stage now, the share of all leads
+ * that ever became a client (clientMadeAt is never cleared), and the total
+ * points held at each stage.
+ */
+async function leadFunnel(match = {}) {
+  const [rows, total, everClient] = await Promise.all([
+    Lead.aggregate([
+      { $match: match },
+      { $group: { _id: STAGE_EXPR, count: { $sum: 1 }, points: { $sum: { $ifNull: ['$score', 0] } } } },
+    ]),
+    Lead.countDocuments(match),
+    Lead.countDocuments({ ...match, clientMadeAt: { $ne: null } }),
+  ]);
+  const byStage = Object.fromEntries(rows.map((r) => [r._id, r]));
+  const stages = STAGES.map((key) => ({
+    key,
+    label: STAGE_LABELS[key],
+    count: byStage[key]?.count || 0,
+    points: byStage[key]?.points || 0,
+    pct: total ? Math.round(((byStage[key]?.count || 0) / total) * 100) : 0,
+  }));
+  return {
+    total,
+    stages,
+    everClient,
+    conversionPct: total ? Math.round((everClient / total) * 100) : 0,
+  };
+}
+
+/** Score-card headline numbers plus the highest-scoring leads. */
+async function leadScores(match = {}, { top = 5 } = {}) {
+  const [agg, topLeads] = await Promise.all([
+    Lead.aggregate([
+      { $match: match },
+      { $group: { _id: null, total: { $sum: { $ifNull: ['$score', 0] } }, leads: { $sum: 1 }, max: { $max: '$score' } } },
+    ]),
+    Lead.find({ ...match, score: { $gt: 0 } })
+      .select('refNumber businessName city stage score assignedExecId')
+      .populate({ path: 'assignedExecId', select: 'name' })
+      .sort({ score: -1, createdAt: -1 })
+      .limit(top)
+      .lean(),
+  ]);
+  const s = agg[0] || { total: 0, leads: 0, max: 0 };
+  return {
+    total: s.total,
+    average: s.leads ? Math.round((s.total / s.leads) * 10) / 10 : 0,
+    max: s.max || 0,
+    top: topLeads.map((l) => ({
+      _id: l._id,
+      refNumber: l.refNumber,
+      businessName: l.businessName,
+      city: l.city,
+      stage: l.stage || 'new',
+      score: l.score || 0,
+      executive: l.assignedExecId?.name || '—',
+    })),
+  };
+}
+
 const byField = (field, match = {}, limit = 8) =>
   Lead.aggregate([
     { $match: { ...match, [field]: { $nin: [null, ''] } } },
@@ -68,6 +138,7 @@ const adminAnalytics = asyncHandler(async (_req, res) => {
   const [
     totalLeads, newLeads, generatedKits, deliveredKits, activeExecs,
     monthly, status, cityWise, businessTypeWise, kitSplit, execPerformance,
+    funnel, scores,
   ] = await Promise.all([
     Lead.countDocuments(),
     Lead.countDocuments({ status: 'new' }),
@@ -84,6 +155,8 @@ const adminAnalytics = asyncHandler(async (_req, res) => {
       { $group: { _id: '$kitType', count: { $sum: 1 } } },
       { $project: { _id: 0, name: '$_id', count: 1 } },
     ]),
+    // Per owner: their leads, kits, and where those leads stand on the funnel
+    // and the score card — ranked by points, the score card's own league table.
     Lead.aggregate([
       {
         $group: {
@@ -91,21 +164,34 @@ const adminAnalytics = asyncHandler(async (_req, res) => {
           leads: { $sum: 1 },
           kits: { $sum: { $cond: [{ $in: ['$status', GENERATED] }, 1, 0] } },
           delivered: { $sum: { $cond: [{ $eq: ['$status', 'delivered'] }, 1, 0] } },
+          live: { $sum: { $cond: [{ $eq: [STAGE_EXPR, 'live'] }, 1, 0] } },
+          clients: { $sum: { $cond: [{ $eq: [STAGE_EXPR, 'client'] }, 1, 0] } },
+          turnedDown: { $sum: { $cond: [{ $eq: [STAGE_EXPR, 'turned_down'] }, 1, 0] } },
+          points: { $sum: { $ifNull: ['$score', 0] } },
         },
       },
-      { $sort: { leads: -1 } },
+      { $sort: { points: -1, leads: -1 } },
       { $limit: 10 },
       { $lookup: { from: 'users', localField: '_id', foreignField: '_id', as: 'exec' } },
       { $unwind: '$exec' },
-      { $project: { _id: 0, name: '$exec.name', leads: 1, kits: 1, delivered: 1 } },
+      {
+        $project: {
+          _id: 0, name: '$exec.name', leads: 1, kits: 1, delivered: 1, live: 1, clients: 1, turnedDown: 1, points: 1,
+          avgPoints: { $cond: [{ $gt: ['$leads', 0] }, { $round: [{ $divide: ['$points', '$leads'] }, 1] }, 0] },
+        },
+      },
     ]),
+    leadFunnel(),
+    leadScores(),
   ]);
 
   res.json({
     success: true,
     data: {
-      cards: { totalLeads, newLeads, generatedKits, deliveredKits, activeExecs },
+      cards: { totalLeads, newLeads, generatedKits, deliveredKits, activeExecs, clients: funnel.stages[2].count, points: scores.total },
       charts: { monthly, status, cityWise, businessTypeWise, kitSplit, execPerformance },
+      funnel,
+      scores,
     },
   });
 });
@@ -144,6 +230,11 @@ const leadTracker = asyncHandler(async (req, res) => {
           rates_confirmed: statusSum('rates_confirmed'),
           generated: statusSum('generated'),
           delivered: statusSum('delivered'),
+          // Funnel stages + score-card points, alongside the kit statuses.
+          live: { $sum: { $cond: [{ $eq: [STAGE_EXPR, 'live'] }, 1, 0] } },
+          clients: { $sum: { $cond: [{ $eq: [STAGE_EXPR, 'client'] }, 1, 0] } },
+          turnedDown: { $sum: { $cond: [{ $eq: [STAGE_EXPR, 'turned_down'] }, 1, 0] } },
+          points: { $sum: { $ifNull: ['$score', 0] } },
           firstAt: { $min: '$createdAt' },
           lastAt: { $max: '$createdAt' },
         },
@@ -158,6 +249,7 @@ const leadTracker = asyncHandler(async (req, res) => {
           name: { $ifNull: ['$owner.name', 'Unknown'] },
           role: '$owner.role',
           total: 1, new: 1, kit_selected: 1, rates_confirmed: 1, generated: 1, delivered: 1,
+          live: 1, clients: 1, turnedDown: 1, points: 1,
           firstAt: 1, lastAt: 1,
         },
       },
@@ -187,7 +279,7 @@ const execAnalytics = asyncHandler(async (req, res) => {
   // follows the owner, so a reassigned lead moves to the new owner's numbers.
   const match = { assignedExecId: execId };
 
-  const [todayCount, monthCount, openCount, generatedCount, deliveredCount, monthly, status] =
+  const [todayCount, monthCount, openCount, generatedCount, deliveredCount, monthly, status, funnel, scores] =
     await Promise.all([
       Lead.countDocuments({ ...match, createdAt: { $gte: startOfToday() } }),
       Lead.countDocuments({ ...match, createdAt: { $gte: monthsAgo(0) } }),
@@ -196,13 +288,17 @@ const execAnalytics = asyncHandler(async (req, res) => {
       Lead.countDocuments({ ...match, status: 'delivered' }),
       monthlyLeads(match),
       statusBreakdown(match),
+      leadFunnel(match),
+      leadScores(match),
     ]);
 
   res.json({
     success: true,
     data: {
-      cards: { todayCount, monthCount, openCount, generatedCount, deliveredCount },
+      cards: { todayCount, monthCount, openCount, generatedCount, deliveredCount, clients: funnel.stages[2].count, points: scores.total },
       charts: { monthly, status },
+      funnel,
+      scores,
     },
   });
 });

@@ -143,6 +143,25 @@ const settingSchema = new mongoose.Schema(
       ],
       default: [],
     },
+    // Lead score card — points per milestone (services/leadScore.service.js
+    // holds the rule list; these are the weights an admin can tune). Changing
+    // them recomputes every lead's stored score.
+    leadScore: {
+      points: {
+        newLead: { type: Number, default: 0 },
+        kitGenerated: { type: Number, default: 10 },
+        kitDelivered: { type: Number, default: 10 },
+        sampleGiven: { type: Number, default: 10 },
+        visitDone: { type: Number, default: 20 },
+        feedbackTaken: { type: Number, default: 5 },
+        callsDone: { type: Number, default: 10 },
+        clientMade: { type: Number, default: 20 },
+        sampleOrder: { type: Number, default: 10 },
+        repeatOrder: { type: Number, default: 5 },
+      },
+      // How many logged calls earn the "calls done" points.
+      callsRequired: { type: Number, default: 2, min: 1 },
+    },
     // Defaults merged into every generated kit's term sheet / quotation.
     kit: {
       defaultPaymentTerms: { type: String, default: '100% advance against proforma invoice.' },

@@ -18,11 +18,15 @@ const exportKitService = require('../services/exportKit.service');
 const { INDIAN_CITIES, canonicalCity, stateForCity } = require('../config/indianCities');
 const { uploadBuffer, deleteFiles, openDownloadStream, getBuffer } = require('../services/fileStore.service');
 const { dlp, stockistPrice } = require('../config/kitContent');
+const { refreshLeadScore, setStage, markLive } = require('../services/leadScore.service');
 
 const POPULATE = [
   { path: 'assignedExecId', select: 'name email employeeCode phone' },
   { path: 'createdBy', select: 'name role' },
   { path: 'statusHistory.changedBy', select: 'name role' },
+  { path: 'stageHistory.changedBy', select: 'name role' },
+  { path: 'samples.createdBy', select: 'name role' },
+  { path: 'feedbacks.createdBy', select: 'name role' },
   { path: 'notes.createdBy', select: 'name role' },
   { path: 'visitReports.createdBy', select: 'name role' },
   { path: 'instructions.createdBy', select: 'name role' },
@@ -33,6 +37,20 @@ const POPULATE = [
 ];
 
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+/**
+ * The lead as every endpoint returns it: fully populated, with its score card
+ * attached (`scoreCard`) and its stored score refreshed on the way out — so a
+ * visit logged, a sample given or a kit delivered shows up on the card in the
+ * same response, and a stale stored score heals itself on the next view.
+ */
+async function presentLead(leadOrId) {
+  const id = leadOrId?._id || leadOrId;
+  const lead = await Lead.findById(id).populate(POPULATE);
+  if (!lead) return null;
+  const scoreCard = await refreshLeadScore(lead);
+  return { ...lead.toObject(), scoreCard };
+}
 
 // Always copied on outgoing kit emails (in addition to any sender-added CCs).
 const FIXED_KIT_CC = 'angadh.arora@cpgh.in';
@@ -306,7 +324,7 @@ const createLead = asyncHandler(async (req, res) => {
   });
   pushAssignment(req.user, lead.assignedExecId, lead);
 
-  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  const populated = await presentLead(lead);
   res.status(201).json({ success: true, data: populated });
 });
 
@@ -360,6 +378,15 @@ const listLeads = asyncHandler(async (req, res) => {
   const filter = { ...scopeFilter(req.user) };
   const q = req.query;
   if (q.status) filter.status = q.status;
+  // Funnel stage: one value, or a comma-separated list ("live,client").
+  if (q.stage) {
+    const stages = String(q.stage).split(',').map((s) => s.trim()).filter((s) => Lead.LEAD_STAGES.includes(s));
+    // Leads captured before the funnel existed carry no stage — they are new.
+    if (stages.includes('new')) filter.stage = { $in: [...stages, null] };
+    else if (stages.length === 1) filter.stage = stages[0];
+    else if (stages.length > 1) filter.stage = { $in: stages };
+  }
+  if (q.minScore !== undefined && q.minScore !== '') filter.score = { $gte: Number(q.minScore) || 0 };
   if (q.kitType) filter.kitType = q.kitType;
   // Business type is multi-select in the UI: a comma-separated list means
   // "any of these"; a single value keeps the old exact match.
@@ -412,11 +439,15 @@ const listLeads = asyncHandler(async (req, res) => {
     filter.$or = [{ refNumber: rx }, { businessName: rx }, { contactPerson: rx }, { email: rx }, { mobileNumber: rx }];
   }
 
+  // Newest first by default; `sort=score` ranks the hottest leads first (ties
+  // broken by recency) — the score-card view of the list.
+  const sort = q.sort === 'score' ? { score: -1, createdAt: -1 } : { createdAt: -1 };
+
   const [leads, total] = await Promise.all([
     Lead.find(filter)
       .populate({ path: 'assignedExecId', select: 'name email employeeCode' })
       .populate({ path: 'createdBy', select: 'name role' })
-      .sort({ createdAt: -1 })
+      .sort(sort)
       .skip(skip)
       .limit(limit),
     Lead.countDocuments(filter),
@@ -426,10 +457,135 @@ const listLeads = asyncHandler(async (req, res) => {
 
 // GET /api/leads/:id
 const getLead = asyncHandler(async (req, res) => {
-  const lead = await Lead.findById(req.params.id).populate(POPULATE);
+  const lead = await Lead.findById(req.params.id).select('assignedExecId');
   if (!lead) throw ApiError.notFound('Lead not found');
   assertCanView(lead, req.user);
-  res.json({ success: true, data: lead });
+  res.json({ success: true, data: await presentLead(lead) });
+});
+
+// PUT /api/leads/:id/stage  (move the lead along the status funnel by hand:
+// new / live / client made / turned down — a turn-down needs its reason)
+const setLeadStage = asyncHandler(async (req, res) => {
+  const lead = await Lead.findById(req.params.id);
+  if (!lead) throw ApiError.notFound('Lead not found');
+  assertCanView(lead, req.user);
+
+  const { stage } = req.body;
+  const reason = String(req.body.reason || '').trim();
+  if (stage === 'turned_down' && !reason) throw ApiError.badRequest('Record why the lead turned down');
+
+  const from = lead.stage;
+  if (!setStage(lead, stage, { user: req.user, reason, source: 'user' })) {
+    return res.json({ success: true, data: await presentLead(lead) });
+  }
+  lead.modifiedBy = req.user._id;
+  await lead.save();
+
+  const labels = { new: 'New', live: 'Live', client: 'Client made', turned_down: 'Turned down' };
+  await logActivity({
+    userId: req.user._id, action: 'LEAD_STAGE_CHANGED', entity: 'Lead', entityId: lead._id,
+    meta: { from, to: stage },
+    details: `${lead.refNumber}: ${labels[from] || from} → ${labels[stage] || stage}${reason ? ` — ${reason}` : ''}`,
+    ip: req.ip,
+  });
+
+  res.json({ success: true, data: await presentLead(lead) });
+});
+
+// ---- Samples given / feedback taken (score-card milestones) ----
+
+function assertCanModifyEntry(entry, user, what) {
+  if (user.role === 'admin') return;
+  if (String(entry.createdBy) !== String(user._id)) {
+    throw ApiError.forbidden(`You can only delete your own ${what}`);
+  }
+}
+
+// POST /api/leads/:id/samples  (record samples handed to the client)
+const addSample = asyncHandler(async (req, res) => {
+  const lead = await Lead.findById(req.params.id);
+  if (!lead) throw ApiError.notFound('Lead not found');
+  assertCanView(lead, req.user);
+
+  const givenOn = new Date(req.body.givenOn);
+  const products = String(req.body.products || '').trim();
+  const note = String(req.body.note || '').trim();
+  lead.samples.push({ givenOn, products, note, createdBy: req.user._id });
+  markLive(lead, req.user, 'Samples given');
+  lead.modifiedBy = req.user._id;
+  await lead.save();
+
+  await logActivity({
+    userId: req.user._id, action: 'LEAD_SAMPLE_GIVEN', entity: 'Lead', entityId: lead._id,
+    details: `${lead.refNumber}: samples given on ${givenOn.toISOString().slice(0, 10)}${products ? ` (${products})` : ''}`,
+    ip: req.ip,
+  });
+
+  res.status(201).json({ success: true, data: await presentLead(lead) });
+});
+
+// DELETE /api/leads/:id/samples/:sampleId
+const deleteSample = asyncHandler(async (req, res) => {
+  const lead = await Lead.findById(req.params.id);
+  if (!lead) throw ApiError.notFound('Lead not found');
+  assertCanView(lead, req.user);
+
+  const sample = lead.samples.id(req.params.sampleId);
+  if (!sample) throw ApiError.notFound('Sample record not found');
+  assertCanModifyEntry(sample, req.user, 'sample records');
+  lead.samples.pull(sample._id);
+  lead.modifiedBy = req.user._id;
+  await lead.save();
+
+  await logActivity({
+    userId: req.user._id, action: 'LEAD_SAMPLE_DELETED', entity: 'Lead', entityId: lead._id,
+    details: `${lead.refNumber}: removed a samples-given record`, ip: req.ip,
+  });
+
+  res.json({ success: true, data: await presentLead(lead) });
+});
+
+// POST /api/leads/:id/feedbacks  (record the client's feedback)
+const addFeedback = asyncHandler(async (req, res) => {
+  const lead = await Lead.findById(req.params.id);
+  if (!lead) throw ApiError.notFound('Lead not found');
+  assertCanView(lead, req.user);
+
+  const takenOn = new Date(req.body.takenOn);
+  const note = String(req.body.note || '').trim();
+  if (!note) throw ApiError.badRequest('Write down what the client said');
+  lead.feedbacks.push({ takenOn, note, createdBy: req.user._id });
+  markLive(lead, req.user, 'Feedback taken');
+  lead.modifiedBy = req.user._id;
+  await lead.save();
+
+  await logActivity({
+    userId: req.user._id, action: 'LEAD_FEEDBACK_TAKEN', entity: 'Lead', entityId: lead._id,
+    details: `${lead.refNumber}: feedback taken on ${takenOn.toISOString().slice(0, 10)}`, ip: req.ip,
+  });
+
+  res.status(201).json({ success: true, data: await presentLead(lead) });
+});
+
+// DELETE /api/leads/:id/feedbacks/:feedbackId
+const deleteFeedback = asyncHandler(async (req, res) => {
+  const lead = await Lead.findById(req.params.id);
+  if (!lead) throw ApiError.notFound('Lead not found');
+  assertCanView(lead, req.user);
+
+  const fb = lead.feedbacks.id(req.params.feedbackId);
+  if (!fb) throw ApiError.notFound('Feedback record not found');
+  assertCanModifyEntry(fb, req.user, 'feedback records');
+  lead.feedbacks.pull(fb._id);
+  lead.modifiedBy = req.user._id;
+  await lead.save();
+
+  await logActivity({
+    userId: req.user._id, action: 'LEAD_FEEDBACK_DELETED', entity: 'Lead', entityId: lead._id,
+    details: `${lead.refNumber}: removed a feedback record`, ip: req.ip,
+  });
+
+  res.json({ success: true, data: await presentLead(lead) });
 });
 
 // PUT /api/leads/:id  (client details — editable at any stage until the kit is generated/locked)
@@ -462,7 +618,7 @@ const updateLead = asyncHandler(async (req, res) => {
   });
   if (String(lead.assignedExecId) !== prevOwner) pushAssignment(req.user, lead.assignedExecId, lead);
 
-  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  const populated = await presentLead(lead);
   res.json({ success: true, data: populated });
 });
 
@@ -575,6 +731,7 @@ const selectKitType = asyncHandler(async (req, res) => {
     };
     lead.status = 'kit_selected';
     markEditedIfGenerated(lead);
+    markLive(lead, req.user, 'Kit selected');
     lead.modifiedBy = req.user._id;
     lead.statusHistory.push({ from, to: 'kit_selected', changedBy: req.user._id, note: historyNote('export') });
     await lead.save();
@@ -583,7 +740,7 @@ const selectKitType = asyncHandler(async (req, res) => {
       userId: req.user._id, action: 'LEAD_KIT_SELECTED', entity: 'Lead', entityId: lead._id,
       details: `${lead.refNumber}: selected export kit${switchedSuffix}`, ip: req.ip,
     });
-    const populated = await Lead.findById(lead._id).populate(POPULATE);
+    const populated = await presentLead(lead);
     return res.json({ success: true, data: populated });
   }
 
@@ -613,6 +770,7 @@ const selectKitType = asyncHandler(async (req, res) => {
   };
   lead.status = 'kit_selected';
   markEditedIfGenerated(lead);
+  markLive(lead, req.user, 'Kit selected');
   lead.modifiedBy = req.user._id;
   lead.statusHistory.push({ from, to: 'kit_selected', changedBy: req.user._id, note: historyNote(kitType) });
   await lead.save();
@@ -622,7 +780,7 @@ const selectKitType = asyncHandler(async (req, res) => {
     details: `${lead.refNumber}: selected ${kitType} kit (${items.length} rates loaded)${switchedSuffix}`, ip: req.ip,
   });
 
-  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  const populated = await presentLead(lead);
   res.json({ success: true, data: populated });
 });
 
@@ -706,7 +864,7 @@ const confirmRates = asyncHandler(async (req, res) => {
     details: `${lead.refNumber}: generated ${lead.generatedFiles.length}-document ${lead.kitType} kit`, ip: req.ip,
   });
 
-  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  const populated = await presentLead(lead);
   res.json({ success: true, data: populated });
 });
 
@@ -867,7 +1025,7 @@ const confirmExportConfig = asyncHandler(async (req, res) => {
     details: `${lead.refNumber}: generated ${lead.generatedFiles.length}-document export kit`, ip: req.ip,
   });
 
-  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  const populated = await presentLead(lead);
   res.json({ success: true, data: populated });
 });
 
@@ -888,6 +1046,7 @@ const generateLeadKit = asyncHandler(async (req, res) => {
   await buildKitFiles(lead);
   const from = lead.status;
   if (from !== 'delivered') lead.status = 'generated';
+  markLive(lead, req.user, 'Kit generated');
   // Freeze the lead now that a fresh kit exists; the data is back in sync.
   lead.locked = true;
   lead.editedAfterGeneration = false;
@@ -900,7 +1059,7 @@ const generateLeadKit = asyncHandler(async (req, res) => {
     details: `${lead.refNumber}: generated ${lead.generatedFiles.length}-document ${lead.kitType} kit`, ip: req.ip,
   });
 
-  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  const populated = await presentLead(lead);
   res.json({ success: true, data: populated });
 });
 
@@ -934,7 +1093,7 @@ const saveTerms = asyncHandler(async (req, res) => {
     ip: req.ip,
   });
 
-  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  const populated = await presentLead(lead);
   res.json({ success: true, data: populated });
 });
 
@@ -958,7 +1117,7 @@ const unlockLead = asyncHandler(async (req, res) => {
     });
   }
 
-  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  const populated = await presentLead(lead);
   res.json({ success: true, data: populated });
 });
 
@@ -990,7 +1149,7 @@ const addNote = asyncHandler(async (req, res) => {
     details: `Updated the internal note on ${lead.refNumber}`, ip: req.ip,
   });
 
-  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  const populated = await presentLead(lead);
   res.json({ success: true, data: populated });
 });
 
@@ -1016,7 +1175,7 @@ const updateNote = asyncHandler(async (req, res) => {
     details: `Edited an internal note on ${lead.refNumber}`, ip: req.ip,
   });
 
-  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  const populated = await presentLead(lead);
   res.json({ success: true, data: populated });
 });
 
@@ -1039,7 +1198,7 @@ const deleteNote = asyncHandler(async (req, res) => {
     details: `Deleted an internal note from ${lead.refNumber}`, ip: req.ip,
   });
 
-  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  const populated = await presentLead(lead);
   res.json({ success: true, data: populated });
 });
 
@@ -1066,6 +1225,8 @@ const addVisitReport = asyncHandler(async (req, res) => {
   const visitType = req.body.visitType === 'call' ? 'call' : 'field';
 
   lead.visitReports.push({ visitDate, visitType, note, createdBy: req.user._id });
+  // The first visit or call on a new lead takes it live on the funnel.
+  markLive(lead, req.user, visitType === 'call' ? 'Call logged' : 'Visit logged');
 
   // Derived follow-up: scheduling needs a date — a follow-up note without one
   // is ignored rather than wiping any follow-up already on the lead.
@@ -1101,7 +1262,7 @@ const addVisitReport = asyncHandler(async (req, res) => {
     ip: req.ip,
   });
 
-  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  const populated = await presentLead(lead);
   res.status(201).json({ success: true, data: populated });
 });
 
@@ -1130,7 +1291,7 @@ const updateVisitReport = asyncHandler(async (req, res) => {
     details: `Edited a visit report on ${lead.refNumber}`, ip: req.ip,
   });
 
-  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  const populated = await presentLead(lead);
   res.json({ success: true, data: populated });
 });
 
@@ -1153,7 +1314,7 @@ const deleteVisitReport = asyncHandler(async (req, res) => {
     details: `Deleted a visit report from ${lead.refNumber}`, ip: req.ip,
   });
 
-  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  const populated = await presentLead(lead);
   res.json({ success: true, data: populated });
 });
 
@@ -1177,7 +1338,7 @@ const addInstruction = asyncHandler(async (req, res) => {
     details: `Added an instruction to ${lead.refNumber}`, ip: req.ip,
   });
 
-  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  const populated = await presentLead(lead);
   res.status(201).json({ success: true, data: populated });
 });
 
@@ -1202,7 +1363,7 @@ const closeInstruction = asyncHandler(async (req, res) => {
     details: `Marked an instruction done on ${lead.refNumber}`, ip: req.ip,
   });
 
-  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  const populated = await presentLead(lead);
   res.json({ success: true, data: populated });
 });
 
@@ -1223,7 +1384,7 @@ const deleteInstruction = asyncHandler(async (req, res) => {
     details: `Deleted an instruction from ${lead.refNumber}`, ip: req.ip,
   });
 
-  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  const populated = await presentLead(lead);
   res.json({ success: true, data: populated });
 });
 
@@ -1283,7 +1444,7 @@ const setActionPoint = asyncHandler(async (req, res) => {
     ip: req.ip,
   });
 
-  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  const populated = await presentLead(lead);
   res.json({ success: true, data: populated });
 });
 
@@ -1316,7 +1477,7 @@ const updateFollowUp = asyncHandler(async (req, res) => {
     ip: req.ip,
   });
 
-  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  const populated = await presentLead(lead);
   res.json({ success: true, data: populated });
 });
 
@@ -1353,7 +1514,7 @@ const closeFollowUp = asyncHandler(async (req, res) => {
     details: `Closed follow-up for ${lead.refNumber}`, ip: req.ip,
   });
 
-  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  const populated = await presentLead(lead);
   res.json({ success: true, data: populated });
 });
 
@@ -1389,7 +1550,7 @@ const uploadAttachments = asyncHandler(async (req, res) => {
     details: `Uploaded ${files.length} file(s) to ${lead.refNumber}`, ip: req.ip,
   });
 
-  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  const populated = await presentLead(lead);
   res.status(201).json({ success: true, data: populated });
 });
 
@@ -1433,7 +1594,7 @@ const renameAttachment = asyncHandler(async (req, res) => {
     details: `Renamed attachment "${oldName}" to "${att.fileName}" on ${lead.refNumber}`, ip: req.ip,
   });
 
-  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  const populated = await presentLead(lead);
   res.json({ success: true, data: populated });
 });
 
@@ -1455,7 +1616,7 @@ const deleteAttachment = asyncHandler(async (req, res) => {
     details: `Deleted attachment "${att.fileName}" from ${lead.refNumber}`, ip: req.ip,
   });
 
-  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  const populated = await presentLead(lead);
   res.json({ success: true, data: populated });
 });
 
@@ -1592,6 +1753,7 @@ const emailKit = asyncHandler(async (req, res) => {
 
   const from = lead.status;
   lead.status = 'delivered';
+  markLive(lead, req.user, 'Kit emailed');
   lead.delivery = {
     method: 'email',
     sentTo: req.body.to || lead.email,
@@ -1625,7 +1787,7 @@ const emailKit = asyncHandler(async (req, res) => {
     details: `${lead.refNumber}: emailed kit to ${lead.delivery.sentTo}`, ip: req.ip,
   });
 
-  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  const populated = await presentLead(lead);
   res.json({ success: true, data: populated });
 });
 
@@ -1641,6 +1803,7 @@ const markDelivered = asyncHandler(async (req, res) => {
 
   const from = lead.status;
   lead.status = 'delivered';
+  markLive(lead, req.user, 'Kit delivered');
   lead.delivery = {
     method: 'manual',
     sentTo,
@@ -1663,7 +1826,7 @@ const markDelivered = asyncHandler(async (req, res) => {
     details: `${lead.refNumber}: marked kit manually delivered${note ? ` (${note})` : ''}`, ip: req.ip,
   });
 
-  const populated = await Lead.findById(lead._id).populate(POPULATE);
+  const populated = await presentLead(lead);
   res.json({ success: true, data: populated });
 });
 
@@ -1675,6 +1838,11 @@ module.exports = {
   createLead,
   listLeads,
   getLead,
+  setLeadStage,
+  addSample,
+  deleteSample,
+  addFeedback,
+  deleteFeedback,
   updateLead,
   bulkReassignLeads,
   deleteLead,

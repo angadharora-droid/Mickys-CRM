@@ -13,6 +13,7 @@ import {
   DEFAULT_DISTRIBUTOR_AGREEMENT_TERMS,
   FIXED_KIT_CC,
   LEAD_OPTIONAL_FIELDS,
+  STAGE_LABELS,
   MODULES,
   hasModule,
 } from '@/lib/constants';
@@ -20,6 +21,11 @@ import { useAuth } from '@/context/AuthContext';
 import { cn, formatCurrency, formatDate, formatDateTime, formatBytes } from '@/lib/utils';
 import PageHeader from '@/components/shared/PageHeader';
 import StatusBadge from '@/components/shared/StatusBadge';
+import StageBadge from '@/components/shared/StageBadge';
+import ScoreBadge from '@/components/shared/ScoreBadge';
+import LeadScoreCard from '@/components/leads/LeadScoreCard';
+import StageControl from '@/components/leads/StageControl';
+import SamplesFeedbackCard from '@/components/leads/SamplesFeedbackCard';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import FilePreviewDialog from '@/components/shared/FilePreviewDialog';
 import { Button } from '@/components/ui/button';
@@ -648,6 +654,29 @@ export default function LeadDetail() {
     run('visit-del', () => api.delete(`/leads/${lead._id}/visit-reports/${visitId}`))
       .then(() => { setConfirmVisitId(null); toast.success('Visit report deleted'); }).catch(() => {});
 
+  // ---- Lead status funnel + score-card milestones ----
+  // These return the (possibly rejected) promise so the calling component can
+  // keep its dialog open on failure; `run` has already shown the error toast.
+  const setLeadStage = (stage, reason) =>
+    run('stage', () => api.put(`/leads/${lead._id}/stage`, { stage, reason }))
+      .then(() => toast.success(`Lead marked ${STAGE_LABELS[stage]}`));
+
+  const addSample = (body) =>
+    run('sample-add', () => api.post(`/leads/${lead._id}/samples`, body))
+      .then(() => toast.success('Samples given — logged on the score card'));
+
+  const deleteSample = (sampleId) =>
+    run('sample-del', () => api.delete(`/leads/${lead._id}/samples/${sampleId}`))
+      .then(() => toast.success('Sample record deleted'));
+
+  const addFeedback = (body) =>
+    run('feedback-add', () => api.post(`/leads/${lead._id}/feedbacks`, body))
+      .then(() => toast.success('Feedback taken — logged on the score card'));
+
+  const deleteFeedback = (feedbackId) =>
+    run('feedback-del', () => api.delete(`/leads/${lead._id}/feedbacks/${feedbackId}`))
+      .then(() => toast.success('Feedback deleted'));
+
   // ---- Instructions (admin -> exec directives) ----
   const addInstruction = () =>
     run('instr-add', () => api.post(`/leads/${lead._id}/instructions`, { text: instructionDraft.trim() }))
@@ -790,6 +819,8 @@ export default function LeadDetail() {
       </PageHeader>
 
       <div className="flex flex-wrap items-center gap-3">
+        <StageBadge stage={lead.stage} />
+        <ScoreBadge score={lead.scoreCard?.total ?? lead.score ?? 0} scale={lead.scoreCard?.scale} />
         <StatusBadge status={lead.status} />
         {hasKit && <Badge variant="outline">{KIT_TYPE_LABELS[lead.kitType]}</Badge>}
         <Badge variant="secondary">{lead.businessType}</Badge>
@@ -931,6 +962,13 @@ export default function LeadDetail() {
       )}
 
       <Card><CardContent className="pt-5"><Stepper status={lead.status} /></CardContent></Card>
+
+      {/* Lead status funnel (New → Live → Client made / Turned down) and the
+          score card that accumulates as the lead is worked. */}
+      <div className="grid gap-6 xl:grid-cols-5">
+        <div className="xl:col-span-2"><StageControl lead={lead} onChange={setLeadStage} busy={action === 'stage'} /></div>
+        <LeadScoreCard scoreCard={lead.scoreCard} className="xl:col-span-3" />
+      </div>
 
       {/* Client summary */}
       <Card>
@@ -1319,6 +1357,17 @@ export default function LeadDetail() {
           )}
         </CardContent>
       </Card>
+
+      {/* Samples given + feedback taken — score-card milestones logged by hand */}
+      <SamplesFeedbackCard
+        lead={lead}
+        user={user}
+        action={action}
+        onAddSample={addSample}
+        onDeleteSample={deleteSample}
+        onAddFeedback={addFeedback}
+        onDeleteFeedback={deleteFeedback}
+      />
 
       {/* Action point & follow-up */}
       <Card>

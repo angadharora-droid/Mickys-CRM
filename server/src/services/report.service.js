@@ -1,6 +1,7 @@
 const ExcelJS = require('exceljs');
 const Lead = require('../models/Lead');
 const ApiError = require('../utils/ApiError');
+const { getScoreConfig, linkedOrdersByLead, buildScoreCard } = require('./leadScore.service');
 
 /**
  * Report engine: every report is a registry entry with a column spec and a row
@@ -27,6 +28,8 @@ const KIT_TYPE_LABELS = {
   export: 'Export Kit',
   b2c: 'B2C Kit',
 };
+
+const STAGE_LABELS = { new: 'New', live: 'Live', client: 'Client made', turned_down: 'Turned down' };
 
 /** Calendar day (YYYY-MM-DD) a timestamp falls on in IST. */
 const istDayKey = (d) => new Date(new Date(d).getTime() + IST_OFFSET_MS).toISOString().slice(0, 10);
@@ -377,10 +380,63 @@ function activityScan(ctx) {
     .select(
       'assignedExecId leadDate visitReports.visitDate visitReports.visitType generatedAt delivery.sentAt status ' +
       'followUp.status followUp.date crmHistory.type crmHistory.at emailLog.createdAt actionPoint ' +
-      'instructions.status instructions.createdAt instructions.doneAt'
+      'instructions.status instructions.createdAt instructions.doneAt stage score clientMadeAt samples.givenOn feedbacks.takenOn'
     )
     .populate({ path: 'assignedExecId', select: 'name isActive' })
     .lean();
+}
+
+/**
+ * The score card, one row per lead dated in the period, ranked by points:
+ * the stage on the funnel, the total, and every milestone as the points it
+ * contributed (0 = not yet earned).
+ */
+async function leadScoreRows(ctx) {
+  const [config, leads] = await Promise.all([
+    getScoreConfig(),
+    Lead.find({ ...ctx.scope, leadDate: { $gte: ctx.from, $lte: ctx.to } })
+      .select(
+        'refNumber businessName contactPerson mobileNumber city businessType assignedExecId status kitType leadDate createdAt ' +
+        'stage score clientMadeAt turnDownReason generatedAt delivery.sentAt samples.givenOn ' +
+        'visitReports.visitDate visitReports.visitType feedbacks.takenOn'
+      )
+      .populate({ path: 'assignedExecId', select: 'name' })
+      .lean(),
+  ]);
+  const ordersByLead = await linkedOrdersByLead(leads.map((l) => l._id));
+
+  const rows = leads.map((l) => {
+    const card = buildScoreCard(l, ordersByLead.get(String(l._id)) || [], config);
+    const pts = Object.fromEntries(card.items.map((i) => [i.key, i.earnedPoints]));
+    const counts = Object.fromEntries(card.items.map((i) => [i.key, i.count]));
+    return {
+      score: card.total,
+      ...leadBasics(l),
+      contactPerson: l.contactPerson || '',
+      mobileNumber: l.mobileNumber || '',
+      businessType: l.businessType || '',
+      stage: STAGE_LABELS[l.stage] || 'New',
+      status: STATUS_LABELS[l.status] || l.status,
+      kitType: KIT_TYPE_LABELS[l.kitType] || '',
+      kitGenerated: pts.kitGenerated,
+      kitDelivered: pts.kitDelivered,
+      sampleGiven: pts.sampleGiven,
+      visitDone: pts.visitDone,
+      feedbackTaken: pts.feedbackTaken,
+      callsDone: pts.callsDone,
+      clientMade: pts.clientMade,
+      sampleOrder: pts.sampleOrder,
+      repeatOrder: pts.repeatOrder,
+      visits: counts.visitDone,
+      calls: counts.callsDone,
+      orders: card.orders.length,
+      clientMadeAt: l.clientMadeAt ? new Date(l.clientMadeAt) : null,
+      turnDownReason: l.turnDownReason || '',
+      leadDate: l.leadDate ? new Date(l.leadDate) : null,
+    };
+  });
+  rows.sort((a, b) => b.score - a.score || (b.leadDate || 0) - (a.leadDate || 0));
+  return rows;
 }
 
 async function execPerformanceRows(ctx) {
@@ -395,6 +451,7 @@ async function execPerformanceRows(ctx) {
       byExec.set(id, {
         executive: l.assignedExecId?.name || 'Unassigned',
         totalLeads: 0, leadsAdded: 0, visits: 0, calls: 0, activeDays: 0, kitsGenerated: 0, kitsDelivered: 0,
+        samplesGiven: 0, feedbackTaken: 0, clientsMade: 0, liveLeads: 0, turnedDown: 0, points: 0,
         followUpsClosed: 0, instructionsDone: 0, emailsSent: 0, openFollowUps: 0, overdueFollowUps: 0,
         openActionPoints: 0, openInstructions: 0,
       });
@@ -403,6 +460,14 @@ async function execPerformanceRows(ctx) {
     const s = byExec.get(id);
     s.totalLeads += 1;
     if (inRange(l.leadDate, ctx)) s.leadsAdded += 1;
+    // Score-card activity in the period, plus the funnel position and points
+    // as they stand now (the score is cumulative, not a period figure).
+    s.samplesGiven += (l.samples || []).filter((x) => inRange(x.givenOn, ctx)).length;
+    s.feedbackTaken += (l.feedbacks || []).filter((x) => inRange(x.takenOn, ctx)).length;
+    if (inRange(l.clientMadeAt, ctx)) s.clientsMade += 1;
+    if (l.stage === 'live') s.liveLeads += 1;
+    if (l.stage === 'turned_down') s.turnedDown += 1;
+    s.points += l.score || 0;
     for (const v of l.visitReports || []) {
       if (!inRange(v.visitDate, ctx)) continue;
       // Phone calls are counted on their own and don't make a day a field day.
@@ -664,6 +729,12 @@ const REPORTS = {
       { key: 'activeDays', header: 'Field Days', type: 'number', width: 10 },
       { key: 'kitsGenerated', header: 'Kits Generated', type: 'number', width: 14 },
       { key: 'kitsDelivered', header: 'Kits Delivered', type: 'number', width: 13 },
+      { key: 'samplesGiven', header: 'Samples Given', type: 'number', width: 13 },
+      { key: 'feedbackTaken', header: 'Feedback Taken', type: 'number', width: 14 },
+      { key: 'clientsMade', header: 'Clients Made', type: 'number', width: 12 },
+      { key: 'liveLeads', header: 'Live Now', type: 'number', width: 9 },
+      { key: 'turnedDown', header: 'Turned Down', type: 'number', width: 12 },
+      { key: 'points', header: 'Score Points', type: 'number', width: 12 },
       { key: 'followUpsClosed', header: 'Follow-ups Closed', type: 'number', width: 16 },
       { key: 'instructionsDone', header: 'Instructions Done', type: 'number', width: 16 },
       { key: 'emailsSent', header: 'Emails Sent', type: 'number', width: 11 },
@@ -671,6 +742,40 @@ const REPORTS = {
       { key: 'overdueFollowUps', header: 'Overdue', type: 'number', width: 9 },
       { key: 'openActionPoints', header: 'Open Actions', type: 'number', width: 12 },
       { key: 'openInstructions', header: 'Open Instructions', type: 'number', width: 16 },
+    ],
+  },
+  'lead-scores': {
+    label: 'Lead Score Card',
+    description: 'Every lead dated in the period ranked by score-card points, with its funnel stage and the points each milestone earned (0 = not yet).',
+    build: leadScoreRows,
+    totals: true,
+    columns: [
+      { key: 'score', header: 'Score', type: 'number', width: 8 },
+      { key: 'refNumber', header: 'Ref', width: 20 },
+      { key: 'businessName', header: 'Business', width: 26 },
+      { key: 'contactPerson', header: 'Contact', width: 18 },
+      { key: 'mobileNumber', header: 'Mobile', width: 14 },
+      { key: 'city', header: 'City', width: 14 },
+      { key: 'businessType', header: 'Type', width: 13 },
+      { key: 'executive', header: 'Executive', width: 16 },
+      { key: 'stage', header: 'Funnel Stage', width: 13 },
+      { key: 'status', header: 'Kit Status', width: 14 },
+      { key: 'kitType', header: 'Kit', width: 15 },
+      { key: 'kitGenerated', header: 'Kit Generated', type: 'number', width: 12 },
+      { key: 'kitDelivered', header: 'Kit Delivered', type: 'number', width: 12 },
+      { key: 'sampleGiven', header: 'Samples Given', type: 'number', width: 13 },
+      { key: 'visitDone', header: 'Visit Done', type: 'number', width: 10 },
+      { key: 'feedbackTaken', header: 'Feedback Taken', type: 'number', width: 14 },
+      { key: 'callsDone', header: 'Calls Done', type: 'number', width: 10 },
+      { key: 'clientMade', header: 'Client Made', type: 'number', width: 11 },
+      { key: 'sampleOrder', header: 'Sample Order', type: 'number', width: 12 },
+      { key: 'repeatOrder', header: 'Repeat Orders', type: 'number', width: 13 },
+      { key: 'visits', header: 'Visits', type: 'number', width: 8 },
+      { key: 'calls', header: 'Calls', type: 'number', width: 8 },
+      { key: 'orders', header: 'Orders', type: 'number', width: 8 },
+      { key: 'clientMadeAt', header: 'Client Made On', type: 'date', width: 14 },
+      { key: 'turnDownReason', header: 'Turn-down Reason', width: 30, wrap: true },
+      { key: 'leadDate', header: 'Lead Date', type: 'date', width: 13 },
     ],
   },
   'daily-summary': {

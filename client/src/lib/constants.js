@@ -147,6 +147,74 @@ export const STATUS_STYLES = {
   delivered: 'bg-emerald-50 text-emerald-800 ring-emerald-300/70 dark:bg-emerald-950 dark:text-emerald-300 dark:ring-emerald-800',
 };
 
+// ---------------------------------------------------------------------------
+// Lead status funnel + score card (mirrors server/src/models/Lead.js and
+// services/leadScore.service.js)
+// ---------------------------------------------------------------------------
+
+/** Where a lead stands commercially: New → Live → Client made, or Turned down. */
+export const LEAD_STAGES = ['new', 'live', 'client', 'turned_down'];
+
+export const STAGE_LABELS = {
+  new: 'New',
+  live: 'Live',
+  client: 'Client made',
+  turned_down: 'Turned down',
+};
+
+export const STAGE_HINTS = {
+  new: 'Captured — nothing done with it yet',
+  live: 'Being worked: kit, visits, calls, samples',
+  client: 'Appointed as a customer / buying',
+  turned_down: 'Said no or went cold (reason recorded)',
+};
+
+/** Badge classes per funnel stage (StageBadge). */
+export const STAGE_STYLES = {
+  new: 'bg-stone-100 text-stone-600 ring-stone-300/60 dark:bg-stone-800 dark:text-stone-300 dark:ring-stone-700',
+  live: 'bg-sky-50 text-sky-800 ring-sky-300/70 dark:bg-sky-950 dark:text-sky-300 dark:ring-sky-800',
+  client: 'bg-emerald-50 text-emerald-800 ring-emerald-300/70 dark:bg-emerald-950 dark:text-emerald-300 dark:ring-emerald-800',
+  turned_down: 'bg-red-50 text-red-700 ring-red-300/70 dark:bg-red-950 dark:text-red-300 dark:ring-red-800',
+};
+
+/** Funnel bar colours per stage (LeadFunnel). */
+export const STAGE_BAR_STYLES = {
+  new: 'from-stone-400 to-stone-300',
+  live: 'from-sky-600 to-sky-400',
+  client: 'from-emerald-600 to-emerald-400',
+  turned_down: 'from-red-500 to-red-300',
+};
+
+/**
+ * The score card's milestones in display order, with the default points. The
+ * server sends the live weights and each lead's earned points (scoreCard);
+ * this list only drives labels/hints where no card is in hand (settings).
+ */
+export const SCORE_RULES = [
+  { key: 'newLead', label: 'New lead', defaultPoints: 0, hint: 'The lead exists' },
+  { key: 'kitGenerated', label: 'Kit generated', defaultPoints: 10, hint: 'A sales kit was generated (Step 4)' },
+  { key: 'kitDelivered', label: 'Kit delivered', defaultPoints: 10, hint: 'The kit was emailed or handed over (Step 5)' },
+  { key: 'sampleGiven', label: 'Samples given', defaultPoints: 10, hint: 'Logged under Samples & Feedback' },
+  { key: 'visitDone', label: 'Visit done', defaultPoints: 20, hint: 'At least one field visit in the Visit Report' },
+  { key: 'feedbackTaken', label: 'Feedback taken', defaultPoints: 5, hint: 'Client feedback logged (or order feedback)' },
+  { key: 'callsDone', label: 'Calls done', defaultPoints: 10, hint: 'Enough calls logged in the Visit Report' },
+  { key: 'clientMade', label: 'Client made', defaultPoints: 20, hint: 'Appointed as a customer, or marked Client made' },
+  { key: 'sampleOrder', label: 'Sample order bought', defaultPoints: 10, hint: 'First sales order booked for the customer' },
+  { key: 'repeatOrder', label: 'Repeat order', defaultPoints: 5, perEvent: true, hint: 'Every further sales order, per order' },
+];
+
+/** Score tone thresholds, as a share of the card's scale (max without repeats). */
+export const scoreTone = (score, scale) => {
+  const pct = scale ? score / scale : 0;
+  if (score <= 0) return 'bg-muted text-muted-foreground ring-border';
+  if (pct >= 0.6) return 'bg-emerald-50 text-emerald-800 ring-emerald-300/70 dark:bg-emerald-950 dark:text-emerald-300 dark:ring-emerald-800';
+  if (pct >= 0.3) return 'bg-amber-50 text-amber-800 ring-amber-300/70 dark:bg-amber-950 dark:text-amber-300 dark:ring-amber-800';
+  return 'bg-sky-50 text-sky-800 ring-sky-300/70 dark:bg-sky-950 dark:text-sky-300 dark:ring-sky-800';
+};
+
+/** The most a lead can score without repeat orders, at the default weights. */
+export const DEFAULT_SCORE_SCALE = SCORE_RULES.filter((r) => !r.perEvent).reduce((s, r) => s + r.defaultPoints, 0);
+
 export const BUSINESS_TYPES = [
   'Hotel',
   'Restaurant',

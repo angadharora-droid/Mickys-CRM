@@ -12,6 +12,7 @@
     "backfill:stock-keys": "node src/scripts/backfill-stock-name-keys.js",
     "migrate:order-status": "node src/scripts/migrate-sales-order-status.js",
     "backfill:order-stamps": "node src/scripts/backfill-order-stamps.js",
+    "backfill:lead-scores": "node src/scripts/backfill-lead-scores.js",
     "cleanup:storage": "node src/scripts/cleanup-gridfs.js"
   },
   "dependencies": {

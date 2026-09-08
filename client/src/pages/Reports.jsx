@@ -147,6 +147,15 @@ function summarize(type, report) {
         { label: 'Follow-ups closed', value: t.followUpsClosed ?? 0 },
         { label: 'Overdue', value: t.overdueFollowUps ?? 0, tone: 'red' },
       ];
+    case 'lead-scores':
+      return [
+        { label: 'Leads', value: rows.length, tone: 'sky' },
+        { label: 'Total points', value: t.score ?? 0 },
+        { label: 'Avg score', value: rows.length ? Math.round(((t.score ?? 0) / rows.length) * 10) / 10 : 0 },
+        { label: 'Live', value: count((r) => r.stage === 'Live') },
+        { label: 'Clients made', value: count((r) => r.stage === 'Client made'), tone: 'green' },
+        { label: 'Turned down', value: count((r) => r.stage === 'Turned down'), tone: 'red' },
+      ];
     case 'daily-summary':
       return [
         { label: 'New leads', value: t.newLeads ?? 0, tone: 'sky' },

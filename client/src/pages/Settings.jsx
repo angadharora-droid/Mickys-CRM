@@ -14,7 +14,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Loader2, Mail, Building2, Send, ScrollText, Rss, Plus, Pencil, Trash2, RefreshCw, ExternalLink } from 'lucide-react';
+import { Loader2, Mail, Building2, Send, ScrollText, Rss, Plus, Pencil, Trash2, RefreshCw, ExternalLink, Trophy } from 'lucide-react';
+import { SCORE_RULES } from '@/lib/constants';
 
 export default function Settings() {
   const [settings, setSettings] = useState(null);
@@ -123,6 +124,9 @@ export default function Settings() {
   const setEmail = (key, value) => setSettings((s) => ({ ...s, email: { ...s.email, [key]: value } }));
   const setCompany = (key, value) => setSettings((s) => ({ ...s, company: { ...s.company, [key]: value } }));
   const setKit = (key, value) => setSettings((s) => ({ ...s, kit: { ...s.kit, [key]: value } }));
+  const setScorePoints = (key, value) =>
+    setSettings((s) => ({ ...s, leadScore: { ...s.leadScore, points: { ...(s.leadScore?.points || {}), [key]: value } } }));
+  const setScoreField = (key, value) => setSettings((s) => ({ ...s, leadScore: { ...s.leadScore, [key]: value } }));
 
   const save = async () => {
     setSaving(true);
@@ -140,6 +144,31 @@ export default function Settings() {
       setSaving(false);
     }
   };
+
+  // The score weights are saved on their own: changing them recomputes every
+  // lead's stored score, which the server reports back in the message.
+  const saveScore = async () => {
+    setSaving(true);
+    try {
+      const points = Object.fromEntries(
+        SCORE_RULES.map((r) => [r.key, Number(settings.leadScore?.points?.[r.key] ?? r.defaultPoints) || 0])
+      );
+      const { data } = await api.put('/settings', {
+        leadScore: { points, callsRequired: Number(settings.leadScore?.callsRequired) || 2 },
+      });
+      setSettings(data.data);
+      toast.success(data.message || 'Score card saved');
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const scoreRules = settings?.leadScore?.rules?.length ? settings.leadScore.rules : SCORE_RULES;
+  const scoreScale = scoreRules
+    .filter((r) => !r.perEvent)
+    .reduce((sum, r) => sum + (Number(settings?.leadScore?.points?.[r.key] ?? r.defaultPoints) || 0), 0);
 
   const sendTest = async () => {
     setTesting(true);
@@ -171,8 +200,63 @@ export default function Settings() {
           <TabsTrigger value="email"><Mail className="h-4 w-4 mr-1.5" /> Email</TabsTrigger>
           <TabsTrigger value="company"><Building2 className="h-4 w-4 mr-1.5" /> Company</TabsTrigger>
           <TabsTrigger value="kit"><ScrollText className="h-4 w-4 mr-1.5" /> Kit Defaults</TabsTrigger>
+          <TabsTrigger value="score"><Trophy className="h-4 w-4 mr-1.5" /> Lead Score</TabsTrigger>
           <TabsTrigger value="meta"><Rss className="h-4 w-4 mr-1.5" /> Meta Ads</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="score">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Lead Score Card</CardTitle>
+              <CardDescription>
+                Points a lead earns at each milestone. Every milestone counts once (repeat orders count per order).
+                Saving recalculates the score of every lead.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div className="grid gap-3 sm:grid-cols-2">
+                {scoreRules.map((r, i) => {
+                  const hint = SCORE_RULES.find((x) => x.key === r.key)?.hint;
+                  return (
+                    <div key={r.key} className="flex items-center gap-3 rounded-lg border p-3">
+                      <div className="min-w-0 flex-1">
+                        <Label htmlFor={`score-${r.key}`} className="flex items-baseline gap-1.5">
+                          <span className="text-xs tabular-nums text-muted-foreground">{i + 1}.</span>
+                          {r.label}
+                          {r.perEvent && <span className="text-xs font-normal text-muted-foreground">(per order)</span>}
+                        </Label>
+                        {hint && <p className="mt-0.5 text-xs text-muted-foreground">{hint}</p>}
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <Input
+                          id={`score-${r.key}`}
+                          type="number" min={0} max={1000} className="w-20 text-right"
+                          value={settings.leadScore?.points?.[r.key] ?? r.defaultPoints}
+                          onChange={(e) => setScorePoints(r.key, e.target.value)}
+                        />
+                        <span className="text-xs text-muted-foreground">pts</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="flex flex-wrap items-end gap-4 rounded-lg bg-muted/30 p-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="calls-required">Calls needed for "Calls done"</Label>
+                  <Input
+                    id="calls-required" type="number" min={1} max={20} className="w-24"
+                    value={settings.leadScore?.callsRequired ?? 2}
+                    onChange={(e) => setScoreField('callsRequired', e.target.value)}
+                  />
+                </div>
+                <p className="pb-2 text-sm text-muted-foreground">
+                  Maximum score before repeat orders: <span className="font-semibold text-foreground">{scoreScale}</span> points
+                </p>
+              </div>
+              <Button onClick={saveScore} disabled={saving}>{saving ? 'Saving…' : 'Save score card'}</Button>
+            </CardContent>
+          </Card>
+        </TabsContent>
 
         <TabsContent value="email">
           <Card>

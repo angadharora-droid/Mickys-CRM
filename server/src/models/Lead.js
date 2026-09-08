@@ -15,6 +15,21 @@ const KIT_TYPES = ['distributor', 'stockist', 'institutional', 'export', 'b2c'];
 
 const LEAD_STATUSES = ['new', 'kit_selected', 'rates_confirmed', 'generated', 'delivered'];
 
+/**
+ * THE LEAD STATUS FUNNEL — where the lead stands commercially, independent of
+ * the kit pipeline (`status`) above:
+ *
+ *   new          captured, nothing done with it yet.
+ *   live         being worked: a kit was picked, a visit/call logged, samples
+ *                given or feedback taken. Moves here automatically on the first
+ *                such activity.
+ *   client       the client is made — appointed as a sales-order customer (or
+ *                marked so by hand). Automatic on appointment / first order.
+ *   turned_down  the lead said no (or went cold); the reason is recorded. It
+ *                can be revived to live/client later.
+ */
+const LEAD_STAGES = ['new', 'live', 'client', 'turned_down'];
+
 /** Selectable next-action for a lead's follow-up. */
 const ACTION_POINTS = [
   'Need to revisit',
@@ -95,6 +110,42 @@ const statusHistorySchema = new mongoose.Schema(
     at: { type: Date, default: Date.now },
   },
   { _id: false }
+);
+
+/** One move along the lead status funnel (new / live / client / turned down). */
+const stageHistorySchema = new mongoose.Schema(
+  {
+    from: { type: String, default: '' },
+    to: { type: String, enum: LEAD_STAGES, required: true },
+    changedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    // Why (mandatory for a turn-down; free text otherwise).
+    reason: { type: String, trim: true, default: '' },
+    // 'system' when an activity (kit, visit, appointment…) moved the stage.
+    source: { type: String, enum: ['user', 'system'], default: 'user' },
+    at: { type: Date, default: Date.now },
+  },
+  { _id: false }
+);
+
+/** Product samples handed to the client — a score-card milestone. */
+const sampleSchema = new mongoose.Schema(
+  {
+    givenOn: { type: Date, required: true },
+    products: { type: String, trim: true, default: '', maxlength: 500 },
+    note: { type: String, trim: true, default: '', maxlength: 4000 },
+    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  },
+  { timestamps: true }
+);
+
+/** The client's feedback (on the samples / kit / offer) as taken by the exec. */
+const feedbackSchema = new mongoose.Schema(
+  {
+    takenOn: { type: Date, required: true },
+    note: { type: String, required: true, trim: true, maxlength: 4000 },
+    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  },
+  { timestamps: true }
 );
 
 /** A free-text internal note, authored by a team member. Each note tracks its
@@ -256,6 +307,24 @@ const leadSchema = new mongoose.Schema(
     // Manually uploaded files (photos, PDFs, sheets) kept alongside the lead.
     attachments: { type: [attachmentSchema], default: [] },
 
+    // ---- Lead status funnel + score card ----
+    // See LEAD_STAGES above. `clientMadeAt` is stamped the first time the lead
+    // becomes a client and is never cleared, so the score keeps the "client
+    // made" points even if the client later turns down.
+    stage: { type: String, enum: LEAD_STAGES, default: 'new', index: true },
+    stageHistory: { type: [stageHistorySchema], default: [] },
+    clientMadeAt: { type: Date, default: null },
+    turnDownReason: { type: String, trim: true, default: '' },
+    // Samples given and feedback taken — the two score-card milestones that
+    // have no other record in the CRM, logged by hand.
+    samples: { type: [sampleSchema], default: [] },
+    feedbacks: { type: [feedbackSchema], default: [] },
+    // The lead score card total (services/leadScore.service.js), persisted so
+    // lists and dashboards can sort and sum without recomputing. Refreshed on
+    // every scoring event and self-healed whenever the lead is loaded.
+    score: { type: Number, default: 0, index: true },
+    scoreUpdatedAt: { type: Date, default: null },
+
     // ---- Action point ----
     // The lead's current next-action, chosen from a preset list. A standalone
     // piece of CRM metadata, independent of whether a follow-up is scheduled.
@@ -366,6 +435,7 @@ const Lead = mongoose.model('Lead', leadSchema);
 Lead.BUSINESS_TYPES = BUSINESS_TYPES;
 Lead.KIT_TYPES = KIT_TYPES;
 Lead.LEAD_STATUSES = LEAD_STATUSES;
+Lead.LEAD_STAGES = LEAD_STAGES;
 Lead.LEAD_TRANSITIONS = LEAD_TRANSITIONS;
 Lead.ACTION_POINTS = ACTION_POINTS;
 Lead.VISIT_TYPES = VISIT_TYPES;

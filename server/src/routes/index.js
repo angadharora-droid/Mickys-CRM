@@ -88,6 +88,12 @@ router.put('/leads/:id/export-config', authenticate, validate(v.exportConfirmSch
 router.post('/leads/:id/generate', authenticate, generateLimiter, validate(v.generateKitSchema), leads.generateLeadKit);
 router.put('/leads/:id/terms', authenticate, validate(v.saveTermsSchema), leads.saveTerms);
 router.post('/leads/:id/unlock', authenticate, leads.unlockLead);
+// Lead status funnel + score-card milestones (samples given, feedback taken).
+router.put('/leads/:id/stage', authenticate, validate(v.leadStageSchema), leads.setLeadStage);
+router.post('/leads/:id/samples', authenticate, validate(v.sampleSchema), leads.addSample);
+router.delete('/leads/:id/samples/:sampleId', authenticate, leads.deleteSample);
+router.post('/leads/:id/feedbacks', authenticate, validate(v.leadFeedbackSchema), leads.addFeedback);
+router.delete('/leads/:id/feedbacks/:feedbackId', authenticate, leads.deleteFeedback);
 router.post('/leads/:id/notes', authenticate, validate(v.noteSchema), leads.addNote);
 router.put('/leads/:id/notes/:noteId', authenticate, validate(v.noteSchema), leads.updateNote);
 router.delete('/leads/:id/notes/:noteId', authenticate, leads.deleteNote);
