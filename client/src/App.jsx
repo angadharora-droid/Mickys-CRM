@@ -32,6 +32,7 @@ import SalesReports from '@/pages/sales/SalesReports';
 import SalesSettings from '@/pages/sales/SalesSettings';
 import Pipeline from '@/pages/sales/Pipeline';
 import Invoicing from '@/pages/sales/Invoicing';
+import SalesRegister from '@/pages/sales/SalesRegister';
 import Dispatch from '@/pages/sales/Dispatch';
 import NotFound from '@/pages/NotFound';
 
@@ -193,6 +194,15 @@ export default function App() {
           element={
             <ProtectedRoute module={MODULES.INVOICING}>
               <Invoicing />
+            </ProtectedRoute>
+          }
+        />
+        {/* The Tally sales register: read by sales and accounts alike. */}
+        <Route
+          path="/sales/register"
+          element={
+            <ProtectedRoute modules={[MODULES.SALES_ORDERS, MODULES.INVOICING]}>
+              <SalesRegister />
             </ProtectedRoute>
           }
         />

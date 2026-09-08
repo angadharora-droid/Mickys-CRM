@@ -4,6 +4,7 @@ import { cn, getInitials } from '@/lib/utils';
 import { ROLES, ROLE_LABELS, MODULES, PIPELINE_MODULES, hasModule, canUseSalesPages } from '@/lib/constants';
 import {
   LayoutDashboard, Boxes, ReceiptText, UserCheck, BarChart3, ArrowLeftRight, Settings, X, Workflow, Banknote, Truck,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -33,6 +34,7 @@ const NAV_SECTIONS = [
     items: [
       { to: '/sales/pipeline', label: 'Order Pipeline', icon: Workflow, modules: PIPELINE_MODULES },
       { to: '/sales/invoicing', label: 'Invoicing', icon: Banknote, module: MODULES.INVOICING },
+      { to: '/sales/register', label: 'Sales Register', icon: FileSpreadsheet, modules: [MODULES.SALES_ORDERS, MODULES.INVOICING] },
       { to: '/sales/dispatch', label: 'Dispatch', icon: Truck, module: MODULES.DISPATCH },
     ],
   },
