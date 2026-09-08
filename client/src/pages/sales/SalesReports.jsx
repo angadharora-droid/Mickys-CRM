@@ -58,7 +58,7 @@ function presetRange(preset) {
 }
 
 /** Numeric columns that carry rupees rather than counts or quantities. */
-const MONEY_KEYS = new Set(['total', 'value', 'avgRate', 'avgOrderValue', 'openValue', 'reservedValue']);
+const MONEY_KEYS = new Set(['total', 'value', 'avgRate', 'avgOrderValue', 'openValue', 'reservedValue', 'paymentAmount']);
 
 /** Stock Commitment and Rate Freeze Validity describe today, not a window. */
 const CURRENT_STATE = new Set(['commitment', 'rateValidity']);
@@ -80,6 +80,9 @@ function cellValue(col, value) {
 const TONES = {
   Open: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300',
   Confirmed: 'bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300',
+  Invoiced: 'bg-violet-100 text-violet-800 dark:bg-violet-950 dark:text-violet-300',
+  Dispatched: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300',
+  Delivered: 'bg-teal-100 text-teal-800 dark:bg-teal-950 dark:text-teal-300',
   Closed: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300',
   Cancelled: 'bg-destructive/10 text-destructive',
   Expired: 'bg-destructive/10 text-destructive',

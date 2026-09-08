@@ -514,8 +514,65 @@ const salesOrderSchema = z.object({
 // Open and Confirmed are the two the status control offers; closing and
 // cancelling are deliberate endings the client raises separately, and only an
 // admin moves an order out of them again (see controllers/salesOrder.controller.js).
+const isoDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD');
+const shortText = (max) => z.string().trim().max(max).optional().or(z.literal(''));
+// A number the form may leave blank. Blank, null and absent all mean "not
+// given" (null), never 0 — z.coerce would turn null into 0, which reads as a
+// zero-star rating or a consignment of no packages.
+const blankableNumber = (schema) =>
+  z.preprocess((v) => (v === '' || v === null || v === undefined ? null : Number(v)), schema.nullable());
+
+// What the exec confirmed the order against. Credit is a mode too: an order
+// released on approved credit has no receipt to quote, but it was still a
+// deliberate decision someone should be able to read later.
+const orderPaymentSchema = z.object({
+  mode: z.enum(['upi', 'neft', 'rtgs', 'imps', 'cheque', 'cash', 'credit', 'other']),
+  amount: blankableNumber(z.number().min(0)).optional(),
+  reference: shortText(120), // UTR / cheque number
+  receivedOn: isoDay.optional().or(z.literal('')),
+  notes: shortText(500),
+});
 const salesOrderStatusSchema = z.object({
-  status: z.enum(['open', 'confirmed', 'closed', 'cancelled']),
+  status: z.enum(['open', 'confirmed', 'invoiced', 'dispatched', 'delivered', 'closed', 'cancelled']),
+  note: shortText(500),
+  payment: orderPaymentSchema.optional(),
+});
+const salesOrderDeliverySchema = z.object({
+  deliveredOn: isoDay.optional().or(z.literal('')),
+  receivedBy: shortText(120),
+  remarks: shortText(1000),
+});
+const rating = z.number().int().min(1).max(5);
+const salesOrderFeedbackSchema = z.object({
+  rating: z.coerce.number().int().min(1, 'Give an overall rating').max(5),
+  quality: blankableNumber(rating).optional(),
+  delivery: blankableNumber(rating).optional(),
+  packaging: blankableNumber(rating).optional(),
+  wouldReorder: z.boolean().optional().nullable(),
+  comments: shortText(2000),
+});
+const dispatchFormSchema = z.object({
+  mode: z.enum(['courier', 'transport', 'own_vehicle', 'hand_delivery', 'customer_pickup', 'other']),
+  carrier: shortText(120),
+  docketNumber: shortText(80),
+  vehicleNumber: shortText(40),
+  driverName: shortText(80),
+  driverPhone: shortText(20),
+  packages: blankableNumber(z.number().int().min(0)).optional(),
+  weightKg: blankableNumber(z.number().min(0)).optional(),
+  ewayBill: shortText(40),
+  dispatchedOn: isoDay.optional().or(z.literal('')),
+  expectedDeliveryOn: isoDay.optional().or(z.literal('')),
+  remarks: shortText(1000),
+});
+const invoiceLinkSchema = z.object({
+  voucherNumber: z.string().trim().min(1, 'Type the Tally invoice number').max(60),
+  date: isoDay.optional().or(z.literal('')),
+  amount: blankableNumber(z.number().min(0)).optional(),
+  note: shortText(500),
+});
+const accountsVerifySchema = z.object({
+  note: shortText(500),
 });
 
 // Manual send of the order PDF to the customer. Everything is optional: the
@@ -576,6 +633,11 @@ module.exports = {
   salesOrderSchema,
   salesOrderStatusSchema,
   salesOrderEmailSchema,
+  salesOrderDeliverySchema,
+  salesOrderFeedbackSchema,
+  dispatchFormSchema,
+  invoiceLinkSchema,
+  accountsVerifySchema,
   appointedCustomerSchema,
   appointedCustomerCreateSchema,
 };

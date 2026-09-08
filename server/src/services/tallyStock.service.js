@@ -135,6 +135,65 @@ function parseLedgers(xml, tag) {
 const parseTallyVendors = (xml) => parseLedgers(xml, 'VENDOR');
 const parseTallyCustomers = (xml) => parseLedgers(xml, 'CUSTOMER');
 
+const MONTHS = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
+
+/**
+ * A Tally date as the TDL exports it. The field asks for the universal
+ * "YYYYMMDD" form, but a release that ignores the format keyword falls back
+ * to its display form ("1-Sep-26", "01-Sep-2026"), so both are read. The
+ * result is midnight UTC of that calendar day — a date, not an instant.
+ */
+function parseTallyDate(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return null;
+  let m = s.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (m) return new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  m = s.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{2,4})$/);
+  if (m) {
+    const month = MONTHS[m[2].toLowerCase()];
+    if (month === undefined) return null;
+    const year = m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3]);
+    return new Date(Date.UTC(year, month, Number(m[1])));
+  }
+  m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m) return new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  return null;
+}
+
+/**
+ * Sales vouchers (<SALESINVOICE>) that the updated TDL appends after the
+ * ledgers: the invoice's number, date, party and the three free-text fields an
+ * accountant can write the CRM order number into. Older TDL versions send
+ * none — an empty result means "not in this export". Duplicate GUIDs keep the
+ * last occurrence, like the stock items.
+ */
+function parseTallyInvoices(xml) {
+  if (typeof xml !== 'string' || !xml.includes('<SALESINVOICE>')) return [];
+
+  const blocks = xml.match(/<SALESINVOICE>[\s\S]*?<\/SALESINVOICE>/g) || [];
+  const seen = new Map();
+
+  for (const block of blocks) {
+    const inv = {
+      guid: tagValue(block, 'GUID'),
+      voucherNumber: tagValue(block, 'VOUCHERNUMBER'),
+      voucherType: cleanName(tagValue(block, 'VOUCHERTYPE')),
+      date: parseTallyDate(tagValue(block, 'DATE')),
+      party: cleanName(tagValue(block, 'PARTY')),
+      reference: tagValue(block, 'REFERENCE'),
+      orderNos: tagValue(block, 'ORDERNOS'),
+      narration: tagValue(block, 'NARRATION'),
+      amount: toAmount(tagValue(block, 'AMOUNT')),
+    };
+    // A voucher with neither a number nor a GUID cannot be told apart from
+    // the next one and is dropped.
+    if (!inv.guid && !inv.voucherNumber) continue;
+    seen.set(inv.guid || `${inv.voucherNumber}|${inv.date ? inv.date.toISOString() : ''}`, inv);
+  }
+
+  return [...seen.values()];
+}
+
 /**
  * The <COMPANY> element names the company that produced the export. Older
  * TDL versions don't send it — '' then means "unknown", not "no company".
@@ -147,4 +206,6 @@ module.exports = {
   parseTallyVendors,
   parseTallyCustomers,
   parseTallyCompany,
+  parseTallyInvoices,
+  parseTallyDate,
 };

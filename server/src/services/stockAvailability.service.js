@@ -20,22 +20,32 @@ const StockSyncLog = require('../models/StockSyncLog');
  * Open and confirmed orders always reserve: the goods are still sitting in
  * Tally, so Tally's closingQty still counts them and only the CRM knows they
  * are spoken for. Confirming changes nothing here — it locks the order against
- * edits, it does not move any goods. A cancelled order never reserves. A
- * closed order is the awkward one. Closing is the operator's signal that the
- * goods have gone, and the tax invoice is keyed into Tally afterwards,
- * sometimes hours afterwards; until that invoice exists, Tally still counts
- * the goods, so releasing the reservation the moment the status changes would
- * promise the same stock twice.
+ * edits, it does not move any goods. A cancelled order never reserves.
  *
- * So a closed order keeps reserving until a stock sync lands whose data
- * cut-off is later than the close plus a settle window (CLOSE_SETTLE_MINUTES,
- * two hours by default). The window is what makes the rule mean anything: an
- * operator who closes an order and immediately presses sync to refresh the
- * screen has not yet written the invoice, and without the window that refresh
- * would release stock Tally is still showing. The comparison is against
- * StockSyncLog.syncedAt — the moment the sync began — not createdAt, which is
- * written once the upserts finish and would tilt every borderline case towards
- * over-promising.
+ * Invoiced, dispatched and delivered orders never reserve either: an order
+ * only reaches invoiced because the tax invoice exists in Tally (the Tally
+ * push carried it back, or accounts linked it by hand), and the same push
+ * that brings the invoice brings closing figures with those goods already
+ * booked out. Reserving them as well would subtract the goods twice.
+ *
+ * A closed order is the awkward one, and only the manual kind — closed from
+ * outside the pipeline, with no invoice on record. Closing is then the
+ * operator's signal that the goods have gone, and the tax invoice is keyed
+ * into Tally afterwards, sometimes hours afterwards; until that invoice
+ * exists, Tally still counts the goods, so releasing the reservation the
+ * moment the status changes would promise the same stock twice. An order that
+ * reached closed through the pipeline carries an invoicedAt and is released
+ * outright.
+ *
+ * So a manually closed order keeps reserving until a stock sync lands whose
+ * data cut-off is later than the close plus a settle window
+ * (CLOSE_SETTLE_MINUTES, two hours by default). The window is what makes the
+ * rule mean anything: an operator who closes an order and immediately presses
+ * sync to refresh the screen has not yet written the invoice, and without the
+ * window that refresh would release stock Tally is still showing. The
+ * comparison is against StockSyncLog.syncedAt — the moment the sync began —
+ * not createdAt, which is written once the upserts finish and would tilt every
+ * borderline case towards over-promising.
  *
  * Two guards sit around that rule. A closed order older than
  * CLOSE_RESERVE_MAX_DAYS stops reserving regardless of sync evidence, so one
@@ -129,7 +139,9 @@ async function reservingFilter({ excludeOrder } = {}) {
   const filter = {
     $or: [
       { status: { $in: ['open', 'confirmed'] } },
-      { status: 'closed', closedAt: { $gte: cutoff } },
+      // Only a close made outside the pipeline — no Tally invoice on record —
+      // needs the settle window; see the rule above.
+      { status: 'closed', invoicedAt: null, closedAt: { $gte: cutoff } },
     ],
   };
   const id = excludeId(excludeOrder);

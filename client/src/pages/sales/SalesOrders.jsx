@@ -1,9 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import api, { apiError } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
-import { ROLES } from '@/lib/constants';
-import { formatCurrency, formatDate, formatDateTime } from '@/lib/utils';
+import {
+  ROLES, ORDER_STATUSES, ORDER_STATUS_LABELS, PAYMENT_MODE_OPTIONS, DISPATCH_MODE_LABELS, orderStageSince, daysSince,
+} from '@/lib/constants';
+import { cn, formatCurrency, formatDate, formatDateTime, todayInput } from '@/lib/utils';
+import OrderStatusBadge from '@/components/sales/OrderStatusBadge';
+import OrderDetailDialog from '@/components/sales/OrderDetailDialog';
+import { Label } from '@/components/ui/label';
 import PageHeader from '@/components/shared/PageHeader';
 import Pagination from '@/components/shared/Pagination';
 import EmptyState from '@/components/shared/EmptyState';
@@ -15,7 +21,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from '@/components/ui/dialog';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -25,21 +31,14 @@ import {
 } from '@/components/ui/dropdown-menu';
 import {
   Search, ReceiptText, Plus, Download, Pencil, Trash2, Loader2, X, Eye, ExternalLink, Snowflake,
-  AlertTriangle, Mail, MoreVertical, Lock, History, PackageCheck, Ban, MessageCircle, CheckCircle2, Undo2,
+  AlertTriangle, Mail, MoreVertical, Lock, History, PackageCheck, Ban, MessageCircle, CheckCircle2, Undo2, Star,
+  Archive,
 } from 'lucide-react';
 
 const ALL = '__all__';
-
-const STATUS_STYLES = {
-  open: 'bg-amber-100 text-amber-800 border-amber-200',
-  confirmed: 'bg-sky-100 text-sky-800 border-sky-200',
-  closed: 'bg-emerald-100 text-emerald-800 border-emerald-200',
-  cancelled: 'bg-red-100 text-red-700 border-red-200',
-};
-
-const STATUS_LABELS = {
-  open: 'Open', confirmed: 'Confirmed', closed: 'Closed', cancelled: 'Cancelled',
-};
+// "Everything still moving" — every status short of complete or cancelled.
+const ACTIVE = '__active__';
+const ACTIVE_STATUSES = 'open,confirmed,invoiced,dispatched,delivered';
 
 /**
  * Frozen rates run out at the end of their validity day in India, whatever
@@ -1073,110 +1072,276 @@ function WhatsAppDialog({ open, order, onClose, onDownloadPdf }) {
 }
 
 /**
- * Read view of one order, opened from its row. Confirming lives HERE and not
- * on the list — an order should be looked at before it is agreed, so the
- * confirm button only exists once the order is open on screen. Un-confirming
- * stays an admin's call, same as everywhere else.
+ * Confirming an order means the money is in hand: the exec records what came
+ * in — mode, amount, UTR — and that record is what accounts invoice against.
+ * Credit is a mode too, for orders released on approved credit terms. The
+ * dialog opens from the detail view, so the order is on screen before it is
+ * agreed; un-confirming stays an admin's call.
  */
-function DetailDialog({ open, order: o, onClose, isAdmin, canManage, onChangeStatus, onEmail, onWhatsApp, onDownloadPdf }) {
+function ConfirmOrderDialog({ open, order, onClose, onConfirm }) {
+  const [form, setForm] = useState({ mode: 'upi', amount: '', reference: '', receivedOn: '', notes: '' });
   const [busy, setBusy] = useState(false);
 
-  const act = async (next) => {
-    setBusy(true);
-    await onChangeStatus(o, next);
-    setBusy(false);
-  };
+  useEffect(() => {
+    if (!open || !order) return;
+    const p = order.payment || {};
+    setForm({
+      mode: p.mode || 'upi',
+      amount: p.amount ?? order.total ?? '',
+      reference: p.reference || '',
+      receivedOn: todayInput(),
+      notes: p.notes || '',
+    });
+  }, [open, order]);
 
-  if (!o) return null;
-  const manage = canManage(o);
+  const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
+  const credit = form.mode === 'credit';
+
+  const submit = async () => {
+    setBusy(true);
+    const ok = await onConfirm(order, {
+      mode: form.mode,
+      amount: form.amount === '' ? null : Number(form.amount),
+      reference: form.reference.trim(),
+      receivedOn: form.receivedOn || '',
+      notes: form.notes.trim(),
+    });
+    setBusy(false);
+    if (ok) onClose();
+  };
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-2xl max-h-[92dvh] overflow-y-auto">
+      <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 flex-wrap pr-8">
-            {o.number}
-            <Badge className={`border ${STATUS_STYLES[o.status] || ''}`} variant="outline">
-              {o.status === 'confirmed' && <Lock className="h-3 w-3 mr-1" />}
-              {STATUS_LABELS[o.status] || o.status}
-            </Badge>
-          </DialogTitle>
+          <DialogTitle>Confirm {order?.number}</DialogTitle>
+          <DialogDescription>
+            {order?.customerName} · {formatCurrency(order?.total)}. Record the payment this order is confirmed
+            against. Confirming locks the order and puts it in the accounts queue for the Tally invoice.
+          </DialogDescription>
         </DialogHeader>
-
-        <div className="space-y-4">
-          <div className="grid gap-3 sm:grid-cols-3">
-            <div className="sm:col-span-2 min-w-0">
-              <p className="text-xs text-muted-foreground">Customer</p>
-              <p className="text-sm font-medium truncate">{o.customerName}</p>
+        <div className="grid gap-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Payment mode *</Label>
+              <Select value={form.mode} onValueChange={(v) => setForm((f) => ({ ...f, mode: v }))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {PAYMENT_MODE_OPTIONS.map((m) => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
             </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Booked</p>
-              <p className="text-sm">{formatDateTime(o.createdAt)}</p>
-              {o.createdBy?.name && <p className="text-xs text-muted-foreground">by {o.createdBy.name}</p>}
-            </div>
-          </div>
-
-          <div className="rounded-lg border divide-y">
-            {(o.items || []).map((i) => (
-              <div key={i.name} className="flex items-center justify-between gap-3 px-3 py-2">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium leading-tight truncate">{i.name}</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    {qty(i.qty, i.baseUnits)} × {formatCurrency(i.rate)}
-                    {i.packSize ? ` · ${i.packSize}` : ''}
-                  </p>
-                </div>
-                <p className="text-sm font-semibold tabular-nums shrink-0">
-                  {formatCurrency(i.amount != null ? i.amount : (Number(i.qty) || 0) * (Number(i.rate) || 0))}
-                </p>
-              </div>
-            ))}
-            <div className="flex items-center justify-between px-3 py-2 bg-muted/50">
-              <p className="text-sm font-medium">Total</p>
-              <p className="text-base font-bold tabular-nums">{formatCurrency(o.total)}</p>
+            <div className="space-y-1.5">
+              <Label>{credit ? 'Credit amount' : 'Amount received'}</Label>
+              <Input type="number" min="0" inputMode="decimal" value={form.amount} onChange={set('amount')} />
             </div>
           </div>
-
-          {o.notes && (
-            <div>
-              <p className="text-xs text-muted-foreground mb-1">Notes</p>
-              <p className="text-sm whitespace-pre-wrap rounded-lg border p-3">{o.notes}</p>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>{credit ? 'Approved by / terms' : 'UTR / cheque no.'}</Label>
+              <Input
+                value={form.reference}
+                onChange={set('reference')}
+                placeholder={credit ? 'e.g. 30 days, approved by MD' : 'Transaction reference'}
+              />
             </div>
-          )}
-
-          <div className="flex flex-wrap gap-2">
-            <Button variant="outline" size="sm" onClick={() => onDownloadPdf(o)}>
-              <Download className="h-4 w-4" /> PDF
-            </Button>
-            <Button variant="outline" size="sm" disabled={o.status === 'cancelled'} onClick={() => onEmail(o)}>
-              <Mail className="h-4 w-4" /> Email
-            </Button>
-            <Button variant="outline" size="sm" disabled={o.status === 'cancelled'} onClick={() => onWhatsApp(o)}>
-              <MessageCircle className="h-4 w-4" /> WhatsApp
-            </Button>
+            <div className="space-y-1.5">
+              <Label>{credit ? 'Approved on' : 'Received on'}</Label>
+              <Input type="date" value={form.receivedOn} onChange={set('receivedOn')} />
+            </div>
           </div>
-
-          {manage && o.status === 'open' && (
-            <p className="text-xs text-muted-foreground">
-              Confirming marks the order as agreed with the customer and locks it against edits.
-            </p>
-          )}
+          <div className="space-y-1.5">
+            <Label>Notes</Label>
+            <Textarea
+              rows={2}
+              value={form.notes}
+              onChange={set('notes')}
+              placeholder="Part payment, balance due, anything accounts should know (optional)"
+            />
+          </div>
         </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button onClick={submit} disabled={busy}>
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+            Confirm order
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
-        <DialogFooter className="mt-2">
-          <Button variant="outline" onClick={onClose} disabled={busy}>Close</Button>
-          {isAdmin && o.status === 'confirmed' && (
-            <Button variant="outline" onClick={() => act('open')} disabled={busy}>
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Undo2 className="h-4 w-4" />}
-              Re-open for editing
-            </Button>
-          )}
-          {manage && o.status === 'open' && (
-            <Button onClick={() => act('confirmed')} disabled={busy}>
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-              Confirm order
-            </Button>
-          )}
+/** The exec confirms the customer has the goods. */
+function DeliverDialog({ open, order, onClose, onDeliver }) {
+  const [form, setForm] = useState({ deliveredOn: '', receivedBy: '', remarks: '' });
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (open) setForm({ deliveredOn: todayInput(), receivedBy: '', remarks: '' });
+  }, [open]);
+
+  const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
+
+  const submit = async () => {
+    setBusy(true);
+    const ok = await onDeliver(order, {
+      deliveredOn: form.deliveredOn || '',
+      receivedBy: form.receivedBy.trim(),
+      remarks: form.remarks.trim(),
+    });
+    setBusy(false);
+    if (ok) onClose();
+  };
+
+  const d = order?.dispatch;
+  const sentBy = d?.mode
+    ? ` · sent by ${DISPATCH_MODE_LABELS[d.mode] || d.mode}${d.carrier ? ` (${d.carrier})` : ''}${d.docketNumber ? `, docket ${d.docketNumber}` : ''}`
+    : '';
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Mark {order?.number} delivered</DialogTitle>
+          <DialogDescription>
+            {order?.customerName}{sentBy}. Confirm once the customer has the goods — the feedback form follows.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Delivered on</Label>
+              <Input type="date" value={form.deliveredOn} onChange={set('deliveredOn')} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Received by</Label>
+              <Input value={form.receivedBy} onChange={set('receivedBy')} placeholder="Name at the customer" />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Remarks</Label>
+            <Textarea rows={2} value={form.remarks} onChange={set('remarks')} placeholder="Short, damaged, late — anything worth noting (optional)" />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button onClick={submit} disabled={busy}>
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <PackageCheck className="h-4 w-4" />}
+            Mark delivered
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Five stars; tapping the current value clears it. */
+function StarPicker({ label, value, onChange }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-sm">{label}</span>
+      <div className="flex gap-0.5">
+        {[1, 2, 3, 4, 5].map((n) => (
+          <button
+            key={n}
+            type="button"
+            className="p-0.5"
+            aria-label={`${n} star${n === 1 ? '' : 's'}`}
+            onClick={() => onChange(value === n ? null : n)}
+          >
+            <Star
+              className={cn(
+                'h-6 w-6 transition-colors',
+                value != null && n <= value ? 'fill-amber-400 text-amber-400' : 'text-muted-foreground/40 hover:text-amber-300'
+              )}
+            />
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** What the customer thought — the last step, and what completes the order. */
+function FeedbackDialog({ open, order, onClose, onSubmit }) {
+  const [form, setForm] = useState({ rating: null, quality: null, delivery: null, packaging: null, wouldReorder: null, comments: '' });
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!open || !order) return;
+    const f = order.feedback || {};
+    setForm({
+      rating: f.rating ?? null,
+      quality: f.quality ?? null,
+      delivery: f.delivery ?? null,
+      packaging: f.packaging ?? null,
+      wouldReorder: f.wouldReorder ?? null,
+      comments: f.comments || '',
+    });
+  }, [open, order]);
+
+  const setStar = (key) => (v) => setForm((f) => ({ ...f, [key]: v }));
+
+  const submit = async () => {
+    if (!form.rating) return toast.error('Give an overall rating');
+    setBusy(true);
+    const ok = await onSubmit(order, { ...form, comments: form.comments.trim() });
+    setBusy(false);
+    if (ok) onClose();
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Customer feedback — {order?.number}</DialogTitle>
+          <DialogDescription>
+            {order?.customerName}. Ask the customer and record it here
+            {order?.status === 'delivered' ? '; this completes the order.' : '.'}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <StarPicker label="Overall *" value={form.rating} onChange={setStar('rating')} />
+          <StarPicker label="Product quality" value={form.quality} onChange={setStar('quality')} />
+          <StarPicker label="Delivery experience" value={form.delivery} onChange={setStar('delivery')} />
+          <StarPicker label="Packaging" value={form.packaging} onChange={setStar('packaging')} />
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-sm">Would they reorder?</span>
+            <div className="flex gap-1">
+              {[
+                { v: true, l: 'Yes' },
+                { v: false, l: 'No' },
+                { v: null, l: 'Not asked' },
+              ].map((opt) => (
+                <Button
+                  key={opt.l}
+                  type="button"
+                  size="sm"
+                  variant={form.wouldReorder === opt.v ? 'default' : 'outline'}
+                  onClick={() => setForm((f) => ({ ...f, wouldReorder: opt.v }))}
+                >
+                  {opt.l}
+                </Button>
+              ))}
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Comments</Label>
+            <Textarea
+              rows={3}
+              value={form.comments}
+              onChange={(e) => setForm((f) => ({ ...f, comments: e.target.value }))}
+              placeholder="What they said (optional)"
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button onClick={submit} disabled={busy}>
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Star className="h-4 w-4" />}
+            Save feedback
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -1197,16 +1362,32 @@ export default function SalesOrders() {
   const [emailDialog, setEmailDialog] = useState({ open: false, order: null });
   const [waDialog, setWaDialog] = useState({ open: false, order: null });
   const [detailDialog, setDetailDialog] = useState({ open: false, order: null });
+  const [confirmDialog, setConfirmDialog] = useState({ open: false, order: null });
+  const [deliverDialog, setDeliverDialog] = useState({ open: false, order: null });
+  const [feedbackDialog, setFeedbackDialog] = useState({ open: false, order: null });
   const [previewFile, setPreviewFile] = useState(null); // { url, filename }
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const canManage = (o) => isAdmin || String(o.createdBy?._id || o.createdBy) === String(user?._id || '');
+
+  // A notification ("SO-x dispatched — mark it delivered") lands here with
+  // ?order=; open that order straight away.
+  useEffect(() => {
+    const id = searchParams.get('order');
+    if (!id) return;
+    api.get(`/sales-orders/${id}`)
+      .then((r) => setDetailDialog({ open: true, order: r.data.data }))
+      .catch((err) => toast.error(apiError(err)))
+      .finally(() => setSearchParams({}, { replace: true }));
+  }, [searchParams, setSearchParams]);
 
   const fetchOrders = useCallback(async () => {
     setLoading(true);
     try {
       const params = { page, limit: 20 };
       if (search) params.search = search;
-      if (status !== ALL) params.status = status;
+      if (status === ACTIVE) params.status = ACTIVE_STATUSES;
+      else if (status !== ALL) params.status = status;
       const { data } = await api.get('/sales-orders', { params });
       setOrders(data.data);
       setMeta(data.meta);
@@ -1276,14 +1457,23 @@ export default function SalesOrders() {
     });
   };
 
-  const changeStatus = async (o, next) => {
+  // Moves made from the detail view keep the dialog on screen — the order it
+  // shows has to move with them, or a just-confirmed order would still offer
+  // its confirm button.
+  const syncDetail = (updated) => {
+    if (!updated) return;
+    setDetailDialog((d) => (d.order && String(d.order._id) === String(updated._id) ? { ...d, order: updated } : d));
+  };
+
+  const changeStatus = async (o, next, extra = {}) => {
     try {
-      const { data } = await api.put(`/sales-orders/${o._id}/status`, { status: next });
+      const { data } = await api.put(`/sales-orders/${o._id}/status`, { status: next, ...extra });
       toast.success(data.message);
       // Re-opening re-takes the reservation against stock that has moved since.
       warnShortfalls(data.data?.warnings);
       reportAccountsEmail(data.data?.accountsEmail);
       fetchOrders();
+      syncDetail(data.data);
       return data.data;
     } catch (err) {
       toast.error(apiError(err));
@@ -1291,27 +1481,54 @@ export default function SalesOrders() {
     }
   };
 
-  // Status moves made inside the detail view keep the dialog on screen — the
-  // order it shows has to move with them, or a just-confirmed order would
-  // still offer its confirm button.
-  const changeStatusFromDetail = async (o, next) => {
-    const updated = await changeStatus(o, next);
-    if (updated) {
-      setDetailDialog((d) => (d.order && String(d.order._id) === String(o._id) ? { ...d, order: updated } : d));
+  // Confirming carries the payment the exec confirmed against — accounts
+  // invoice against that record.
+  const confirmOrder = async (o, payment) => Boolean(await changeStatus(o, 'confirmed', { payment }));
+
+  const deliverOrder = async (o, form) => {
+    try {
+      const { data } = await api.post(`/sales-orders/${o._id}/deliver`, form);
+      toast.success(data.message);
+      fetchOrders();
+      syncDetail(data.data);
+      return true;
+    } catch (err) {
+      toast.error(apiError(err));
+      return false;
     }
   };
 
-  // Closing and cancelling both release the order's hold on stock and lock it
-  // for good, so neither sits in the status dropdown alongside the everyday
-  // open ↔ confirmed switch.
+  const submitFeedback = async (o, form) => {
+    try {
+      const { data } = await api.post(`/sales-orders/${o._id}/feedback`, form);
+      toast.success(data.message);
+      fetchOrders();
+      syncDetail(data.data);
+      return true;
+    } catch (err) {
+      toast.error(apiError(err));
+      return false;
+    }
+  };
+
+  // An order normally completes through delivery and feedback. Closing it
+  // outside that path is an admin's call; cancelling releases stock at once.
   const closeOrder = (o) => {
-    if (!window.confirm(`Mark ${o.number} as closed? The order locks and stops holding stock — use this once the goods have gone and the invoice is in Tally.`)) return;
+    if (!window.confirm(`Close ${o.number} outside the pipeline? Only for an order that will never go through Tally matching, dispatch and delivery here. It locks and, once Tally has caught up, stops holding stock.`)) return;
     changeStatus(o, 'closed');
   };
 
   const cancelOrder = (o) => {
     if (!window.confirm(`Cancel ${o.number} (${o.customerName})? The order locks and releases its stock at once.`)) return;
     changeStatus(o, 'cancelled');
+  };
+
+  const reopenOrder = (o) => {
+    const undone = ['confirmation', o.invoicedAt && 'invoice match', o.dispatchedAt && 'dispatch record', o.deliveredAt && 'delivery']
+      .filter(Boolean)
+      .join(', ');
+    if (!window.confirm(`Re-open ${o.number} for editing? Its ${undone} will be undone in the CRM (Tally is not touched) and it will hold stock again.`)) return;
+    changeStatus(o, 'open');
   };
 
   const remove = async (o) => {
@@ -1348,10 +1565,10 @@ export default function SalesOrders() {
             <SelectTrigger><SelectValue placeholder="Status" /></SelectTrigger>
             <SelectContent>
               <SelectItem value={ALL}>All statuses</SelectItem>
-              <SelectItem value="open">Open</SelectItem>
-              <SelectItem value="confirmed">Confirmed</SelectItem>
-              <SelectItem value="closed">Closed</SelectItem>
-              <SelectItem value="cancelled">Cancelled</SelectItem>
+              <SelectItem value={ACTIVE}>In progress</SelectItem>
+              {ORDER_STATUSES.map((s) => (
+                <SelectItem key={s} value={s}>{ORDER_STATUS_LABELS[s]}</SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>
@@ -1406,20 +1623,27 @@ export default function SalesOrders() {
                           The confirm button lives in the detail view the row
                           click opens, so the order is on screen before it can be
                           agreed. */}
-                      <Badge
-                        className={`border ${STATUS_STYLES[o.status] || ''}`}
-                        variant="outline"
+                      <OrderStatusBadge
+                        status={o.status}
                         title={
                           o.status === 'open'
                             ? 'Open — click the row to view and confirm the order'
                             : o.status === 'confirmed'
-                              ? 'Confirmed and locked — only an admin can re-open it for editing'
-                              : undefined
+                              ? 'Confirmed and locked — waiting for the Tally invoice; only an admin can re-open it'
+                              : o.status === 'invoiced'
+                                ? 'Invoice matched from Tally — waiting for dispatch'
+                                : o.status === 'dispatched'
+                                  ? 'Goods sent — mark delivered once the customer has them'
+                                  : o.status === 'delivered'
+                                    ? 'Delivered — record the customer feedback to complete'
+                                    : undefined
                         }
-                      >
-                        {o.status === 'confirmed' && <Lock className="h-3 w-3 mr-1" />}
-                        {STATUS_LABELS[o.status] || o.status}
-                      </Badge>
+                      />
+                      {o.status !== 'closed' && o.status !== 'cancelled' && (
+                        <p className="text-[11px] text-muted-foreground mt-1 whitespace-nowrap">
+                          {daysSince(orderStageSince(o))}d at this stage
+                        </p>
+                      )}
                     </TableCell>
                     <TableCell className="hidden lg:table-cell text-sm text-muted-foreground">
                       {o.createdBy?.name || '—'}
@@ -1456,7 +1680,7 @@ export default function SalesOrders() {
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="w-56">
                             <DropdownMenuItem onSelect={() => setDetailDialog({ open: true, order: o })}>
-                              <ReceiptText /> View order
+                              <ReceiptText /> View order &amp; journey
                             </DropdownMenuItem>
                             <DropdownMenuItem
                               disabled={o.status === 'cancelled'}
@@ -1470,12 +1694,33 @@ export default function SalesOrders() {
                             >
                               <MessageCircle /> Send on WhatsApp
                             </DropdownMenuItem>
-                            {canManage(o) && (o.status === 'open' || o.status === 'confirmed') && (
+                            {/* The exec's own steps: confirm, deliver, feedback. */}
+                            {canManage(o) && (
+                              o.status === 'open' ||
+                              o.status === 'dispatched' ||
+                              o.status === 'delivered' ||
+                              o.status === 'closed' ||
+                              (isAdmin && o.status === 'invoiced')
+                            ) && <DropdownMenuSeparator />}
+                            {canManage(o) && o.status === 'open' && (
+                              <DropdownMenuItem onSelect={() => setConfirmDialog({ open: true, order: o })}>
+                                <CheckCircle2 /> Confirm (record payment)
+                              </DropdownMenuItem>
+                            )}
+                            {canManage(o) && (o.status === 'dispatched' || (isAdmin && o.status === 'invoiced')) && (
+                              <DropdownMenuItem onSelect={() => setDeliverDialog({ open: true, order: o })}>
+                                <PackageCheck /> Mark delivered
+                              </DropdownMenuItem>
+                            )}
+                            {canManage(o) && (o.status === 'delivered' || o.status === 'closed') && (
+                              <DropdownMenuItem onSelect={() => setFeedbackDialog({ open: true, order: o })}>
+                                <Star /> {o.feedback?.submittedAt ? 'Edit feedback' : 'Record feedback'}
+                              </DropdownMenuItem>
+                            )}
+                            {canManage(o) &&
+                              (o.status === 'open' || o.status === 'confirmed' || (isAdmin && o.status !== 'cancelled' && o.status !== 'closed')) && (
                               <>
                                 <DropdownMenuSeparator />
-                                <DropdownMenuItem onSelect={() => closeOrder(o)}>
-                                  <PackageCheck /> Mark as closed
-                                </DropdownMenuItem>
                                 <DropdownMenuItem
                                   className="text-red-600 focus:text-red-700"
                                   onSelect={() => cancelOrder(o)}
@@ -1487,6 +1732,16 @@ export default function SalesOrders() {
                             {isAdmin && (
                               <>
                                 <DropdownMenuSeparator />
+                                {o.status !== 'open' && o.status !== 'cancelled' && (
+                                  <DropdownMenuItem onSelect={() => reopenOrder(o)}>
+                                    <Undo2 /> Re-open for editing
+                                  </DropdownMenuItem>
+                                )}
+                                {o.status !== 'closed' && o.status !== 'cancelled' && (
+                                  <DropdownMenuItem onSelect={() => closeOrder(o)}>
+                                    <Archive /> Close outside pipeline
+                                  </DropdownMenuItem>
+                                )}
                                 <DropdownMenuItem
                                   className="text-red-600 focus:text-red-700"
                                   onSelect={() => remove(o)}
@@ -1529,16 +1784,68 @@ export default function SalesOrders() {
         onDownloadPdf={downloadPdf}
       />
 
-      <DetailDialog
+      {/* The order with its journey. The exec's own steps — confirm, deliver,
+          feedback — start here so the order is on screen before it moves. */}
+      <OrderDetailDialog
         open={detailDialog.open}
         order={detailDialog.order}
         onClose={() => setDetailDialog({ open: false, order: null })}
-        isAdmin={isAdmin}
-        canManage={canManage}
-        onChangeStatus={changeStatusFromDetail}
-        onEmail={(o) => setEmailDialog({ open: true, order: o })}
-        onWhatsApp={(o) => setWaDialog({ open: true, order: o })}
-        onDownloadPdf={downloadPdf}
+        renderActions={(o) => {
+          const manage = canManage(o);
+          return (
+            <>
+              <Button variant="outline" size="sm" onClick={() => downloadPdf(o)}>
+                <Download className="h-4 w-4" /> PDF
+              </Button>
+              <Button variant="outline" size="sm" disabled={o.status === 'cancelled'} onClick={() => setEmailDialog({ open: true, order: o })}>
+                <Mail className="h-4 w-4" /> Email
+              </Button>
+              <Button variant="outline" size="sm" disabled={o.status === 'cancelled'} onClick={() => setWaDialog({ open: true, order: o })}>
+                <MessageCircle className="h-4 w-4" /> WhatsApp
+              </Button>
+              <span className="hidden sm:block flex-1" />
+              {isAdmin && o.status === 'confirmed' && (
+                <Button variant="outline" onClick={() => reopenOrder(o)}>
+                  <Undo2 className="h-4 w-4" /> Re-open for editing
+                </Button>
+              )}
+              {manage && o.status === 'open' && (
+                <Button onClick={() => setConfirmDialog({ open: true, order: o })}>
+                  <CheckCircle2 className="h-4 w-4" /> Confirm order
+                </Button>
+              )}
+              {manage && (o.status === 'dispatched' || (isAdmin && o.status === 'invoiced')) && (
+                <Button onClick={() => setDeliverDialog({ open: true, order: o })}>
+                  <PackageCheck className="h-4 w-4" /> Mark delivered
+                </Button>
+              )}
+              {manage && (o.status === 'delivered' || o.status === 'closed') && (
+                <Button variant={o.status === 'delivered' ? 'default' : 'outline'} onClick={() => setFeedbackDialog({ open: true, order: o })}>
+                  <Star className="h-4 w-4" /> {o.feedback?.submittedAt ? 'Edit feedback' : 'Record feedback'}
+                </Button>
+              )}
+            </>
+          );
+        }}
+      />
+
+      <ConfirmOrderDialog
+        open={confirmDialog.open}
+        order={confirmDialog.order}
+        onClose={() => setConfirmDialog({ open: false, order: null })}
+        onConfirm={confirmOrder}
+      />
+      <DeliverDialog
+        open={deliverDialog.open}
+        order={deliverDialog.order}
+        onClose={() => setDeliverDialog({ open: false, order: null })}
+        onDeliver={deliverOrder}
+      />
+      <FeedbackDialog
+        open={feedbackDialog.open}
+        order={feedbackDialog.order}
+        onClose={() => setFeedbackDialog({ open: false, order: null })}
+        onSubmit={submitFeedback}
       />
 
       <Dialog open={Boolean(previewFile)} onOpenChange={closePreview}>

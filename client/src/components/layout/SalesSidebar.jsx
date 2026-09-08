@@ -1,8 +1,10 @@
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { cn, getInitials } from '@/lib/utils';
-import { ROLES, ROLE_LABELS, MODULES, hasModule } from '@/lib/constants';
-import { LayoutDashboard, Boxes, ReceiptText, UserCheck, BarChart3, ArrowLeftRight, Settings, X } from 'lucide-react';
+import { ROLES, ROLE_LABELS, MODULES, PIPELINE_MODULES, hasModule, canUseSalesPages } from '@/lib/constants';
+import {
+  LayoutDashboard, Boxes, ReceiptText, UserCheck, BarChart3, ArrowLeftRight, Settings, X, Workflow, Banknote, Truck,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 
@@ -10,16 +12,28 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
  * Sidebar for the Sales Order module — deliberately separate from the main
  * CRM sidebar: this section has its own navigation universe, with a single
  * escape hatch back to the leads CRM.
+ *
+ * Three desks share the shell. `sales: true` items need the sales module and
+ * a booking role; the fulfilment items are gated by their own module, and the
+ * pipeline by any of the three.
  */
 const NAV_SECTIONS = [
   {
     label: 'Sales Orders',
     items: [
-      { to: '/sales', label: 'Overview', icon: LayoutDashboard, end: true, roles: ['*'] },
-      { to: '/sales/stock', label: 'Stock from Tally', icon: Boxes, roles: ['*'] },
-      { to: '/sales/orders', label: 'Sales Orders', icon: ReceiptText, roles: ['*'] },
-      { to: '/sales/customers', label: 'Customers', icon: UserCheck, roles: ['*'] },
-      { to: '/sales/reports', label: 'Reports', icon: BarChart3, roles: ['*'] },
+      { to: '/sales', label: 'Overview', icon: LayoutDashboard, end: true, sales: true },
+      { to: '/sales/stock', label: 'Stock from Tally', icon: Boxes, sales: true },
+      { to: '/sales/orders', label: 'Sales Orders', icon: ReceiptText, sales: true },
+      { to: '/sales/customers', label: 'Customers', icon: UserCheck, sales: true },
+      { to: '/sales/reports', label: 'Reports', icon: BarChart3, sales: true },
+    ],
+  },
+  {
+    label: 'Fulfilment',
+    items: [
+      { to: '/sales/pipeline', label: 'Order Pipeline', icon: Workflow, modules: PIPELINE_MODULES },
+      { to: '/sales/invoicing', label: 'Invoicing', icon: Banknote, module: MODULES.INVOICING },
+      { to: '/sales/dispatch', label: 'Dispatch', icon: Truck, module: MODULES.DISPATCH },
     ],
   },
   {
@@ -31,21 +45,23 @@ const NAV_SECTIONS = [
     items: [
       // The escape hatch back to the leads CRM only shows for users who can
       // actually enter it (module assignment).
-      { to: '/', label: 'Back to Leads CRM', icon: ArrowLeftRight, end: true, roles: ['*'], module: MODULES.LEADS },
+      { to: '/', label: 'Back to Leads CRM', icon: ArrowLeftRight, end: true, module: MODULES.LEADS },
     ],
   },
 ];
+
+const visibleTo = (user, item) =>
+  (!item.roles || item.roles.includes(user?.role)) &&
+  (!item.sales || canUseSalesPages(user)) &&
+  (!item.module || hasModule(user, item.module)) &&
+  (!item.modules || item.modules.some((m) => hasModule(user, m)));
 
 export default function SalesSidebar({ open, onClose }) {
   const { user } = useAuth();
 
   const sections = NAV_SECTIONS.map((s) => ({
     ...s,
-    items: s.items.filter(
-      (i) =>
-        (i.roles.includes('*') || i.roles.includes(user?.role)) &&
-        (!i.module || hasModule(user, i.module))
-    ),
+    items: s.items.filter((i) => visibleTo(user, i)),
   })).filter((s) => s.items.length > 0);
 
   return (

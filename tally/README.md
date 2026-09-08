@@ -116,6 +116,37 @@ Two ways, both hitting `POST /api/stock/sync` on the backend:
 > tab). They start appearing once the updated `mickys-stock.tdl` is loaded
 > on the Tally PC (quit & reopen Tally after replacing the file).
 
+> **Sales invoices → order pipeline.** The export also carries every sales
+> voucher of the last 60 days as a `<SALESINVOICE>` element (GUID, voucher
+> number, date as YYYYMMDD, party, Reference, Order No(s), Narration,
+> amount). The CRM reads the CRM sales order number — `SO-2026-0042` — out
+> of any of the three text fields and moves that order from **Confirmed** to
+> **Invoiced**, which puts it in the Dispatch queue.
+>
+> **What accounts must do in Tally:** when keying the sales invoice for a
+> confirmed order, write the order number in ONE of these places:
+>
+> 1. the invoice's **Order No(s)** field (Party Details screen — needs
+>    "Provide order details" enabled under F12 on the sales voucher), or
+> 2. the **Ref** field beside the voucher number, or
+> 3. the **Narration**.
+>
+> Spacing and case do not matter (`so 2026 42` matches `SO-2026-0042`). An
+> invoice covering several orders can list them all. The next push (within
+> 10 minutes, or Ctrl+F10 at once) does the matching; the Invoicing page in
+> the CRM shows how many vouchers the last push carried and how many matched.
+> A voucher keyed without the number can be linked by hand from that page
+> ("Link invoice"). A voucher naming a **cancelled** order is recorded on it
+> and flagged in the sync log — it is never used to revive the order.
+>
+> If a push arrives with stock but **zero invoices**, the Tally machine is
+> still running the old TDL — re-download it from the URL and replace the
+> file. If the TDL refuses to load after this change, the details are under
+> F1 > TDLs & AddOns (per-file error with the line number): the invoice part
+> uses only standard voucher methods, but a release that rejects the
+> `$$FullList:InvoiceOrderList:BasicPurchaseOrderNo` line can have that
+> field's `Set as` changed to `""` — matching then relies on Ref / Narration.
+
 ### a) Manual upload (works today, no setup)
 Export the report as XML (open report → Alt+E → Current → XML), then in the CRM
 go to **Sales Orders → Stock from Tally → Upload Tally XML** and pick the file.

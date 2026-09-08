@@ -12,6 +12,10 @@
 ;;      as <VENDOR> elements and every customer (ledgers under Sundry
 ;;      Debtors) as <CUSTOMER> elements: name and group, sub-groups
 ;;      included.
+;;    * It also returns recent sales invoices as <SALESINVOICE>
+;;      elements (number, date, party, reference, order no(s),
+;;      narration, amount) so the CRM can match each invoice to the
+;;      sales order whose number accounts wrote on it.
 ;;    * Opening figures respect SVFROMDATE and closing figures respect
 ;;      SVTODATE sent in the request, so the same report also answers
 ;;      "stock as on <date>".
@@ -100,7 +104,7 @@
     Title : "Mickys Stock Export"
 
 [Form: MickysStockForm]
-    Parts   : MickysCompanyPart, MickysStockPart, MickysVendorPart, MickysCustomerPart
+    Parts   : MickysCompanyPart, MickysStockPart, MickysVendorPart, MickysCustomerPart, MickysInvoicePart
     Buttons : MickysSyncBtn
     XMLTag  : "MICKYSSTOCK"
 
@@ -299,3 +303,78 @@
     Child Of   : "Sundry Debtors"
     Belongs To : Yes
     Fetch      : Name, Parent
+
+;; ------------------------ Sales invoices ------------------------------
+;; Recent sales vouchers -> one <SALESINVOICE> element each. The CRM
+;; looks for its sales order number (SO-YYYY-NNNN) in ORDERNOS (the
+;; invoice's "Order No(s)" field), REFERENCE (the "Ref" beside the
+;; voucher number) or NARRATION - accounts write it in any one of them
+;; when keying the invoice - and moves the matched order to Invoiced.
+;; Only the last 60 days are sent so the payload stays small; cancelled
+;; and optional vouchers are skipped. DATE is exported as YYYYMMDD.
+[Part: MickysInvoicePart]
+    Lines    : MickysInvoiceLine
+    Repeat   : MickysInvoiceLine : MickysSalesInvoices
+    Scrolled : Vertical
+
+[Line: MickysInvoiceLine]
+    Fields : MIGuid, MIVchNo, MIVchType, MIDate, MIParty
+    Fields : MIReference, MIOrderNos, MINarration, MIAmount
+    XMLTag : "SALESINVOICE"
+
+[Field: MIGuid]
+    Type   : String
+    Set as : $GUID
+    XMLTag : "GUID"
+
+[Field: MIVchNo]
+    Type   : String
+    Set as : $VoucherNumber
+    XMLTag : "VOUCHERNUMBER"
+
+[Field: MIVchType]
+    Type   : String
+    Set as : $VoucherTypeName
+    XMLTag : "VOUCHERTYPE"
+
+[Field: MIDate]
+    Type   : String
+    Set as : $$String:$Date:UniversalDate
+    XMLTag : "DATE"
+
+[Field: MIParty]
+    Type   : String
+    Set as : $PartyLedgerName
+    XMLTag : "PARTY"
+
+[Field: MIReference]
+    Type   : String
+    Set as : $Reference
+    XMLTag : "REFERENCE"
+
+;; The "Order No(s)" entered on the invoice's party details screen -
+;; comma-separated when there are several.
+[Field: MIOrderNos]
+    Type   : String
+    Set as : $$FullList:InvoiceOrderList:BasicPurchaseOrderNo
+    XMLTag : "ORDERNOS"
+
+[Field: MINarration]
+    Type   : String
+    Set as : $Narration
+    XMLTag : "NARRATION"
+
+[Field: MIAmount]
+    Type   : Amount
+    Set as : $Amount
+    XMLTag : "AMOUNT"
+
+[Collection: MickysSalesInvoices]
+    Type   : Voucher
+    Filter : MickysIsSalesVch
+    Fetch  : Date, VoucherNumber, VoucherTypeName, PartyLedgerName
+    Fetch  : Reference, Narration, Amount, GUID, IsCancelled, IsOptional
+
+[System: Formula]
+    MickysInvoiceFrom : $$MachineDate - 60
+    MickysIsSalesVch  : ($$IsSales:$VoucherTypeName) AND (NOT $IsCancelled) AND (NOT $IsOptional) AND ($Date >= @@MickysInvoiceFrom)

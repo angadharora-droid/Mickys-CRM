@@ -18,6 +18,12 @@ const stockSyncLogSchema = new mongoose.Schema(
     removedCount: { type: Number, default: 0 },
     vendorCount: { type: Number, default: 0 },
     customerCount: { type: Number, default: 0 },
+    // Sales vouchers carried by the push (updated TDL only) and how many of
+    // them named a CRM order — the "did accounts write the order number"
+    // signal for the invoicing screen.
+    invoiceCount: { type: Number, default: 0 },
+    invoicesMatched: { type: Number, default: 0 },
+    ordersInvoiced: { type: [String], default: [] },
     // 'upload' = XML file uploaded in the CRM; 'push' = sent by Tally itself.
     source: { type: String, enum: ['upload', 'push'], required: true },
     syncedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
