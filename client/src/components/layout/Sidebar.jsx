@@ -40,8 +40,9 @@ const NAV_SECTIONS = [
   {
     label: 'Modules',
     items: [
-      // Opens the separate Sales Order dashboard (its own sidebar & pages).
-      { to: '/sales', label: 'Sales Orders', icon: ReceiptText, roles: [ROLES.ADMIN, ROLES.SALES_EXEC], module: MODULES.SALES_ORDERS },
+      // Opens the separate Sales Order dashboard (its own sidebar & pages),
+      // shared by the sales, accounts (invoicing) and dispatch desks.
+      { to: '/sales', label: 'Sales Orders', icon: ReceiptText, roles: ['*'], modules: [MODULES.SALES_ORDERS, MODULES.INVOICING, MODULES.DISPATCH] },
     ],
   },
   {
@@ -63,7 +64,8 @@ export default function Sidebar({ open, onClose }) {
     items: s.items.filter(
       (i) =>
         (i.roles.includes('*') || i.roles.includes(user?.role)) &&
-        (!i.module || hasModule(user, i.module))
+        (!i.module || hasModule(user, i.module)) &&
+        (!i.modules || i.modules.some((m) => hasModule(user, m)))
     ),
   })).filter((s) => s.items.length > 0);
 

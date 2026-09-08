@@ -3,25 +3,27 @@ import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import api, { apiError } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
-import { ROLES } from '@/lib/constants';
+import { ROLES, MODULES, hasModule } from '@/lib/constants';
 import { formatCurrency, formatDateTime } from '@/lib/utils';
 import PageHeader from '@/components/shared/PageHeader';
 import StatCard from '@/components/shared/StatCard';
 import EmptyState from '@/components/shared/EmptyState';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import OrderFunnel from '@/components/sales/OrderFunnel';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
   Boxes, PackageCheck, IndianRupee, Tags, ReceiptText, RefreshCw, ClipboardList, TriangleAlert, BarChart3,
-  Settings,
+  Settings, Workflow, Banknote, Truck,
 } from 'lucide-react';
 
 export default function SalesOverview() {
   const { user } = useAuth();
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [funnel, setFunnel] = useState(null);
 
   const fetchSummary = useCallback(async () => {
     setLoading(true);
@@ -37,6 +39,8 @@ export default function SalesOverview() {
 
   useEffect(() => {
     fetchSummary();
+    // The funnel is its own card; a failure there must not blank the stock view.
+    api.get('/sales-orders/funnel').then((r) => setFunnel(r.data.data)).catch(() => {});
   }, [fetchSummary]);
 
   const totals = summary?.totals;
@@ -65,6 +69,25 @@ export default function SalesOverview() {
             <BarChart3 className="h-4 w-4" /> Reports
           </Link>
         </Button>
+        <Button asChild variant="outline">
+          <Link to="/sales/pipeline">
+            <Workflow className="h-4 w-4" /> Pipeline
+          </Link>
+        </Button>
+        {hasModule(user, MODULES.INVOICING) && (
+          <Button asChild variant="outline">
+            <Link to="/sales/invoicing">
+              <Banknote className="h-4 w-4" /> Invoicing
+            </Link>
+          </Button>
+        )}
+        {hasModule(user, MODULES.DISPATCH) && (
+          <Button asChild variant="outline">
+            <Link to="/sales/dispatch">
+              <Truck className="h-4 w-4" /> Dispatch
+            </Link>
+          </Button>
+        )}
         {user?.role === ROLES.ADMIN && (
           <Button asChild variant="outline">
             <Link to="/sales/settings">
@@ -73,6 +96,29 @@ export default function SalesOverview() {
           </Button>
         )}
       </PageHeader>
+
+      {/* The order funnel sits first: it is the one card every desk reads,
+          and it stands whether or not Tally has synced yet. */}
+      {funnel && (funnel.totals.booked > 0 || funnel.totals.cancelled > 0) && (
+        <Card className="mb-4">
+          <CardHeader className="pb-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Workflow className="h-4 w-4 text-primary" /> Order pipeline
+                </CardTitle>
+                <CardDescription>Booking → payment → Tally invoice → dispatch → delivery → feedback, across every order</CardDescription>
+              </div>
+              <Button asChild variant="outline" size="sm">
+                <Link to="/sales/pipeline">Open pipeline</Link>
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <OrderFunnel data={funnel} compact />
+          </CardContent>
+        </Card>
+      )}
 
       {loading ? (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">

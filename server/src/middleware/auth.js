@@ -48,4 +48,19 @@ const requireModule = (name) => (req, _res, next) => {
   next();
 };
 
-module.exports = { authenticate, authorize, requireModule };
+/**
+ * Any-of module guard: requireAnyModule('sales_orders', 'invoicing',
+ * 'dispatch') for the parts of the order pipeline that every desk reads —
+ * the funnel, an order's detail and its PDF. Admins bypass as everywhere.
+ */
+const requireAnyModule = (...names) => (req, _res, next) => {
+  if (!req.user) return next(ApiError.unauthorized());
+  if (req.user.role === 'admin') return next();
+  const modules = req.user.modules?.length ? req.user.modules : ['leads'];
+  if (!names.some((n) => modules.includes(n))) {
+    return next(ApiError.forbidden('This module is not assigned to you'));
+  }
+  next();
+};
+
+module.exports = { authenticate, authorize, requireModule, requireAnyModule };

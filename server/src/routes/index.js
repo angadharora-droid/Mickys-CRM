@@ -1,6 +1,6 @@
 const express = require('express');
 
-const { authenticate, authorize, requireModule } = require('../middleware/auth');
+const { authenticate, authorize, requireModule, requireAnyModule } = require('../middleware/auth');
 const { loginLimiter, authLimiter, generateLimiter, emailLimiter } = require('../middleware/security');
 const validate = require('../middleware/validate');
 const upload = require('../middleware/upload');
@@ -22,6 +22,8 @@ const stock = require('../controllers/stock.controller');
 const salesOrders = require('../controllers/salesOrder.controller');
 const salesCustomers = require('../controllers/appointedCustomer.controller');
 const salesReports = require('../controllers/salesReport.controller');
+const invoicing = require('../controllers/invoicing.controller');
+const dispatch = require('../controllers/dispatch.controller');
 
 const router = express.Router();
 
@@ -36,6 +38,13 @@ const PR = 'pr_manager';
 // must stay reachable with the Tally key (no JWT).
 router.use(['/leads', '/follow-ups', '/reports', '/dashboard'], authenticate, requireModule('leads'));
 const SALES_MODULE = requireModule('sales_orders');
+// The order pipeline is read by three desks — sales, accounts (invoicing) and
+// dispatch — each assigned its own module. Reads that every desk needs (the
+// funnel, an order and its PDF) accept any of the three; writes stay with the
+// desk that owns the step.
+const PIPELINE_MODULES = requireAnyModule('sales_orders', 'invoicing', 'dispatch');
+const INVOICING_MODULE = requireModule('invoicing');
+const DISPATCH_MODULE = requireModule('dispatch');
 
 // ---------- Auth ----------
 router.post('/auth/login', loginLimiter, validate(v.loginSchema), auth.login);
@@ -142,13 +151,34 @@ router.post('/stock/availability', authenticate, authorize(ADMIN, EXEC), SALES_M
 // Deleting is admin-only. Emailing an order to its customer is a manual send
 // of the same PDF, so it shares the email rate limit.
 router.post('/sales-orders', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, validate(v.salesOrderSchema), salesOrders.createSalesOrder);
-router.get('/sales-orders', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, salesOrders.listSalesOrders);
-router.get('/sales-orders/:id', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, salesOrders.getSalesOrder);
-router.get('/sales-orders/:id/pdf', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, salesOrders.salesOrderPdf);
+// The funnel and the order reads are shared with the accounts and dispatch
+// desks; /funnel is declared before /:id so it is not read as an order id.
+router.get('/sales-orders/funnel', authenticate, PIPELINE_MODULES, salesOrders.orderFunnel);
+router.get('/sales-orders', authenticate, PIPELINE_MODULES, salesOrders.listSalesOrders);
+router.get('/sales-orders/:id', authenticate, PIPELINE_MODULES, salesOrders.getSalesOrder);
+router.get('/sales-orders/:id/pdf', authenticate, PIPELINE_MODULES, salesOrders.salesOrderPdf);
 router.put('/sales-orders/:id', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, validate(v.salesOrderSchema), salesOrders.updateSalesOrder);
 router.put('/sales-orders/:id/status', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, validate(v.salesOrderStatusSchema), salesOrders.updateStatus);
+// The booking exec closes the loop: the customer has the goods, and what
+// they thought of them.
+router.post('/sales-orders/:id/deliver', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, validate(v.salesOrderDeliverySchema), salesOrders.deliverOrder);
+router.post('/sales-orders/:id/feedback', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, validate(v.salesOrderFeedbackSchema), salesOrders.submitFeedback);
 router.post('/sales-orders/:id/email', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, emailLimiter, validate(v.salesOrderEmailSchema), salesOrders.emailSalesOrder);
 router.delete('/sales-orders/:id', authenticate, authorize(ADMIN), salesOrders.deleteSalesOrder);
+
+// ---------- Invoicing module (accounts) ----------
+// A queue of confirmed orders waiting for their Tally invoice, and the ones
+// matched back. The invoice itself is keyed in Tally; the push matches it
+// (POST /stock/sync) — the manual link covers a voucher keyed without the
+// order number on it.
+router.get('/invoicing/queue', authenticate, INVOICING_MODULE, invoicing.listQueue);
+router.post('/invoicing/:id/verify', authenticate, INVOICING_MODULE, validate(v.accountsVerifySchema), invoicing.verifyPayment);
+router.post('/invoicing/:id/link-invoice', authenticate, INVOICING_MODULE, validate(v.invoiceLinkSchema), invoicing.linkInvoice);
+
+// ---------- Dispatch module ----------
+// Invoiced orders waiting to go, and the dispatch form that sends them.
+router.get('/dispatch/queue', authenticate, DISPATCH_MODULE, dispatch.listQueue);
+router.post('/dispatch/:id', authenticate, DISPATCH_MODULE, validate(v.dispatchFormSchema), dispatch.recordDispatch);
 
 // ---------- Sales Order module: appointed customers (rate freeze) ----------
 // A delivered lead can be appointed as a customer with the kit's emailed

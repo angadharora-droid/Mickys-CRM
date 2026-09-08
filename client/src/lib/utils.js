@@ -22,6 +22,18 @@ export const formatDateTime = (d) =>
       })
     : '—';
 
+/** "12 KG" / "1,250 pkt" — a quantity with its unit, whole numbers kept whole. */
+export const formatQty = (n, unit) => {
+  const num = Number(n || 0);
+  const s = Number.isInteger(num)
+    ? num.toLocaleString('en-IN')
+    : num.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+  return unit ? `${s} ${unit}` : s;
+};
+
+/** Today as the value an <input type="date"> wants, in the browser's zone. */
+export const todayInput = () => new Date().toLocaleDateString('en-CA');
+
 export const formatBytes = (bytes) => {
   const n = Number(bytes) || 0;
   if (n < 1024) return `${n} B`;

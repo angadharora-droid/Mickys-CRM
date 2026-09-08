@@ -1,28 +1,45 @@
 const mongoose = require('mongoose');
 
-const STATUSES = ['open', 'confirmed', 'closed', 'cancelled'];
-
 /**
- * A sales order built against the Tally stock mirror. Line amounts and the
- * total are computed server-side (qty × rate); `stockQtyAtOrder` and
- * `availableAtOrder` record the stock position the order was saved against, so
- * availability disputes can be settled later. Both are refreshed on every
- * edit, so they describe the last save rather than the original booking.
- * Orders are records + PDFs only — the tax invoice still happens in Tally.
+ * THE ORDER PIPELINE
  *
- * THE FOUR STATUSES
- *   open       still being worked on — editable, and holds stock.
- *   confirmed  agreed with the customer — LOCKED against edits, still holds
- *              stock. Un-confirming is admin-only, or the lock means nothing.
- *   closed     the goods have gone and the invoice is in Tally — locked, and
- *              the stock reservation is released.
- *   cancelled  never happened — locked, releases the reservation at once.
+ *   open        being worked on — editable, holds stock.
+ *   confirmed   the booking exec has the customer's payment (or credit
+ *               approval) and confirms the order. LOCKED against edits, still
+ *               holds stock. Accounts are notified: this is their queue.
+ *   invoiced    accounts keyed the tax invoice into Tally with this order's
+ *               number written on it; the Tally push carried the invoice back
+ *               and the CRM matched it. The goods are booked out in Tally's
+ *               own figures from this point, so the CRM stops reserving them.
+ *               Dispatch are notified: this is their queue.
+ *   dispatched  dispatch filled in how the goods went (carrier, docket,
+ *               vehicle…). The booking exec is notified.
+ *   delivered   the booking exec confirms the customer received the goods.
+ *   closed      the customer's feedback is in — the order's journey is done.
+ *               (Also the admin's manual "close outside the pipeline" for
+ *               orders that never went through Tally matching.)
+ *   cancelled   never happened — locked, releases the reservation at once.
  *
- * An order reserves stock while it is holding goods (see
- * services/stockAvailability.service.js): `closedAt` is the clock that releases
- * the reservation once Tally has had time to catch up, and `items[].nameKey` is
- * the normalised name every reservation join runs on.
+ * Every step stamps its own *At field and appends to `history`, so the funnel
+ * and the fulfilment report can be built from the order document alone.
+ * Un-doing a step (admin only) clears the stamps of every later step, so an
+ * order never claims to have been dispatched before it was invoiced.
+ *
+ * Stock reservation (services/stockAvailability.service.js): open and
+ * confirmed reserve; invoiced and beyond never do (Tally already counts the
+ * goods out); a manual close with no invoice on record keeps the settle window
+ * keyed off `closedAt`; cancelled releases at once. `items[].nameKey` is the
+ * normalised name every reservation join runs on.
  */
+
+const STATUSES = ['open', 'confirmed', 'invoiced', 'dispatched', 'delivered', 'closed', 'cancelled'];
+
+/** The forward path, in order. Cancelled sits outside it. */
+const PIPELINE = ['open', 'confirmed', 'invoiced', 'dispatched', 'delivered', 'closed'];
+
+const PAYMENT_MODES = ['upi', 'neft', 'rtgs', 'imps', 'cheque', 'cash', 'credit', 'other'];
+
+const DISPATCH_MODES = ['courier', 'transport', 'own_vehicle', 'hand_delivery', 'customer_pickup', 'other'];
 
 /**
  * One send of this order's PDF, whoever it went to — the manual send to the
@@ -45,6 +62,47 @@ const orderEmailSchema = new mongoose.Schema(
   },
   { _id: false }
 );
+
+/** One status move — the order's own audit trail. */
+const historySchema = new mongoose.Schema(
+  {
+    from: { type: String, default: '' },
+    to: { type: String, required: true },
+    at: { type: Date, default: Date.now },
+    by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    // 'tally' when the Tally push moved the order (invoice matched).
+    source: { type: String, enum: ['user', 'tally', 'system'], default: 'user' },
+    note: { type: String, default: '' },
+  },
+  { _id: false }
+);
+
+/**
+ * A Tally sales invoice matched to this order. Normally written by the stock
+ * push (source 'tally'); accounts can also link one by hand when the voucher
+ * was keyed without the order number on it (source 'manual').
+ */
+const invoiceSchema = new mongoose.Schema(
+  {
+    guid: { type: String, default: '' },
+    voucherNumber: { type: String, default: '' },
+    voucherType: { type: String, default: '' },
+    date: { type: Date, default: null },
+    party: { type: String, default: '' },
+    amount: { type: Number, default: 0 },
+    reference: { type: String, default: '' },
+    narration: { type: String, default: '' },
+    orderNos: { type: String, default: '' },
+    // Which field of the voucher carried this order's number.
+    matchedVia: { type: String, enum: ['orderNo', 'reference', 'narration', 'manual'], default: 'manual' },
+    source: { type: String, enum: ['tally', 'manual'], default: 'tally' },
+    seenAt: { type: Date, default: Date.now },
+    linkedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    note: { type: String, default: '' },
+  },
+  { _id: false }
+);
+
 const salesOrderSchema = new mongoose.Schema(
   {
     number: { type: String, required: true, unique: true }, // SO-2026-0001
@@ -74,9 +132,79 @@ const salesOrderSchema = new mongoose.Schema(
     total: { type: Number, default: 0 },
     notes: { type: String, trim: true, default: '' },
     status: { type: String, enum: STATUSES, default: 'open', index: true },
+
+    // ---- Stage stamps: when the order last entered each stage ----
+    confirmedAt: { type: Date, default: null, index: true },
+    invoicedAt: { type: Date, default: null, index: true },
+    dispatchedAt: { type: Date, default: null, index: true },
+    deliveredAt: { type: Date, default: null, index: true },
     // When the order was closed. Cleared on any move back out of closed, which
-    // restarts the release clock.
+    // restarts the reservation-release clock for a manual close.
     closedAt: { type: Date, default: null, index: true },
+    cancelledAt: { type: Date, default: null },
+
+    // ---- Step 1: confirmation — the payment the exec confirmed against ----
+    payment: {
+      mode: { type: String, enum: [...PAYMENT_MODES, ''], default: '' },
+      amount: { type: Number, default: null },
+      reference: { type: String, trim: true, default: '' }, // UTR / cheque no.
+      receivedOn: { type: Date, default: null },
+      notes: { type: String, trim: true, default: '' },
+      recordedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      recordedAt: { type: Date, default: null },
+    },
+
+    // ---- Step 2: accounts' own check before keying the invoice (optional) ----
+    accounts: {
+      verifiedAt: { type: Date, default: null },
+      verifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      note: { type: String, trim: true, default: '' },
+    },
+
+    // ---- Step 3: the Tally invoice(s) matched to this order ----
+    invoices: { type: [invoiceSchema], default: [] },
+
+    // ---- Step 4: how the goods went ----
+    dispatch: {
+      mode: { type: String, enum: [...DISPATCH_MODES, ''], default: '' },
+      carrier: { type: String, trim: true, default: '' }, // courier / transporter
+      docketNumber: { type: String, trim: true, default: '' }, // LR / AWB / docket
+      vehicleNumber: { type: String, trim: true, default: '' },
+      driverName: { type: String, trim: true, default: '' },
+      driverPhone: { type: String, trim: true, default: '' },
+      packages: { type: Number, default: null },
+      weightKg: { type: Number, default: null },
+      ewayBill: { type: String, trim: true, default: '' },
+      dispatchedOn: { type: Date, default: null },
+      expectedDeliveryOn: { type: Date, default: null },
+      remarks: { type: String, trim: true, default: '' },
+      filledBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      filledAt: { type: Date, default: null },
+    },
+
+    // ---- Step 5: the customer has the goods ----
+    delivery: {
+      deliveredOn: { type: Date, default: null },
+      receivedBy: { type: String, trim: true, default: '' },
+      remarks: { type: String, trim: true, default: '' },
+      markedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      markedAt: { type: Date, default: null },
+    },
+
+    // ---- Step 6: what the customer thought ----
+    feedback: {
+      rating: { type: Number, min: 1, max: 5, default: null }, // overall
+      quality: { type: Number, min: 1, max: 5, default: null },
+      delivery: { type: Number, min: 1, max: 5, default: null },
+      packaging: { type: Number, min: 1, max: 5, default: null },
+      wouldReorder: { type: Boolean, default: null },
+      comments: { type: String, trim: true, default: '' },
+      submittedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      submittedAt: { type: Date, default: null },
+    },
+
+    history: { type: [historySchema], default: [] },
+
     // When accounts were emailed this order's confirmation. Cleared whenever
     // the order leaves confirmed, so re-confirming an order that has since been
     // re-opened and edited mails accounts the new version.
@@ -87,7 +215,17 @@ const salesOrderSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// The invoicing and dispatch queues list one status sorted by when it was
+// entered; the funnel counts stamps over a booking window.
+salesOrderSchema.index({ status: 1, confirmedAt: 1 });
+salesOrderSchema.index({ status: 1, invoicedAt: 1 });
+salesOrderSchema.index({ createdAt: -1 });
+salesOrderSchema.index({ 'invoices.guid': 1 });
+
 const SalesOrder = mongoose.model('SalesOrder', salesOrderSchema);
 SalesOrder.STATUSES = STATUSES;
+SalesOrder.PIPELINE = PIPELINE;
+SalesOrder.PAYMENT_MODES = PAYMENT_MODES;
+SalesOrder.DISPATCH_MODES = DISPATCH_MODES;
 
 module.exports = SalesOrder;

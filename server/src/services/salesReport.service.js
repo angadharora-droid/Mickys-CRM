@@ -34,8 +34,20 @@ const { dayRangeContext, buildWorkbook } = require('./report.service');
 const STATUS_LABELS = {
   open: 'Open',
   confirmed: 'Confirmed',
+  invoiced: 'Invoiced',
+  dispatched: 'Dispatched',
+  delivered: 'Delivered',
   closed: 'Closed',
   cancelled: 'Cancelled',
+};
+
+const PAYMENT_LABELS = {
+  upi: 'UPI', neft: 'NEFT', rtgs: 'RTGS', imps: 'IMPS', cheque: 'Cheque', cash: 'Cash', credit: 'Credit', other: 'Other',
+};
+
+const DISPATCH_LABELS = {
+  courier: 'Courier', transport: 'Transport', own_vehicle: 'Own vehicle', hand_delivery: 'Hand delivery',
+  customer_pickup: 'Customer pickup', other: 'Other',
 };
 
 /** Statuses that still hold stock back — see stockAvailability.service.js. */
@@ -76,7 +88,7 @@ const STATUS_ACTION = 'SALES_ORDER_STATUS';
  */
 const loggedStatus = (log) =>
   log.meta?.status ||
-  (String(log.details || '').match(/\bmarked (open|confirmed|closed|cancelled)\b/) || [])[1] ||
+  (String(log.details || '').match(/\bmarked (open|confirmed|invoiced|dispatched|delivered|closed|cancelled)\b/) || [])[1] ||
   '';
 
 /**
@@ -129,11 +141,13 @@ const orderQuery = (ctx, extra = {}) =>
 
 async function registerRows(ctx) {
   const orders = await orderQuery(ctx, { createdAt: { $gte: ctx.from, $lte: ctx.to } })
-    .select('number customerName customer items total status closedAt createdBy createdAt')
+    .select('number customerName customer items total status confirmedAt closedAt createdBy createdAt')
     .sort({ createdAt: -1 })
     .lean();
 
-  const stamps = await statusStamps(orders.map((o) => o._id));
+  // Orders confirmed before the document carried its own stamp are read off
+  // the audit trail, as they always were.
+  const stamps = await statusStamps(orders.filter((o) => !o.confirmedAt).map((o) => o._id));
 
   return orders.map((o) => ({
     number: o.number,
@@ -144,9 +158,73 @@ async function registerRows(ctx) {
     items: (o.items || []).length,
     total: round2(o.total),
     bookedBy: o.createdBy?.name || '—',
-    confirmedAt: stamps.get(String(o._id))?.confirmed || null,
+    confirmedAt: o.confirmedAt ? new Date(o.confirmedAt) : stamps.get(String(o._id))?.confirmed || null,
     closedAt: o.closedAt ? new Date(o.closedAt) : null,
   }));
+}
+
+/** Stage stamp the order is currently sitting on. */
+const STAGE_STAMP = {
+  confirmed: 'confirmedAt',
+  invoiced: 'invoicedAt',
+  dispatched: 'dispatchedAt',
+  delivered: 'deliveredAt',
+  closed: 'closedAt',
+  cancelled: 'cancelledAt',
+};
+
+/**
+ * Every order booked in the period with the date it reached each stage and
+ * the days each hand-over took — booking to payment, payment to invoice,
+ * invoice to dispatch, dispatch to delivery. The row for an order still in
+ * flight shows where it is and how long it has sat there.
+ */
+async function fulfilmentRows(ctx) {
+  const orders = await orderQuery(ctx, { createdAt: { $gte: ctx.from, $lte: ctx.to } })
+    .select(
+      'number customerName total status createdAt confirmedAt invoicedAt dispatchedAt deliveredAt closedAt cancelledAt ' +
+        'payment invoices dispatch delivery feedback createdBy'
+    )
+    .sort({ createdAt: -1 })
+    .lean();
+
+  const now = new Date();
+  const days = (from, to) => (from && to ? Math.max(0, dayDiff(from, to)) : null);
+
+  return orders.map((o) => {
+    const invoice = (o.invoices || [])[o.invoices?.length - 1] || null;
+    const stageSince = (STAGE_STAMP[o.status] && o[STAGE_STAMP[o.status]]) || o.createdAt;
+    return {
+      number: o.number,
+      orderDate: new Date(o.createdAt),
+      customer: o.customerName,
+      total: round2(o.total),
+      bookedBy: o.createdBy?.name || '—',
+      status: STATUS_LABELS[o.status] || o.status,
+      daysInStage: Math.max(0, dayDiff(stageSince, now)),
+      paymentMode: PAYMENT_LABELS[o.payment?.mode] || '',
+      paymentRef: o.payment?.reference || '',
+      paymentAmount: o.payment?.amount != null ? round2(o.payment.amount) : null,
+      confirmedAt: o.confirmedAt ? new Date(o.confirmedAt) : null,
+      invoiceNo: invoice?.voucherNumber || '',
+      invoiceDate: invoice?.date ? new Date(invoice.date) : null,
+      invoicedAt: o.invoicedAt ? new Date(o.invoicedAt) : null,
+      dispatchMode: DISPATCH_LABELS[o.dispatch?.mode] || '',
+      carrier: o.dispatch?.carrier || '',
+      docket: o.dispatch?.docketNumber || '',
+      dispatchedAt: o.dispatchedAt ? new Date(o.dispatchedAt) : null,
+      deliveredAt: o.deliveredAt ? new Date(o.deliveredAt) : null,
+      receivedBy: o.delivery?.receivedBy || '',
+      feedbackAt: o.feedback?.submittedAt ? new Date(o.feedback.submittedAt) : null,
+      rating: o.feedback?.rating ?? null,
+      wouldReorder: o.feedback?.wouldReorder == null ? '' : yesNo(o.feedback.wouldReorder),
+      daysToConfirm: days(o.createdAt, o.confirmedAt),
+      daysToInvoice: days(o.confirmedAt, o.invoicedAt),
+      daysToDispatch: days(o.invoicedAt, o.dispatchedAt),
+      daysToDeliver: days(o.dispatchedAt, o.deliveredAt),
+      daysTotal: days(o.createdAt, o.deliveredAt),
+    };
+  });
 }
 
 async function itemRows(ctx) {
@@ -288,7 +366,7 @@ async function execRows(ctx) {
     if (!byExec.has(id)) {
       byExec.set(id, {
         executive: o.createdBy?.name || 'Unknown',
-        orders: 0, total: 0, confirmed: 0, closed: 0, cancelled: 0, openValue: 0,
+        orders: 0, total: 0, confirmed: 0, inTransit: 0, delivered: 0, closed: 0, cancelled: 0, openValue: 0,
       });
     }
     const s = byExec.get(id);
@@ -296,10 +374,13 @@ async function execRows(ctx) {
     s.orders += 1;
     s.total += value;
     if (o.status === 'confirmed') s.confirmed += 1;
+    // Invoiced and dispatched are both "on the way to the customer".
+    if (o.status === 'invoiced' || o.status === 'dispatched') s.inTransit += 1;
+    if (o.status === 'delivered') s.delivered += 1;
     if (o.status === 'closed') s.closed += 1;
     if (o.status === 'cancelled') s.cancelled += 1;
-    // The four counts partition the orders booked, so what is left over —
-    // still open, neither agreed nor written off — is the value to chase.
+    // The counts partition the orders booked, so what is left over — still
+    // open, neither agreed nor written off — is the value to chase.
     if (o.status === 'open') s.openValue += value;
   }
 
@@ -548,9 +629,47 @@ const REPORTS = {
       { key: 'orders', header: 'Orders Booked', type: 'number', width: 14 },
       { key: 'total', header: 'Total Value', type: 'number', width: 14 },
       { key: 'confirmed', header: 'Confirmed', type: 'number', width: 11 },
-      { key: 'closed', header: 'Closed', type: 'number', width: 9 },
+      { key: 'inTransit', header: 'Invoiced / Dispatched', type: 'number', width: 20 },
+      { key: 'delivered', header: 'Delivered', type: 'number', width: 11 },
+      { key: 'closed', header: 'Completed', type: 'number', width: 11 },
       { key: 'cancelled', header: 'Cancelled', type: 'number', width: 10 },
       { key: 'openValue', header: 'Open Value', type: 'number', width: 14 },
+    ],
+  },
+  fulfilment: {
+    label: 'Order Fulfilment',
+    description: 'Every order booked in the period, stage by stage: payment, Tally invoice, dispatch, delivery and feedback, with the days each hand-over took.',
+    build: fulfilmentRows,
+    totals: true,
+    columns: [
+      { key: 'number', header: 'Order No', width: 16 },
+      { key: 'orderDate', header: 'Order Date', type: 'date', width: 13 },
+      { key: 'customer', header: 'Customer', width: 30 },
+      { key: 'total', header: 'Order Value', type: 'number', width: 14 },
+      { key: 'bookedBy', header: 'Booked By', width: 18 },
+      { key: 'status', header: 'Stage', width: 12 },
+      { key: 'daysInStage', header: 'Days at Stage', type: 'number', width: 13, noTotal: true },
+      { key: 'paymentMode', header: 'Payment', width: 10 },
+      { key: 'paymentRef', header: 'Payment Ref', width: 18 },
+      { key: 'paymentAmount', header: 'Paid', type: 'number', width: 12 },
+      { key: 'confirmedAt', header: 'Confirmed At', type: 'datetime', width: 18 },
+      { key: 'invoiceNo', header: 'Tally Invoice', width: 14 },
+      { key: 'invoiceDate', header: 'Invoice Date', type: 'date', width: 13 },
+      { key: 'invoicedAt', header: 'Matched At', type: 'datetime', width: 18 },
+      { key: 'dispatchMode', header: 'Dispatch Mode', width: 14 },
+      { key: 'carrier', header: 'Carrier', width: 18 },
+      { key: 'docket', header: 'Docket / LR', width: 16 },
+      { key: 'dispatchedAt', header: 'Dispatched At', type: 'datetime', width: 18 },
+      { key: 'deliveredAt', header: 'Delivered At', type: 'datetime', width: 18 },
+      { key: 'receivedBy', header: 'Received By', width: 18 },
+      { key: 'feedbackAt', header: 'Feedback At', type: 'datetime', width: 18 },
+      { key: 'rating', header: 'Rating (5)', type: 'number', width: 10, noTotal: true },
+      { key: 'wouldReorder', header: 'Reorder?', width: 10 },
+      { key: 'daysToConfirm', header: 'Days to Confirm', type: 'number', width: 15, noTotal: true },
+      { key: 'daysToInvoice', header: 'Days to Invoice', type: 'number', width: 15, noTotal: true },
+      { key: 'daysToDispatch', header: 'Days to Dispatch', type: 'number', width: 16, noTotal: true },
+      { key: 'daysToDeliver', header: 'Days to Deliver', type: 'number', width: 15, noTotal: true },
+      { key: 'daysTotal', header: 'Booking to Delivery', type: 'number', width: 19, noTotal: true },
     ],
   },
   commitment: {

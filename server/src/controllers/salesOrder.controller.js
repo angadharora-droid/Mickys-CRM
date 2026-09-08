@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const asyncHandler = require('../utils/asyncHandler');
 const ApiError = require('../utils/ApiError');
 const AppointedCustomer = require('../models/AppointedCustomer');
@@ -11,28 +12,23 @@ const {
   nameKeyOf,
   checkLineAvailability,
 } = require('../services/stockAvailability.service');
+const {
+  RESERVING,
+  applyTransition,
+  refusalFor,
+  announce,
+  paymentLabel,
+  funnel,
+} = require('../services/orderPipeline.service');
+const { dayRangeContext } = require('../services/report.service');
 const { getPagination, buildMeta } = require('../utils/pagination');
 const { logActivity } = require('../services/activity.service');
 const { searchRegex } = require('../utils/sanitize');
-const { istDayPassed, istDateLabel } = require('../utils/istDate');
+const { istDayPassed, istDateLabel, istDayStart } = require('../utils/istDate');
 
 /** Admins manage every order; sales execs manage only the ones they booked. */
 const canManage = (user, order) =>
   user.role === 'admin' || String(order.createdBy?._id || order.createdBy) === String(user._id);
-
-/** Statuses that hold stock back — see services/stockAvailability.service.js. */
-const RESERVING = new Set(['open', 'confirmed']);
-
-/** Statuses an order is locked in once it reaches them — see models/SalesOrder.js. */
-const LOCKED = new Set(['confirmed', 'closed', 'cancelled']);
-
-/**
- * Ending a confirmed order is still the booking exec's to do: closing it once
- * the goods have gone, or cancelling it, settles the order rather than
- * reversing what was agreed. Every other move out of a locked status is an
- * admin's call.
- */
-const isExecEnding = (from, to) => from === 'confirmed' && (to === 'closed' || to === 'cancelled');
 
 /**
  * Everything the PDF and the emails need: the booking exec (shown on the
@@ -43,6 +39,19 @@ const withDocumentRefs = (query) =>
   query
     .populate('createdBy', 'name phone email')
     .populate('customer', 'companyName email gstin mobile address terms');
+
+/** The detail view names everyone who touched the order along the pipeline. */
+const PIPELINE_REFS = [
+  'emails.sentBy',
+  'history.by',
+  'payment.recordedBy',
+  'accounts.verifiedBy',
+  'invoices.linkedBy',
+  'dispatch.filledBy',
+  'delivery.markedBy',
+  'feedback.submittedBy',
+];
+const populatePipeline = (order) => order.populate(PIPELINE_REFS.map((path) => ({ path, select: 'name' })));
 
 /**
  * Recomputes line amounts and the total from qty × rate, enriching each line
@@ -151,6 +160,7 @@ const createSalesOrder = asyncHandler(async (req, res) => {
     total,
     notes: notes || '',
     createdBy: req.user._id,
+    history: [{ from: '', to: 'open', by: req.user._id, note: 'Order booked' }],
   });
 
   await logActivity({
@@ -167,19 +177,36 @@ const createSalesOrder = asyncHandler(async (req, res) => {
     .json({ success: true, message: `Sales order ${number} created`, data: withWarnings(order, warnings) });
 });
 
-// GET /api/sales-orders?search=&status=&page=&limit=
+// GET /api/sales-orders?search=&status=a,b&mine=&execId=&sort=&page=&limit=
+// `status` takes a comma-separated list so the pipeline screen can ask for
+// "everything still moving" in one call.
 const listSalesOrders = asyncHandler(async (req, res) => {
   const { page, limit, skip } = getPagination(req.query);
   const filter = {};
-  if (req.query.status) filter.status = req.query.status;
+  if (req.query.status) {
+    const statuses = String(req.query.status)
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => SalesOrder.STATUSES.includes(s));
+    if (statuses.length) filter.status = statuses.length === 1 ? statuses[0] : { $in: statuses };
+  }
+  if (req.query.mine === 'true') filter.createdBy = req.user._id;
+  else if (req.query.execId && mongoose.isValidObjectId(req.query.execId)) filter.createdBy = req.query.execId;
+  // The pipeline screen lists the orders behind a funnel drawn over a booking
+  // window; the same window applies here so the rows add up to the bars.
+  if (req.query.from || req.query.to) {
+    const range = dayRangeContext({ from: req.query.from, to: req.query.to });
+    filter.createdAt = { $gte: range.from, $lte: range.to };
+  }
   if (req.query.search) {
     const rx = searchRegex(req.query.search);
-    filter.$or = [{ number: rx }, { customerName: rx }];
+    filter.$or = [{ number: rx }, { customerName: rx }, { 'invoices.voucherNumber': rx }];
   }
+  const sort = req.query.sort === 'oldest' ? { createdAt: 1 } : { createdAt: -1 };
 
   const [orders, total] = await Promise.all([
     SalesOrder.find(filter)
-      .sort({ createdAt: -1 })
+      .sort(sort)
       .skip(skip)
       .limit(limit)
       .populate('createdBy', 'name')
@@ -194,11 +221,9 @@ const listSalesOrders = asyncHandler(async (req, res) => {
 
 // GET /api/sales-orders/:id
 const getSalesOrder = asyncHandler(async (req, res) => {
-  const order = await withDocumentRefs(SalesOrder.findById(req.params.id)).populate(
-    'emails.sentBy',
-    'name'
-  );
+  const order = await withDocumentRefs(SalesOrder.findById(req.params.id));
   if (!order) throw ApiError.notFound('Sales order not found');
+  await populatePipeline(order);
   res.json({ success: true, data: order });
 });
 
@@ -359,38 +384,64 @@ async function emailAccountsOnConfirm(order, user) {
   }
 }
 
-// PUT /api/sales-orders/:id/status
+/** A stage move's audit row; the reports read confirmation and close dates off it. */
+const logStatus = (req, order, from, extraMeta = {}, extraDetails = '') =>
+  logActivity({
+    userId: req.user._id,
+    action: 'SALES_ORDER_STATUS',
+    entity: 'SalesOrder',
+    entityId: order._id,
+    // The order document records its own stamps, but the reports also read
+    // the trail — keep the status in meta, not only in the prose
+    // (services/salesReport.service.js).
+    meta: { status: order.status, from, ...extraMeta },
+    details: `Sales order ${order.number} marked ${order.status}${extraDetails}`,
+    ip: req.ip,
+  });
+
+// PUT /api/sales-orders/:id/status — body { status, note?, payment? }
+//
+// The plain status move. Confirming is the booking exec's step and carries
+// the payment they confirmed against; dispatching, delivering and feedback
+// have their own endpoints with their own forms; invoicing is written by the
+// Tally push. Anything backwards, or out of a locked status, is an admin's
+// call — see orderPipeline.service.refusalFor.
 const updateStatus = asyncHandler(async (req, res) => {
   const order = await withDocumentRefs(SalesOrder.findById(req.params.id));
   if (!order) throw ApiError.notFound('Sales order not found');
-  if (!canManage(req.user, order)) throw ApiError.forbidden('You can only update your own orders');
 
-  const { status } = req.body;
+  const { status, note, payment } = req.body;
   if (order.status === status) {
     return res.json({ success: true, message: 'No change', data: withWarnings(order, []) });
   }
-  // An exec who could un-confirm at will would make the confirmation lock
-  // decorative — reversing an agreed order is an admin's call. The rule is
-  // about the locked status the order sits in, not about one hop out of it:
-  // guarding only confirmed → open would leave confirmed → closed → open as a
-  // way straight round it, and un-cancelling would put a written-off order back
-  // into edit and back onto the stock the same way.
-  if (LOCKED.has(order.status) && !isExecEnding(order.status, status) && req.user.role !== 'admin') {
-    throw ApiError.forbidden(
-      status === 'open'
-        ? `Sales order ${order.number} is ${order.status} — only an admin can re-open it for editing`
-        : `Sales order ${order.number} is ${order.status} — only an admin can change it now`
-    );
+  const refusal = refusalFor(req.user, order, status);
+  if (refusal) throw ApiError.forbidden(refusal);
+
+  // Confirming means the money (or the credit approval) is in hand — that is
+  // what accounts will invoice against, so it is recorded here, not remembered.
+  if (status === 'confirmed') {
+    if (payment?.mode) {
+      order.payment = {
+        mode: payment.mode,
+        amount: payment.amount ?? null,
+        reference: payment.reference || '',
+        receivedOn: payment.receivedOn ? istDayStart(payment.receivedOn) : null,
+        notes: payment.notes || '',
+        recordedBy: req.user._id,
+        recordedAt: new Date(),
+      };
+    } else if (!order.payment?.mode) {
+      throw ApiError.badRequest(
+        `Record how ${order.customerName} paid before confirming ${order.number} — confirming tells accounts the payment (or credit approval) is in hand`
+      );
+    }
   }
 
-  const previousStatus = order.status;
   const wasReserving = RESERVING.has(order.status);
-  order.status = status;
-  // closedAt is the clock that eventually releases the order's stock
-  // reservation once Tally has had time to catch up; any move back out of
-  // closed restarts it from nothing.
-  order.closedAt = status === 'closed' ? new Date() : null;
-  if (status !== 'confirmed') order.accountsEmailedAt = null;
+  const previousStatus = applyTransition(order, status, {
+    user: req.user,
+    note: note || (status === 'confirmed' ? `Payment: ${paymentLabel(order.payment)}` : ''),
+  });
 
   // Re-taking a released reservation happens days later, against stock that
   // has moved since — the one transition that can book a shortfall nobody
@@ -403,31 +454,154 @@ const updateStatus = asyncHandler(async (req, res) => {
   const accountsEmail = status === 'confirmed' ? await emailAccountsOnConfirm(order, req.user) : null;
 
   await order.save();
-  await order.populate('emails.sentBy', 'name');
+  await populatePipeline(order);
 
-  await logActivity({
-    userId: req.user._id,
-    action: 'SALES_ORDER_STATUS',
-    entity: 'SalesOrder',
-    entityId: order._id,
-    // The order document records only its own close, so this log is where the
-    // reports read confirmation and cancellation dates from — keep the status
-    // in meta, not only in the prose (services/salesReport.service.js).
-    meta: { status, from: previousStatus },
-    details:
-      `Sales order ${order.number} marked ${status}` +
+  await logStatus(
+    req,
+    order,
+    previousStatus,
+    status === 'confirmed' ? { payment: order.payment?.mode } : {},
+    (status === 'confirmed' ? ` — payment ${paymentLabel(order.payment)}` : '') +
+      (note ? ` — ${note}` : '') +
       (!accountsEmail || accountsEmail.reason === 'already-sent'
         ? ''
         : accountsEmail.sent
           ? ` — accounts emailed (${accountsEmail.to.join(', ')})`
-          : ` — accounts email NOT sent: ${accountsEmail.reason}`),
-    ip: req.ip,
-  });
+          : ` — accounts email NOT sent: ${accountsEmail.reason}`)
+  );
+  announce(order, req.user);
 
   res.json({
     success: true,
     message: `Order marked ${status}`,
     data: { ...withWarnings(order, warnings), accountsEmail },
+  });
+});
+
+// POST /api/sales-orders/:id/deliver — the booking exec confirms the customer
+// has the goods. Normally from dispatched; an admin may also close the loop on
+// an invoiced order that went out without dispatch filling their form.
+const deliverOrder = asyncHandler(async (req, res) => {
+  const order = await withDocumentRefs(SalesOrder.findById(req.params.id));
+  if (!order) throw ApiError.notFound('Sales order not found');
+  if (!canManage(req.user, order)) {
+    throw ApiError.forbidden('Only the executive who booked this order (or an admin) can mark it delivered');
+  }
+  const adminShortcut = req.user.role === 'admin' && order.status === 'invoiced';
+  if (order.status !== 'dispatched' && !adminShortcut) {
+    throw ApiError.badRequest(
+      order.status === 'delivered' || order.status === 'closed'
+        ? `Sales order ${order.number} is already ${order.status}`
+        : `Sales order ${order.number} is ${order.status} — it can be marked delivered once dispatch has sent it`
+    );
+  }
+
+  const { deliveredOn, receivedBy, remarks } = req.body;
+  order.delivery = {
+    deliveredOn: deliveredOn ? istDayStart(deliveredOn) : new Date(),
+    receivedBy: receivedBy || '',
+    remarks: remarks || '',
+    markedBy: req.user._id,
+    markedAt: new Date(),
+  };
+  const previousStatus = applyTransition(order, 'delivered', {
+    user: req.user,
+    note:
+      `Received by ${receivedBy || 'the customer'}` +
+      (remarks ? ` — ${remarks}` : '') +
+      (adminShortcut ? ' (delivered without a dispatch record)' : ''),
+  });
+  await order.save();
+  await populatePipeline(order);
+
+  await logStatus(req, order, previousStatus, {}, ` — received by ${receivedBy || 'the customer'}`);
+  announce(order, req.user);
+
+  res.json({ success: true, message: `${order.number} marked delivered`, data: order });
+});
+
+// POST /api/sales-orders/:id/feedback — the customer's feedback, collected by
+// the booking exec. Completes the order: delivered → closed. A closed order
+// takes a corrected form too, without moving.
+const submitFeedback = asyncHandler(async (req, res) => {
+  const order = await withDocumentRefs(SalesOrder.findById(req.params.id));
+  if (!order) throw ApiError.notFound('Sales order not found');
+  if (!canManage(req.user, order)) {
+    throw ApiError.forbidden('Only the executive who booked this order (or an admin) can record its feedback');
+  }
+  if (order.status !== 'delivered' && order.status !== 'closed') {
+    throw ApiError.badRequest(
+      `Sales order ${order.number} is ${order.status} — feedback is collected once the order is delivered`
+    );
+  }
+
+  const { rating, quality, delivery, packaging, wouldReorder, comments } = req.body;
+  const resubmitted = Boolean(order.feedback?.submittedAt);
+  order.feedback = {
+    rating,
+    quality: quality ?? null,
+    delivery: delivery ?? null,
+    packaging: packaging ?? null,
+    wouldReorder: wouldReorder ?? null,
+    comments: comments || '',
+    submittedBy: req.user._id,
+    submittedAt: new Date(),
+  };
+
+  const summary = `${rating}/5${wouldReorder === true ? ', would reorder' : wouldReorder === false ? ', would NOT reorder' : ''}`;
+  if (order.status === 'delivered') {
+    const previousStatus = applyTransition(order, 'closed', {
+      user: req.user,
+      note: `Feedback ${summary}${comments ? ` — ${comments.slice(0, 160)}` : ''}`,
+    });
+    await order.save();
+    await logStatus(req, order, previousStatus, { feedback: rating }, ` — feedback ${summary}`);
+  } else {
+    order.history.push({
+      from: order.status,
+      to: order.status,
+      by: req.user._id,
+      note: `Feedback ${resubmitted ? 'updated' : 'recorded'} ${summary}`,
+    });
+    await order.save();
+    await logActivity({
+      userId: req.user._id,
+      action: 'SALES_ORDER_FEEDBACK',
+      entity: 'SalesOrder',
+      entityId: order._id,
+      meta: { rating },
+      details: `Feedback ${resubmitted ? 'updated' : 'recorded'} on sales order ${order.number}: ${summary}`,
+      ip: req.ip,
+    });
+  }
+  await populatePipeline(order);
+
+  res.json({
+    success: true,
+    message: order.status === 'closed' && !resubmitted ? `Feedback saved — ${order.number} is complete` : 'Feedback saved',
+    data: order,
+  });
+});
+
+// GET /api/sales-orders/funnel?from=&to=&execId=&mine=
+// No dates means the whole order book — a funnel that only saw the last
+// thirty days would hide precisely the old orders still stuck in it.
+const orderFunnel = asyncHandler(async (req, res) => {
+  const { from, to, execId, mine } = req.query;
+  const range = from || to ? dayRangeContext({ from, to, execId }) : null;
+  if (execId && !mongoose.isValidObjectId(execId)) throw ApiError.badRequest('Invalid executive filter');
+  const data = await funnel({
+    from: range?.from,
+    to: range?.to,
+    execId: execId || null,
+    mine: mine === 'true' ? req.user._id : null,
+  });
+  res.json({
+    success: true,
+    data: {
+      ...data,
+      range: range ? { from: range.fromStr, to: range.toStr, label: range.rangeLabel } : null,
+    },
   });
 });
 
@@ -543,7 +717,12 @@ module.exports = {
   getSalesOrder,
   updateSalesOrder,
   updateStatus,
+  deliverOrder,
+  submitFeedback,
+  orderFunnel,
   deleteSalesOrder,
   salesOrderPdf,
   emailSalesOrder,
+  withDocumentRefs,
+  populatePipeline,
 };

@@ -1,9 +1,12 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
-import { ROLES, MODULES, hasModule } from '@/lib/constants';
+import { Routes, Route, Navigate, Outlet } from 'react-router-dom';
+import { ROLES, MODULES, PIPELINE_MODULES, hasModule, canUseSalesPages } from '@/lib/constants';
 import { useAuth } from '@/context/AuthContext';
 import AppLayout from '@/components/layout/AppLayout';
 import SalesLayout from '@/components/layout/SalesLayout';
-import ProtectedRoute from '@/components/layout/ProtectedRoute';
+import ProtectedRoute, { homeFor } from '@/components/layout/ProtectedRoute';
+import EmptyState from '@/components/shared/EmptyState';
+import { Card } from '@/components/ui/card';
+import { ShieldOff } from 'lucide-react';
 
 import Login from '@/pages/Login';
 import Dashboard from '@/pages/dashboard/Dashboard';
@@ -27,14 +30,42 @@ import SalesOrders from '@/pages/sales/SalesOrders';
 import SalesCustomers, { SalesCustomerForm } from '@/pages/sales/SalesCustomers';
 import SalesReports from '@/pages/sales/SalesReports';
 import SalesSettings from '@/pages/sales/SalesSettings';
+import Pipeline from '@/pages/sales/Pipeline';
+import Invoicing from '@/pages/sales/Invoicing';
+import Dispatch from '@/pages/sales/Dispatch';
 import NotFound from '@/pages/NotFound';
+
+/** An account with no usable module assignment lands here instead of looping. */
+function NoAccess() {
+  return (
+    <Card>
+      <EmptyState
+        icon={ShieldOff}
+        title="No module assigned to your account"
+        description="Ask an admin to assign you a module (Leads CRM, Sales Orders, Invoicing or Dispatch) under Users."
+      />
+    </Card>
+  );
+}
 
 /** "/" is the Leads dashboard — users without the Leads module land on their
  *  own module's home instead. */
 function LeadsHome() {
   const { user } = useAuth();
-  if (user && !hasModule(user, MODULES.LEADS)) return <Navigate to="/sales" replace />;
+  if (user && !hasModule(user, MODULES.LEADS)) {
+    const home = homeFor(user);
+    return home === '/' ? <NoAccess /> : <Navigate to={home} replace />;
+  }
   return <Dashboard />;
+}
+
+/** "/sales" is the stock overview for sales; the accounts and dispatch desks
+ *  are sent to their own queue. */
+function SalesHome() {
+  const { user } = useAuth();
+  if (canUseSalesPages(user)) return <SalesOverview />;
+  const home = homeFor(user);
+  return <Navigate to={home === '/sales' ? '/' : home} replace />;
 }
 
 export default function App() {
@@ -124,24 +155,55 @@ export default function App() {
         />
       </Route>
 
-      {/* Sales Order module — its own shell with a separate sidebar/nav.
-          Requires the sales_orders module assignment (admins bypass). */}
+      {/* Sales Order module — its own shell with a separate sidebar/nav,
+          shared by three desks: sales (sales_orders), accounts (invoicing)
+          and dispatch. The shell opens to any of them; each page then
+          requires its own module. */}
       <Route
         element={
-          <ProtectedRoute roles={[ROLES.ADMIN, ROLES.SALES_EXEC]} module={MODULES.SALES_ORDERS}>
+          <ProtectedRoute modules={PIPELINE_MODULES}>
             <SalesLayout />
           </ProtectedRoute>
         }
       >
-        <Route path="/sales" element={<SalesOverview />} />
-        <Route path="/sales/stock" element={<StockList />} />
-        <Route path="/sales/orders" element={<SalesOrders />} />
-        <Route path="/sales/customers" element={<SalesCustomers />} />
-        <Route path="/sales/customers/new" element={<SalesCustomerForm />} />
-        <Route path="/sales/customers/:id" element={<SalesCustomerForm />} />
-        {/* Sales execs run these too — the server scopes every report to the
-            orders they booked, so no admin-only wrapper here. */}
-        <Route path="/sales/reports" element={<SalesReports />} />
+        <Route path="/sales" element={<SalesHome />} />
+
+        {/* Order booking pages: the sales module plus a role that may book. */}
+        <Route
+          element={
+            <ProtectedRoute roles={[ROLES.ADMIN, ROLES.SALES_EXEC]} module={MODULES.SALES_ORDERS}>
+              <Outlet />
+            </ProtectedRoute>
+          }
+        >
+          <Route path="/sales/stock" element={<StockList />} />
+          <Route path="/sales/orders" element={<SalesOrders />} />
+          <Route path="/sales/customers" element={<SalesCustomers />} />
+          <Route path="/sales/customers/new" element={<SalesCustomerForm />} />
+          <Route path="/sales/customers/:id" element={<SalesCustomerForm />} />
+          {/* Sales execs run these too — the server scopes every report to the
+              orders they booked, so no admin-only wrapper here. */}
+          <Route path="/sales/reports" element={<SalesReports />} />
+        </Route>
+
+        {/* The funnel is every desk's view of the same orders. */}
+        <Route path="/sales/pipeline" element={<Pipeline />} />
+        <Route
+          path="/sales/invoicing"
+          element={
+            <ProtectedRoute module={MODULES.INVOICING}>
+              <Invoicing />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/sales/dispatch"
+          element={
+            <ProtectedRoute module={MODULES.DISPATCH}>
+              <Dispatch />
+            </ProtectedRoute>
+          }
+        />
         <Route
           path="/sales/settings"
           element={

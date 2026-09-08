@@ -14,7 +14,9 @@ const {
   parseTallyVendors,
   parseTallyCustomers,
   parseTallyCompany,
+  parseTallyInvoices,
 } = require('../services/tallyStock.service');
+const { matchInvoices } = require('../services/orderPipeline.service');
 const {
   nameKeyOf,
   reservedByNameKey,
@@ -195,12 +197,30 @@ const syncStock = asyncHandler(async (req, res) => {
   await mirrorLedgers(Vendor, vendors);
   await mirrorLedgers(Customer, customers);
 
+  // Sales invoices ride along too (updated TDL only). Each one naming a CRM
+  // order number is written onto that order, which moves to Invoiced — the
+  // step accounts complete in Tally, not in the CRM. A matching failure must
+  // not fail the stock sync it arrived with: the stock is already mirrored,
+  // and the next push retries the invoices anyway.
+  const invoices = parseTallyInvoices(xml);
+  let invoiceResult = null;
+  if (invoices.length) {
+    try {
+      invoiceResult = await matchInvoices(invoices, { syncedAt, actor: req.user });
+    } catch (err) {
+      console.error(`[stock-sync] invoice matching failed: ${err.message}`);
+    }
+  }
+
   const log = await StockSyncLog.create({
     syncedAt,
     itemCount: items.length,
     removedCount: removed.deletedCount || 0,
     vendorCount: vendors.length,
     customerCount: customers.length,
+    invoiceCount: invoices.length,
+    invoicesMatched: invoiceResult?.matched || 0,
+    ordersInvoiced: invoiceResult?.advanced || [],
     source: req.tallyPush ? 'push' : 'upload',
     syncedBy: req.user?._id,
   });
@@ -214,6 +234,17 @@ const syncStock = asyncHandler(async (req, res) => {
       `Synced ${items.length} stock items from Tally (${req.tallyPush ? 'Tally push' : 'manual upload'})` +
       (vendors.length ? `, ${vendors.length} vendors` : '') +
       (customers.length ? `, ${customers.length} customers` : '') +
+      (invoices.length
+        ? `, ${invoices.length} sales invoices (${invoiceResult?.matched || 0} matched to orders` +
+          (invoiceResult?.advanced?.length ? `; moved to invoiced: ${invoiceResult.advanced.join(', ')}` : '') +
+          (invoiceResult?.unknown?.length
+            ? `; unknown order numbers: ${invoiceResult.unknown.map((u) => `${u.number} on invoice ${u.voucherNumber}`).join(', ')}`
+            : '') +
+          (invoiceResult?.cancelled?.length
+            ? `; INVOICES FOR CANCELLED ORDERS: ${invoiceResult.cancelled.map((u) => `${u.number} on invoice ${u.voucherNumber}`).join(', ')}`
+            : '') +
+          ')'
+        : '') +
       (parsed.length > items.length
         ? `; skipped ${parsed.length - items.length} outside Semi Finished/Finished groups`
         : '') +
@@ -230,6 +261,7 @@ const syncStock = asyncHandler(async (req, res) => {
     `${items.length} stock items`,
     vendors.length ? `${vendors.length} vendors` : '',
     customers.length ? `${customers.length} customers` : '',
+    invoices.length ? `${invoices.length} invoices (${invoiceResult?.matched || 0} matched)` : '',
   ]
     .filter(Boolean)
     .join(', ');
@@ -245,6 +277,8 @@ const syncStock = asyncHandler(async (req, res) => {
       itemCount: items.length,
       vendorCount: vendors.length,
       customerCount: customers.length,
+      invoiceCount: invoices.length,
+      invoices: invoiceResult,
       removedCount: removed.deletedCount || 0,
       syncedAt,
     },
@@ -490,6 +524,8 @@ const stockSummary = asyncHandler(async (_req, res) => {
         ? {
             at: lastSync.syncedAt || lastSync.createdAt,
             itemCount: lastSync.itemCount,
+            invoiceCount: lastSync.invoiceCount || 0,
+            invoicesMatched: lastSync.invoicesMatched || 0,
             source: lastSync.source,
             by: lastSync.syncedBy?.name || null,
           }

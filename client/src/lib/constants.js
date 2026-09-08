@@ -28,8 +28,8 @@ export const MODULES = {
 export const MODULE_OPTIONS = [
   { value: 'leads', label: 'Leads CRM' },
   { value: 'sales_orders', label: 'Sales Order Generation' },
-  { value: 'invoicing', label: 'Invoice Generation (coming soon)' },
-  { value: 'dispatch', label: 'Dispatch (coming soon)' },
+  { value: 'invoicing', label: 'Invoicing (Accounts)' },
+  { value: 'dispatch', label: 'Dispatch' },
 ];
 
 /** Does this user have access to a module? Admins always do. */
@@ -39,6 +39,94 @@ export const hasModule = (user, moduleName) => {
   const assigned = user.modules?.length ? user.modules : [MODULES.LEADS];
   return assigned.includes(moduleName);
 };
+
+export const hasAnyModule = (user, names) => names.some((m) => hasModule(user, m));
+
+/** The three desks that read the order pipeline. */
+export const PIPELINE_MODULES = [MODULES.SALES_ORDERS, MODULES.INVOICING, MODULES.DISPATCH];
+
+/** Sales-order pages need the module AND a role that may book orders. */
+export const canUseSalesPages = (user) =>
+  Boolean(user) &&
+  (user.role === ROLES.ADMIN || user.role === ROLES.SALES_EXEC) &&
+  hasModule(user, MODULES.SALES_ORDERS);
+
+// ---------------------------------------------------------------------------
+// Sales order pipeline (mirrors server/src/models/SalesOrder.js)
+// ---------------------------------------------------------------------------
+
+export const ORDER_STATUSES = ['open', 'confirmed', 'invoiced', 'dispatched', 'delivered', 'closed', 'cancelled'];
+
+export const ORDER_STATUS_LABELS = {
+  open: 'Open',
+  confirmed: 'Confirmed',
+  invoiced: 'Invoiced',
+  dispatched: 'Dispatched',
+  delivered: 'Delivered',
+  closed: 'Completed',
+  cancelled: 'Cancelled',
+};
+
+/** Badge classes per order status (outline badge with a coloured border). */
+export const ORDER_STATUS_STYLES = {
+  open: 'bg-amber-100 text-amber-800 border-amber-200',
+  confirmed: 'bg-sky-100 text-sky-800 border-sky-200',
+  invoiced: 'bg-violet-100 text-violet-800 border-violet-200',
+  dispatched: 'bg-indigo-100 text-indigo-800 border-indigo-200',
+  delivered: 'bg-teal-100 text-teal-800 border-teal-200',
+  closed: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+  cancelled: 'bg-red-100 text-red-700 border-red-200',
+};
+
+/**
+ * The forward path an order travels, with who moves it on at each step. The
+ * funnel and the timeline are both drawn from this list.
+ */
+export const PIPELINE_STAGES = [
+  { key: 'open', label: 'Booked', owner: 'Sales', next: 'Sales to confirm against payment', hint: 'Order created by the sales executive' },
+  { key: 'confirmed', label: 'Confirmed', owner: 'Accounts', next: 'Accounts to key the invoice in Tally', hint: 'Payment (or credit approval) in hand; order locked' },
+  { key: 'invoiced', label: 'Invoiced', owner: 'Dispatch', next: 'Dispatch to send the goods', hint: 'Tax invoice found in Tally with the order number on it' },
+  { key: 'dispatched', label: 'Dispatched', owner: 'Sales', next: 'Sales to confirm delivery with the customer', hint: 'Dispatch recorded how the goods went' },
+  { key: 'delivered', label: 'Delivered', owner: 'Sales', next: 'Sales to collect customer feedback', hint: 'Customer has the goods' },
+  { key: 'closed', label: 'Completed', owner: '', next: '', hint: 'Feedback received — order complete' },
+];
+
+/** When an order entered the stage it is in now. */
+export const ORDER_STAGE_STAMP = {
+  open: 'createdAt',
+  confirmed: 'confirmedAt',
+  invoiced: 'invoicedAt',
+  dispatched: 'dispatchedAt',
+  delivered: 'deliveredAt',
+  closed: 'closedAt',
+  cancelled: 'cancelledAt',
+};
+export const orderStageSince = (o) => (o ? o[ORDER_STAGE_STAMP[o.status]] || o.createdAt : null);
+
+/** Whole days since an instant. */
+export const daysSince = (d) => (d ? Math.max(0, Math.floor((Date.now() - new Date(d).getTime()) / 86400000)) : 0);
+
+export const PAYMENT_MODE_OPTIONS = [
+  { value: 'upi', label: 'UPI' },
+  { value: 'neft', label: 'NEFT' },
+  { value: 'rtgs', label: 'RTGS' },
+  { value: 'imps', label: 'IMPS' },
+  { value: 'cheque', label: 'Cheque' },
+  { value: 'cash', label: 'Cash' },
+  { value: 'credit', label: 'Credit (approved)' },
+  { value: 'other', label: 'Other' },
+];
+export const PAYMENT_MODE_LABELS = Object.fromEntries(PAYMENT_MODE_OPTIONS.map((o) => [o.value, o.label]));
+
+export const DISPATCH_MODE_OPTIONS = [
+  { value: 'courier', label: 'Courier' },
+  { value: 'transport', label: 'Transport (LR)' },
+  { value: 'own_vehicle', label: 'Own vehicle' },
+  { value: 'hand_delivery', label: 'Hand delivery' },
+  { value: 'customer_pickup', label: 'Customer pickup' },
+  { value: 'other', label: 'Other' },
+];
+export const DISPATCH_MODE_LABELS = Object.fromEntries(DISPATCH_MODE_OPTIONS.map((o) => [o.value, o.label]));
 
 export const LEAD_STATUSES = ['new', 'kit_selected', 'rates_confirmed', 'generated', 'delivered'];
 
