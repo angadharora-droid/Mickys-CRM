@@ -263,7 +263,7 @@ async function recomputeAllScores() {
     const card = buildScoreCard(l, ordersByLead.get(String(l._id)) || [], config);
     if (card.total !== (l.score || 0)) {
       ops.push({
-        updateOne: { filter: { _id: l._id }, update: { $set: { score: card.total, scoreUpdatedAt: new Date() } } },
+        updateOne: { filter: { _id: l._id }, update: { $set: { score: card.total, scoreUpdatedAt: new Date() } }, timestamps: false },
       });
     }
   }
