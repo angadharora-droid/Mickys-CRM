@@ -5,7 +5,7 @@ const StockSyncLog = require('../models/StockSyncLog');
 const TallyInvoice = require('../models/TallyInvoice');
 const { linkInvoiceManually, announce, paymentLabel } = require('../services/orderPipeline.service');
 const { dayRangeContext, buildWorkbook } = require('../services/report.service');
-const { SALES_VOUCHER_TYPE } = require('../services/tallyStock.service');
+const { SALES_VOUCHER_TYPE, TDL_VERSION } = require('../services/tallyStock.service');
 const { withDocumentRefs, populatePipeline } = require('./salesOrder.controller');
 const { getPagination, buildMeta } = require('../utils/pagination');
 const { logActivity } = require('../services/activity.service');
@@ -56,7 +56,9 @@ const listQueue = asyncHandler(async (req, res) => {
     Promise.all(
       Object.entries(STAGES).map(async ([key, def]) => [key, await SalesOrder.countDocuments(def.filter)])
     ),
-    StockSyncLog.findOne().sort({ createdAt: -1 }).select('syncedAt invoiceCount invoicesMatched ordersInvoiced source'),
+    StockSyncLog.findOne()
+      .sort({ createdAt: -1 })
+      .select('syncedAt invoiceCount invoicesMatched invoicesWithBasic ordersInvoiced tdlVersion source'),
   ]);
 
   res.json({
@@ -73,7 +75,11 @@ const listQueue = asyncHandler(async (req, res) => {
             at: lastSync.syncedAt || lastSync.createdAt,
             invoiceCount: lastSync.invoiceCount || 0,
             invoicesMatched: lastSync.invoicesMatched || 0,
+            invoicesWithBasic: lastSync.invoicesWithBasic || 0,
             ordersInvoiced: lastSync.ordersInvoiced || [],
+            tdlVersion: lastSync.tdlVersion || '',
+            tdlCurrent: (lastSync.tdlVersion || '') === TDL_VERSION,
+            tdlLatest: TDL_VERSION,
             source: lastSync.source,
           }
         : null,
@@ -217,6 +223,8 @@ async function registerTotals(filter) {
         withLedger: { $sum: { $cond: [{ $gt: ['$salesLedgerValue', 0] }, 1, 0] } },
         withItem: { $sum: { $cond: [{ $gt: ['$itemValue', 0] }, 1, 0] } },
         withTax: { $sum: { $cond: [{ $gt: ['$tax', 0] }, 1, 0] } },
+        withEntries: { $sum: { $cond: [{ $gt: [{ $size: { $ifNull: ['$ledgerEntries', []] } }, 0] }, 1, 0] } },
+        withEntryBasic: { $sum: { $cond: [{ $gt: ['$entryBasic', 0] }, 1, 0] } },
         lastSeenAt: { $max: '$lastSeenAt' },
       },
     },
@@ -234,7 +242,10 @@ async function registerTotals(filter) {
       withLedger: t?.withLedger || 0,
       withItem: t?.withItem || 0,
       withTax: t?.withTax || 0,
+      withEntries: t?.withEntries || 0,
+      withEntryBasic: t?.withEntryBasic || 0,
       lastSeenAt: t?.lastSeenAt || null,
+      tdlLatest: TDL_VERSION,
     },
   };
 }
@@ -254,6 +265,9 @@ const registerRow = (i) => ({
   salesLedgerValue: round2(i.salesLedgerValue),
   itemValue: round2(i.itemValue),
   tax: round2(i.tax),
+  entryBasic: round2(i.entryBasic),
+  entryTax: round2(i.entryTax),
+  ledgerEntries: (i.ledgerEntries || []).map((e) => ({ name: e.name, group: e.group || e.primaryGroup || '', amount: round2(e.amount) })),
   orders: (i.orders || []).map((o) => ({
     _id: o._id,
     number: o.number,

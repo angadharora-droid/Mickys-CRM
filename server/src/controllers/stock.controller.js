@@ -15,8 +15,10 @@ const {
   parseTallyCustomers,
   parseTallyCompany,
   parseTallyInvoices,
+  parseTallyTdlVersion,
   isSalesVoucher,
   SALES_VOUCHER_TYPE,
+  TDL_VERSION,
 } = require('../services/tallyStock.service');
 const { matchInvoices } = require('../services/orderPipeline.service');
 const TallyInvoice = require('../models/TallyInvoice');
@@ -213,6 +215,11 @@ const syncStock = asyncHandler(async (req, res) => {
   const allVouchers = parseTallyInvoices(xml);
   const invoices = allVouchers.filter(isSalesVoucher);
   const otherTypes = [...new Set(allVouchers.filter((v) => !isSalesVoucher(v)).map((v) => v.voucherType || '(blank)'))];
+  const invoicesWithBasic = invoices.filter((v) => v.basicValue > 0).length;
+  // Which copy of the TDL made this push. A copy older than the version tag
+  // says nothing at all, which reads as "outdated" — correctly.
+  const tdlVersion = parseTallyTdlVersion(xml);
+  const tdlCurrent = tdlVersion === TDL_VERSION;
   let invoiceResult = null;
   if (invoices.length) {
     try {
@@ -236,7 +243,9 @@ const syncStock = asyncHandler(async (req, res) => {
     customerCount: customers.length,
     invoiceCount: invoices.length,
     invoicesMatched: invoiceResult?.matched || 0,
+    invoicesWithBasic,
     ordersInvoiced: invoiceResult?.advanced || [],
+    tdlVersion,
     source: req.tallyPush ? 'push' : 'upload',
     syncedBy: req.user?._id,
   });
@@ -247,7 +256,8 @@ const syncStock = asyncHandler(async (req, res) => {
     entity: 'StockItem',
     entityId: log._id,
     details:
-      `Synced ${items.length} stock items from Tally (${req.tallyPush ? 'Tally push' : 'manual upload'})` +
+      `Synced ${items.length} stock items from Tally (${req.tallyPush ? 'Tally push' : 'manual upload'}` +
+      `; TDL ${tdlVersion ? `v${tdlVersion}` : 'pre-v4'}${tdlCurrent ? '' : ` — OUTDATED, current is v${TDL_VERSION}`})` +
       (vendors.length ? `, ${vendors.length} vendors` : '') +
       (customers.length ? `, ${customers.length} customers` : '') +
       (otherTypes.length
@@ -255,7 +265,7 @@ const syncStock = asyncHandler(async (req, res) => {
         : '') +
       (purged.deletedCount ? `; removed ${purged.deletedCount} earlier non-sales voucher(s) from the register` : '') +
       (invoices.length
-        ? `, ${invoices.length} sales invoices (${invoiceResult?.matched || 0} matched to orders` +
+        ? `, ${invoices.length} sales invoices (${invoiceResult?.matched || 0} matched to orders; basic value on ${invoicesWithBasic}` +
           (invoiceResult?.advanced?.length ? `; moved to invoiced: ${invoiceResult.advanced.join(', ')}` : '') +
           (invoiceResult?.unknown?.length
             ? `; unknown order numbers: ${invoiceResult.unknown.map((u) => `${u.number} on invoice ${u.voucherNumber}`).join(', ')}`
@@ -281,24 +291,34 @@ const syncStock = asyncHandler(async (req, res) => {
     `${items.length} stock items`,
     vendors.length ? `${vendors.length} vendors` : '',
     customers.length ? `${customers.length} customers` : '',
-    invoices.length ? `${invoices.length} invoices (${invoiceResult?.matched || 0} matched)` : '',
+    invoices.length
+      ? `${invoices.length} invoices (${invoiceResult?.matched || 0} matched, basic value on ${invoicesWithBasic})`
+      : '',
   ]
     .filter(Boolean)
     .join(', ');
+  // The reply Tally shows after Ctrl+F10 — the one place the person at the
+  // Tally machine can read, so it says outright when the loaded copy is old.
+  const tdlNote = tdlCurrent
+    ? ` [TDL v${TDL_VERSION}]`
+    : ` [OLD TDL ${tdlVersion ? `v${tdlVersion}` : ''} loaded - download v${TDL_VERSION} from the CRM, replace the file and restart Tally]`;
   if (req.tallyPush) {
     return res
       .type('text/xml')
-      .send(`<RESPONSE><STATUS>1</STATUS><MESSAGE>Synced ${summary} to Mickys CRM</MESSAGE></RESPONSE>`);
+      .send(`<RESPONSE><STATUS>1</STATUS><MESSAGE>Synced ${summary} to Mickys CRM${tdlNote}</MESSAGE></RESPONSE>`);
   }
   res.json({
     success: true,
-    message: `Synced ${summary}`,
+    message: `Synced ${summary}${tdlNote}`,
     data: {
       itemCount: items.length,
       vendorCount: vendors.length,
       customerCount: customers.length,
       invoiceCount: invoices.length,
+      invoicesWithBasic,
       invoices: invoiceResult,
+      tdlVersion,
+      tdlCurrent,
       removedCount: removed.deletedCount || 0,
       syncedAt,
     },
@@ -407,7 +427,9 @@ const serveTdl = asyncHandler(async (req, res) => {
     throw ApiError.badRequest('TALLY_SYNC_KEY is not configured on the server');
   }
   const template = await fs.promises.readFile(TDL_TEMPLATE_PATH, 'utf8');
-  const body = template.replace(/\{\{TALLY_SYNC_KEY\}\}/g, env.tallySyncKey);
+  const body = template
+    .replace(/\{\{TALLY_SYNC_KEY\}\}/g, env.tallySyncKey)
+    .replace(/\{\{TDL_VERSION\}\}/g, TDL_VERSION);
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   res.setHeader('Content-Disposition', 'inline; filename="mickys-stock.tdl"');
   res.send(body);
@@ -546,6 +568,10 @@ const stockSummary = asyncHandler(async (_req, res) => {
             itemCount: lastSync.itemCount,
             invoiceCount: lastSync.invoiceCount || 0,
             invoicesMatched: lastSync.invoicesMatched || 0,
+            invoicesWithBasic: lastSync.invoicesWithBasic || 0,
+            tdlVersion: lastSync.tdlVersion || '',
+            tdlCurrent: (lastSync.tdlVersion || '') === TDL_VERSION,
+            tdlLatest: TDL_VERSION,
             source: lastSync.source,
             by: lastSync.syncedBy?.name || null,
           }

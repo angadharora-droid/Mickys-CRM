@@ -148,12 +148,20 @@ Two ways, both hitting `POST /api/stock/sync` on the backend:
 > monthly target set under Sales Orders → Settings. Revenue is the voucher's
 > **basic value before GST** (the sales register's "Basic Value" / "Sales
 > A/c" column). Because TallyPrime releases differ in which method they
-> evaluate, the TDL sends it three ways — `BASICVALUE` (Sales Accounts
-> ledger total), `ITEMVALUE` (item-line total) and `TAX` (Duties & Taxes
-> total, so basic = amount − tax) — and the backend keeps whichever arrives
-> (the lower of the first two where both do). The billed total with GST
-> (`AMOUNT`) is shown beside it. If none arrives the register and the
-> report fall back to the billed total and mark the row with `*`.
+> evaluate, the TDL sends it several ways — `BASICVALUE` (Sales Accounts
+> ledger total), `ITEMVALUE` (item-line total), `TAX` (Duties & Taxes
+> total, so basic = amount − tax) and the voucher's ledger entries
+> themselves as nested `<LEDGERENTRY>` elements (name, group, amount) which
+> the backend sums on its own — and it keeps whichever arrives (the lowest
+> where several do). The billed total with GST (`AMOUNT`) is shown beside
+> it. If none arrives the register and the report fall back to the billed
+> total and mark the row with `*`.
+>
+> **TDL version check.** The served file carries `<TDLVERSION>` (currently
+> v4) in every push. The reply Tally shows after Ctrl+F10 ends with
+> `[TDL v4]` when the loaded copy is current, or `[OLD TDL … loaded - download
+> v4 …]` when it is not; the Invoicing page's "Last Tally push" card says the
+> same. Whenever the register shows billed totals with `*`, check this first.
 >
 > If a push arrives with stock but **zero invoices**, the Tally machine is
 > still running the old TDL — re-download it from the URL and replace the

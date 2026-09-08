@@ -201,7 +201,9 @@ export default function Invoicing() {
 
   const counts = meta?.counts || {};
   const lastSync = meta?.lastSync;
-  const tdlStale = lastSync && lastSync.invoiceCount === 0;
+  // A push that carried no invoices, or one from a TDL copy older than the
+  // current template, both mean the Tally machine needs the new file.
+  const tdlStale = lastSync && (lastSync.invoiceCount === 0 || lastSync.tdlCurrent === false);
 
   return (
     <div>
@@ -232,9 +234,11 @@ export default function Invoicing() {
           hint={
             !lastSync
               ? 'No sync yet'
-              : tdlStale
-                ? 'Carried no invoices — the Tally machine is on the old TDL'
-                : `${lastSync.invoiceCount} invoice${lastSync.invoiceCount === 1 ? '' : 's'} carried · ${lastSync.invoicesMatched} matched to orders`
+              : lastSync.tdlCurrent === false
+                ? `Tally is running TDL ${lastSync.tdlVersion ? `v${lastSync.tdlVersion}` : 'older than v4'} — current is v${lastSync.tdlLatest}. Re-download, replace, restart Tally.`
+                : lastSync.invoiceCount === 0
+                  ? 'Carried no invoices — the Tally machine is on the old TDL'
+                  : `TDL v${lastSync.tdlVersion} · ${lastSync.invoiceCount} invoice${lastSync.invoiceCount === 1 ? '' : 's'} carried · ${lastSync.invoicesMatched} matched · basic value on ${lastSync.invoicesWithBasic}`
           }
           icon={tdlStale ? AlertTriangle : Banknote}
           tone={tdlStale ? 'danger' : 'primary'}

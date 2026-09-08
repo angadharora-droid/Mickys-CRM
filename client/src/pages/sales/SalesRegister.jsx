@@ -223,6 +223,7 @@ export default function SalesRegister() {
                           className="text-right tabular-nums font-semibold"
                           title={
                             `Tally sent — sales ledgers: ${formatCurrency(r.salesLedgerValue)} · item lines: ${formatCurrency(r.itemValue)} · GST: ${formatCurrency(r.tax)}` +
+                            ` · ledger entries: ${r.ledgerEntries?.length ? r.ledgerEntries.map((e) => `${e.name}${e.group ? ` [${e.group}]` : ''} ${formatCurrency(e.amount)}`).join('; ') : 'none'}` +
                             (r.basicValueKnown ? '' : ' — none usable, so the billed total is shown')
                           }
                         >
@@ -272,11 +273,11 @@ export default function SalesRegister() {
                   * {totals.count - totals.basis.withBasic} of {totals.count} invoices arrived without a usable basic value, so their billed total is shown.
                 </p>
                 <p className="mt-1">
-                  Of the three figures the TDL sends, Tally delivered the sales-ledger figure on {totals.basis.withLedger}, the item-line figure on{' '}
-                  {totals.basis.withItem} and the GST figure on {totals.basis.withTax} of them
+                  Of the figures the TDL sends, Tally delivered the sales-ledger total on {totals.basis.withLedger}, the item-line total on{' '}
+                  {totals.basis.withItem}, the GST total on {totals.basis.withTax}, and the ledger entries themselves on {totals.basis.withEntries} of them
                   {totals.basis.lastSeenAt ? ` (last push ${formatDateTime(totals.basis.lastSeenAt)})` : ''}.
-                  {totals.basis.withLedger + totals.basis.withItem + totals.basis.withTax === 0
-                    ? ' None arriving means the Tally machine is still running a TDL without these fields — re-download it from the TDL URL, replace the file and restart Tally.'
+                  {totals.basis.withLedger + totals.basis.withItem + totals.basis.withTax + totals.basis.withEntries === 0
+                    ? ` None arriving means the Tally machine is still running a TDL without these fields — the Invoicing page shows which TDL version the last push came from (current is v${totals.basis.tdlLatest}). Re-download it from the TDL URL, replace the file and restart Tally.`
                     : ''}
                 </p>
               </div>
