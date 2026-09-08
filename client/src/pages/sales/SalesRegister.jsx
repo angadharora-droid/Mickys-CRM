@@ -219,7 +219,13 @@ export default function SalesRegister() {
                         <TableCell className="hidden md:table-cell text-sm">{r.voucherType || '—'}</TableCell>
                         <TableCell className="whitespace-nowrap text-sm">{r.voucherNumber || '—'}</TableCell>
                         <TableCell className="hidden lg:table-cell text-sm text-muted-foreground">{r.reference || '—'}</TableCell>
-                        <TableCell className="text-right tabular-nums font-semibold" title={r.basicValueKnown ? 'Sales A/c amount' : 'Billed total — this voucher carried no basic value'}>
+                        <TableCell
+                          className="text-right tabular-nums font-semibold"
+                          title={
+                            `Tally sent — sales ledgers: ${formatCurrency(r.salesLedgerValue)} · item lines: ${formatCurrency(r.itemValue)} · GST: ${formatCurrency(r.tax)}` +
+                            (r.basicValueKnown ? '' : ' — none usable, so the billed total is shown')
+                          }
+                        >
                           {formatCurrency(r.basicValue)}{!r.basicValueKnown && <span className="text-muted-foreground">*</span>}
                         </TableCell>
                         <TableCell className="text-right tabular-nums hidden sm:table-cell text-muted-foreground">
@@ -260,10 +266,20 @@ export default function SalesRegister() {
                 )}
               </Table>
             </div>
-            {!anyBasic && rows.length > 0 && (
-              <p className="px-4 py-2 text-xs text-muted-foreground">
-                * These vouchers arrived without a basic value (older TDL), so the billed total is shown in its place.
-              </p>
+            {totals?.basis && totals.basis.withBasic < totals.count && (
+              <div className="mx-4 my-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+                <p className="font-medium">
+                  * {totals.count - totals.basis.withBasic} of {totals.count} invoices arrived without a usable basic value, so their billed total is shown.
+                </p>
+                <p className="mt-1">
+                  Of the three figures the TDL sends, Tally delivered the sales-ledger figure on {totals.basis.withLedger}, the item-line figure on{' '}
+                  {totals.basis.withItem} and the GST figure on {totals.basis.withTax} of them
+                  {totals.basis.lastSeenAt ? ` (last push ${formatDateTime(totals.basis.lastSeenAt)})` : ''}.
+                  {totals.basis.withLedger + totals.basis.withItem + totals.basis.withTax === 0
+                    ? ' None arriving means the Tally machine is still running a TDL without these fields — re-download it from the TDL URL, replace the file and restart Tally.'
+                    : ''}
+                </p>
+              </div>
             )}
             <Pagination meta={meta} onPageChange={setPage} />
           </>
@@ -272,8 +288,10 @@ export default function SalesRegister() {
 
       {meta?.range && rows.length > 0 && (
         <p className="mt-3 text-xs text-muted-foreground">
-          Totals cover every invoice in the window, not just this page. Last push seen at{' '}
-          {formatDateTime(rows.reduce((m, r) => (r.lastSeenAt > m ? r.lastSeenAt : m), rows[0].lastSeenAt))}.
+          Totals cover every invoice in the window, not just this page.
+          {anyBasic ? ' Basic value is the Sales A/c amount as Tally sent it.' : ''}
+          {totals?.basis?.lastSeenAt ? ` Last push ${formatDateTime(totals.basis.lastSeenAt)}.` : ''}
+          {' '}Hover a basic value to see the figures Tally sent for that invoice.
         </p>
       )}
 

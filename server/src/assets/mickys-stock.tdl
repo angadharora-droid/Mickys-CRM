@@ -396,11 +396,15 @@
     Set as : $$FilterAmtTotal:AllLedgerEntries:MickysIsTaxLedger:Amount
     XMLTag : "TAX"
 
+;; The ledger and item sub-entries must be fetched too: the basic-value and
+;; tax totals above are summed over them, and a voucher collection with an
+;; explicit Fetch list carries only what it names.
 [Collection: MickysSalesInvoices]
     Type   : Voucher
     Filter : MickysIsSalesVch
     Fetch  : Date, VoucherNumber, VoucherTypeName, PartyLedgerName
     Fetch  : Reference, Narration, Amount, GUID, IsCancelled, IsOptional
+    Fetch  : AllLedgerEntries.*, AllInventoryEntries.*
 
 [System: Formula]
     MickysInvoiceFrom   : $$MachineDate - 60
