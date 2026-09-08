@@ -211,6 +211,13 @@ async function registerTotals(filter) {
         basicValue: { $sum: REVENUE_EXPR },
         amount: { $sum: '$amount' },
         matched: { $sum: { $cond: [{ $gt: [{ $size: { $ifNull: ['$orders', []] } }, 0] }, 1, 0] } },
+        // Which of the TDL's three basic-value figures actually arrived —
+        // the one question to answer when the register shows billed totals.
+        withBasic: { $sum: { $cond: [{ $gt: ['$basicValue', 0] }, 1, 0] } },
+        withLedger: { $sum: { $cond: [{ $gt: ['$salesLedgerValue', 0] }, 1, 0] } },
+        withItem: { $sum: { $cond: [{ $gt: ['$itemValue', 0] }, 1, 0] } },
+        withTax: { $sum: { $cond: [{ $gt: ['$tax', 0] }, 1, 0] } },
+        lastSeenAt: { $max: '$lastSeenAt' },
       },
     },
   ]);
@@ -222,6 +229,13 @@ async function registerTotals(filter) {
     // the billed total. Zero for vouchers the TDL sent without a basic value.
     other: round2((t?.amount || 0) - (t?.basicValue || 0)),
     amount: round2(t?.amount),
+    basis: {
+      withBasic: t?.withBasic || 0,
+      withLedger: t?.withLedger || 0,
+      withItem: t?.withItem || 0,
+      withTax: t?.withTax || 0,
+      lastSeenAt: t?.lastSeenAt || null,
+    },
   };
 }
 
@@ -236,6 +250,10 @@ const registerRow = (i) => ({
   basicValueKnown: Number(i.basicValue) > 0,
   gstAndRoundOff: Number(i.basicValue) > 0 ? round2(i.amount - i.basicValue) : null,
   amount: round2(i.amount),
+  // The raw figures Tally sent, for the tooltip.
+  salesLedgerValue: round2(i.salesLedgerValue),
+  itemValue: round2(i.itemValue),
+  tax: round2(i.tax),
   orders: (i.orders || []).map((o) => ({
     _id: o._id,
     number: o.number,
