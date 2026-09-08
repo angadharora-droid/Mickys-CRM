@@ -171,25 +171,64 @@ function parseTallyDate(raw) {
 }
 
 /**
- * The invoice's basic value before GST — the sales register's "Basic Value"
- * (Sales A/c) column. The TDL sends it three ways, since which one a
- * TallyPrime release evaluates correctly is not something the CRM can know:
- * the Sales Accounts ledger total, the item-line total, and the GST total
- * (from which basic = billed − GST). A candidate is trusted only when it is
- * positive and no more than the billed total; where two candidates disagree
- * the lower wins, because the known failure mode is a filter that summed too
- * much, not too little. 0 means none arrived — callers fall back to the
- * billed total and say so.
+ * The version of the TDL template in this repo. Served into the file as
+ * {{TDL_VERSION}}, sent back by every push as <TDLVERSION>, and compared on
+ * arrival — the reply Tally shows, the sync log and the Invoicing page all
+ * say whether the copy loaded on the Tally machine is the current one. Bump
+ * it whenever the template changes.
  */
-function pickBasicValue({ salesLedgerValue, itemValue, tax, amount }) {
+const TDL_VERSION = '4';
+
+const parseTallyTdlVersion = (xml) => (typeof xml === 'string' ? tagValue(xml, 'TDLVERSION') : '');
+
+/**
+ * Classifying a voucher's ledger entries without trusting any Tally total:
+ * an entry under Sales Accounts (by top-level group, group, or a ledger
+ * simply named "Sales…") is basic value; one under Duties & Taxes or named
+ * for GST is tax. The party (Sundry Debtors), round-off and discount
+ * ledgers fall in neither and are left alone.
+ */
+const isSalesEntry = (e) =>
+  /sales/i.test(e.primaryGroup || '') || /sales/i.test(e.group || '') || /^\s*sales\b/i.test(e.name || '');
+const isTaxEntry = (e) =>
+  /duties/i.test(e.primaryGroup || '') || /duties/i.test(e.group || '') || /\b(c|s|i|ut)?gst\b/i.test(e.name || '');
+
+const sumEntries = (entries, pick) =>
+  Math.round(entries.filter(pick).reduce((s, e) => s + (Number(e.amount) || 0), 0) * 100) / 100;
+
+/**
+ * The invoice's basic value before GST — the sales register's "Basic Value"
+ * (Sales A/c) column. The TDL sends it several ways, since which one a
+ * TallyPrime release evaluates correctly is not something the CRM can know:
+ * the Sales Accounts ledger total, the item-line total, the CRM's own sum of
+ * the exploded ledger entries, and the GST total (from which basic = billed −
+ * GST). A candidate is trusted only when it is positive and no more than the
+ * billed total; where candidates disagree the lower wins, because the known
+ * failure mode is a filter that summed too much, not too little. 0 means
+ * none arrived — callers fall back to the billed total and say so.
+ */
+function pickBasicValue({ salesLedgerValue, itemValue, entryBasic, tax, entryTax, amount }) {
   const billed = Number(amount) || 0;
-  const usable = [salesLedgerValue, itemValue]
+  const usable = [salesLedgerValue, itemValue, entryBasic]
     .map((v) => Number(v) || 0)
     .filter((v) => v > 0 && (billed === 0 || v <= billed + 1));
   if (usable.length) return Math.round(Math.min(...usable) * 100) / 100;
-  const gst = Number(tax) || 0;
+  const gst = Number(tax) || Number(entryTax) || 0;
   if (gst > 0 && gst < billed) return Math.round((billed - gst) * 100) / 100;
   return 0;
+}
+
+/** The <LEDGERENTRY> children of one <SALESINVOICE> block. */
+function parseLedgerEntries(block) {
+  const blocks = block.match(/<LEDGERENTRY>[\s\S]*?<\/LEDGERENTRY>/g) || [];
+  return blocks
+    .map((b) => ({
+      name: cleanName(tagValue(b, 'NAME')),
+      group: cleanName(tagValue(b, 'GROUP')),
+      primaryGroup: cleanName(tagValue(b, 'PRIMARYGROUP')),
+      amount: toAmount(tagValue(b, 'AMOUNT')),
+    }))
+    .filter((e) => e.name);
 }
 
 /**
@@ -206,22 +245,29 @@ function parseTallyInvoices(xml) {
   const seen = new Map();
 
   for (const block of blocks) {
+    // The voucher's own tags sit before its nested <LEDGERENTRY> children,
+    // whose NAME/AMOUNT tags must not be mistaken for the voucher's.
+    const head = block.split('<LEDGERENTRY>')[0];
+    const ledgerEntries = parseLedgerEntries(block);
     const inv = {
-      guid: tagValue(block, 'GUID'),
-      voucherNumber: tagValue(block, 'VOUCHERNUMBER'),
-      voucherType: cleanName(tagValue(block, 'VOUCHERTYPE')),
-      date: parseTallyDate(tagValue(block, 'DATE')),
-      party: cleanName(tagValue(block, 'PARTY')),
-      reference: tagValue(block, 'REFERENCE'),
-      orderNos: tagValue(block, 'ORDERNOS'),
-      narration: tagValue(block, 'NARRATION'),
-      // As billed (GST and round-off included), the three figures the TDL
-      // offers for the pre-GST basic value, and the one the CRM settles on
-      // (see pickBasicValue). All 0 when the TDL in use predates the fields.
-      amount: toAmount(tagValue(block, 'AMOUNT')),
-      salesLedgerValue: toAmount(tagValue(block, 'BASICVALUE')),
-      itemValue: toAmount(tagValue(block, 'ITEMVALUE')),
-      tax: toAmount(tagValue(block, 'TAX')),
+      guid: tagValue(head, 'GUID'),
+      voucherNumber: tagValue(head, 'VOUCHERNUMBER'),
+      voucherType: cleanName(tagValue(head, 'VOUCHERTYPE')),
+      date: parseTallyDate(tagValue(head, 'DATE')),
+      party: cleanName(tagValue(head, 'PARTY')),
+      reference: tagValue(head, 'REFERENCE'),
+      orderNos: tagValue(head, 'ORDERNOS'),
+      narration: tagValue(head, 'NARRATION'),
+      // As billed (GST and round-off included), the figures the TDL offers
+      // for the pre-GST basic value, and the one the CRM settles on (see
+      // pickBasicValue). All 0 when the TDL in use predates the fields.
+      amount: toAmount(tagValue(head, 'AMOUNT')),
+      salesLedgerValue: toAmount(tagValue(head, 'BASICVALUE')),
+      itemValue: toAmount(tagValue(head, 'ITEMVALUE')),
+      tax: toAmount(tagValue(head, 'TAX')),
+      ledgerEntries,
+      entryBasic: sumEntries(ledgerEntries, isSalesEntry),
+      entryTax: sumEntries(ledgerEntries, isTaxEntry),
     };
     inv.basicValue = pickBasicValue(inv);
     // A voucher with neither a number nor a GUID cannot be told apart from
@@ -247,7 +293,9 @@ module.exports = {
   parseTallyCompany,
   parseTallyInvoices,
   parseTallyDate,
+  parseTallyTdlVersion,
   pickBasicValue,
   isSalesVoucher,
   SALES_VOUCHER_TYPE,
+  TDL_VERSION,
 };

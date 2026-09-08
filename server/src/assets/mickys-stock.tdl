@@ -115,12 +115,21 @@
     Lines : MickysCompanyLine
 
 [Line: MickysCompanyLine]
-    Fields : MickysCompanyField
+    Fields : MickysCompanyField, MickysTdlVersionField
 
 [Field: MickysCompanyField]
     Type   : String
     Set as : ##SVCurrentCompany
     XMLTag : "COMPANY"
+
+;; Which version of this file produced the push - filled in by the CRM when
+;; it serves the file. The CRM's reply to a push (and its Invoicing page)
+;; says whether the loaded copy is current, so "is the new TDL actually
+;; loaded on the Tally machine?" is never a guess again.
+[Field: MickysTdlVersionField]
+    Type   : String
+    Set as : "{{TDL_VERSION}}"
+    XMLTag : "TDLVERSION"
 
 [Part: MickysStockPart]
     Lines    : MickysStockLine
@@ -321,10 +330,45 @@
     Scrolled : Vertical
 
 [Line: MickysInvoiceLine]
-    Fields : MIGuid, MIVchNo, MIVchType, MIDate, MIParty
-    Fields : MIReference, MIOrderNos, MINarration
-    Fields : MIAmount, MIBasicValue, MIItemValue, MITax
-    XMLTag : "SALESINVOICE"
+    Fields  : MIGuid, MIVchNo, MIVchType, MIDate, MIParty
+    Fields  : MIReference, MIOrderNos, MINarration
+    Fields  : MIAmount, MIBasicValue, MIItemValue, MITax
+    XMLTag  : "SALESINVOICE"
+    Explode : MickysLedgerPart : Yes
+
+;; The voucher's ledger entries, one <LEDGERENTRY> each nested inside its
+;; <SALESINVOICE>: ledger name, its group and top-level group, amount. No
+;; total functions involved, so the CRM can add up the Sales Accounts
+;; entries itself (basic value) and the Duties & Taxes entries (GST) when
+;; the summed fields above come back empty on a release.
+[Part: MickysLedgerPart]
+    Lines    : MickysLedgerLine
+    Repeat   : MickysLedgerLine : AllLedgerEntries
+    Scrolled : Vertical
+
+[Line: MickysLedgerLine]
+    Fields : MLName, MLGroup, MLPrimaryGroup, MLAmount
+    XMLTag : "LEDGERENTRY"
+
+[Field: MLName]
+    Type   : String
+    Set as : $LedgerName
+    XMLTag : "NAME"
+
+[Field: MLGroup]
+    Type   : String
+    Set as : $Parent:Ledger:$LedgerName
+    XMLTag : "GROUP"
+
+[Field: MLPrimaryGroup]
+    Type   : String
+    Set as : $_PrimaryGroup:Ledger:$LedgerName
+    XMLTag : "PRIMARYGROUP"
+
+[Field: MLAmount]
+    Type   : Amount
+    Set as : $Amount
+    XMLTag : "AMOUNT"
 
 [Field: MIGuid]
     Type   : String

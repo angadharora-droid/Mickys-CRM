@@ -23,7 +23,12 @@ const stockSyncLogSchema = new mongoose.Schema(
     // signal for the invoicing screen.
     invoiceCount: { type: Number, default: 0 },
     invoicesMatched: { type: Number, default: 0 },
+    // How many of the push's invoices carried a usable pre-GST basic value.
+    invoicesWithBasic: { type: Number, default: 0 },
     ordersInvoiced: { type: [String], default: [] },
+    // The TDL version the push declared ('' for copies older than the tag),
+    // so the Invoicing page can say whether the Tally machine is current.
+    tdlVersion: { type: String, default: '' },
     // 'upload' = XML file uploaded in the CRM; 'push' = sent by Tally itself.
     source: { type: String, enum: ['upload', 'push'], required: true },
     syncedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },

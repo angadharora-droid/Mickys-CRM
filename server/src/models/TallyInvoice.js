@@ -30,6 +30,21 @@ const tallyInvoiceSchema = new mongoose.Schema(
     salesLedgerValue: { type: Number, default: 0 },
     itemValue: { type: Number, default: 0 },
     tax: { type: Number, default: 0 },
+    // The voucher's ledger entries as Tally exploded them, and the CRM's own
+    // sums over them (Sales Accounts entries / Duties & Taxes entries).
+    ledgerEntries: {
+      type: [
+        {
+          name: { type: String, default: '' },
+          group: { type: String, default: '' },
+          primaryGroup: { type: String, default: '' },
+          amount: { type: Number, default: 0 },
+        },
+      ],
+      default: [],
+    },
+    entryBasic: { type: Number, default: 0 },
+    entryTax: { type: Number, default: 0 },
     reference: { type: String, default: '' },
     narration: { type: String, default: '' },
     orderNos: { type: String, default: '' },
