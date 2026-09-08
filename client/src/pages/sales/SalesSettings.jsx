@@ -48,6 +48,7 @@ export default function SalesSettings() {
           ...salesOrder,
           accountsEmails: emailListText(salesOrder?.accountsEmails),
           emailAccountsOnConfirm: salesOrder?.emailAccountsOnConfirm ?? false,
+          monthlyRevenueTarget: Number(salesOrder?.monthlyRevenueTarget) || 0,
         },
       });
       setSalesOrder(data.data?.salesOrder || {});
@@ -141,6 +142,39 @@ export default function SalesSettings() {
             </div>
           )}
 
+          <Button onClick={save} disabled={saving}>
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+            {saving ? 'Saving…' : 'Save settings'}
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card className="mt-4">
+        <CardHeader>
+          <CardTitle className="text-base">Daily report — revenue target</CardTitle>
+          <CardDescription>
+            The morning report email carries yesterday&rsquo;s sales invoices from Tally, the month-to-date invoiced
+            revenue, and an on-track / behind verdict against this monthly target, pro-rated to the day of the month.
+            Leave it at 0 for no verdict.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="monthlyRevenueTarget">Monthly invoiced revenue target (Rs.)</Label>
+            <Input
+              id="monthlyRevenueTarget"
+              type="number"
+              min="0"
+              inputMode="numeric"
+              placeholder="e.g. 2500000"
+              value={salesOrder.monthlyRevenueTarget ?? ''}
+              onChange={(e) => setField('monthlyRevenueTarget', e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Compared against the basic value before GST of every sales invoice the Tally push carries (the sales
+              register&rsquo;s Basic Value column), whether or not the invoice names a CRM order.
+            </p>
+          </div>
           <Button onClick={save} disabled={saving}>
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
             {saving ? 'Saving…' : 'Save settings'}

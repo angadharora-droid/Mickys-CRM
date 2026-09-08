@@ -378,6 +378,7 @@ const settingsSchema = z.object({
     .object({
       accountsEmails: accountsEmailsSchema.optional(),
       emailAccountsOnConfirm: z.boolean().optional(),
+      monthlyRevenueTarget: z.coerce.number().min(0).optional(),
     })
     .optional(),
   export: z

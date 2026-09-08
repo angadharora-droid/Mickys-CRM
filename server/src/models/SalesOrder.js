@@ -89,7 +89,8 @@ const invoiceSchema = new mongoose.Schema(
     voucherType: { type: String, default: '' },
     date: { type: Date, default: null },
     party: { type: String, default: '' },
-    amount: { type: Number, default: 0 },
+    amount: { type: Number, default: 0 }, // as billed, GST included
+    basicValue: { type: Number, default: 0 }, // before GST (Tally's "Basic Value")
     reference: { type: String, default: '' },
     narration: { type: String, default: '' },
     orderNos: { type: String, default: '' },

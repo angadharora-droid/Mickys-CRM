@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const SalesOrder = require('../models/SalesOrder');
+const TallyInvoice = require('../models/TallyInvoice');
 const User = require('../models/User');
 const { logActivity } = require('./activity.service');
 const { notifyUser } = require('./push.service');
@@ -279,6 +280,42 @@ function orderRefsOf(invoice) {
 
 const sameDay = (a, b) => (a && b ? istDateKey(a) === istDateKey(b) : !a && !b);
 
+const invoiceKey = (inv) => inv.guid || `${inv.voucherNumber}|${inv.date ? istDateKey(inv.date) : ''}`;
+
+/**
+ * Keeps a copy of every voucher the push carried, matched or not, for the
+ * daily report's revenue figures (models/TallyInvoice.js). Best effort: a
+ * mirror failure is logged and never stops the matching.
+ */
+async function mirrorInvoice(inv, refs, orderIds, syncedAt) {
+  try {
+    await TallyInvoice.updateOne(
+      { key: invoiceKey(inv) },
+      {
+        $set: {
+          guid: inv.guid || '',
+          voucherNumber: inv.voucherNumber || '',
+          voucherType: inv.voucherType || '',
+          date: inv.date || null,
+          party: inv.party || '',
+          amount: inv.amount || 0,
+          basicValue: inv.basicValue || 0,
+          reference: inv.reference || '',
+          narration: inv.narration || '',
+          orderNos: inv.orderNos || '',
+          orderNumbers: refs.map((r) => r.number),
+          orders: orderIds,
+          lastSeenAt: syncedAt,
+        },
+        $setOnInsert: { firstSeenAt: syncedAt },
+      },
+      { upsert: true }
+    );
+  } catch (err) {
+    console.error(`[pipeline] invoice mirror failed for ${inv.voucherNumber || inv.guid}: ${err.message}`);
+  }
+}
+
 /**
  * Writes the vouchers of one Tally push onto their orders and moves each
  * matched order to `invoiced` when it is still upstream of that. Idempotent
@@ -286,7 +323,8 @@ const sameDay = (a, b) => (a && b ? istDateKey(a) === istDateKey(b) : !a && !b);
  * date for exports without one) is refreshed, not duplicated, and an order
  * already past invoiced is left where it is. A voucher naming a cancelled
  * order is recorded on it and reported, never used to revive it — someone has
- * to look at that.
+ * to look at that. Every voucher, matched or not, is also mirrored for the
+ * daily revenue report.
  */
 async function matchInvoices(invoices, { syncedAt = new Date(), actor } = {}) {
   const summary = {
@@ -300,7 +338,11 @@ async function matchInvoices(invoices, { syncedAt = new Date(), actor } = {}) {
 
   for (const inv of invoices) {
     const refs = orderRefsOf(inv);
-    if (!refs.length) continue;
+    const orderIds = [];
+    if (!refs.length) {
+      await mirrorInvoice(inv, refs, orderIds, syncedAt);
+      continue;
+    }
     summary.withOrderNo += 1;
 
     for (const { number, via } of refs) {
@@ -309,6 +351,7 @@ async function matchInvoices(invoices, { syncedAt = new Date(), actor } = {}) {
         summary.unknown.push({ number, voucherNumber: inv.voucherNumber });
         continue;
       }
+      orderIds.push(order._id);
 
       const record = {
         guid: inv.guid || '',
@@ -317,6 +360,7 @@ async function matchInvoices(invoices, { syncedAt = new Date(), actor } = {}) {
         date: inv.date || null,
         party: inv.party || '',
         amount: inv.amount || 0,
+        basicValue: inv.basicValue || 0,
         reference: inv.reference || '',
         narration: inv.narration || '',
         orderNos: inv.orderNos || '',
@@ -362,6 +406,7 @@ async function matchInvoices(invoices, { syncedAt = new Date(), actor } = {}) {
         await order.save();
       }
     }
+    await mirrorInvoice(inv, refs, orderIds, syncedAt);
   }
 
   return summary;
@@ -394,6 +439,12 @@ async function linkInvoiceManually(order, { voucherNumber, date, amount, note },
     order.invoicedAt = date || new Date();
   }
   await order.save();
+  // If the push has already mirrored this voucher, point it at the order too,
+  // so the daily report can name the order beside the invoice.
+  await TallyInvoice.updateOne(
+    { voucherNumber },
+    { $addToSet: { orders: order._id, orderNumbers: order.number } }
+  ).catch((err) => console.error(`[pipeline] could not link mirrored invoice ${voucherNumber}: ${err.message}`));
   return from;
 }
 

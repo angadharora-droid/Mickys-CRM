@@ -183,7 +183,11 @@ function parseTallyInvoices(xml) {
       reference: tagValue(block, 'REFERENCE'),
       orderNos: tagValue(block, 'ORDERNOS'),
       narration: tagValue(block, 'NARRATION'),
+      // As billed (GST and round-off included) and the pre-GST basic value —
+      // the sales register's "Basic Value", which is what revenue is reported
+      // on. 0 when the TDL in use predates the field.
       amount: toAmount(tagValue(block, 'AMOUNT')),
+      basicValue: toAmount(tagValue(block, 'BASICVALUE')),
     };
     // A voucher with neither a number nor a GUID cannot be told apart from
     // the next one and is dropped.
