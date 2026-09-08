@@ -109,12 +109,15 @@ const env = {
     intervalHours: parseInt(process.env.FX_SYNC_INTERVAL_HOURS || '24', 10),
     apiUrl: process.env.FX_API_URL || 'https://open.er-api.com/v6/latest/INR',
   },
-  // Daily activity digest emailed every morning with yesterday's numbers
-  // (IST). On by default; set DAILY_REPORT_ENABLED=false to turn it off.
+  // Daily digest emailed with yesterday's sales, leads and visits (IST).
+  // DAILY_REPORT_ENABLED=false is the deploy-level kill switch; the send
+  // time and recipients below are only the defaults — an admin sets the
+  // real ones in the app (Sales Orders → Settings → Daily report), stored on
+  // Setting.dailyReport. Default send time is 12:00 noon IST.
   dailyReport: {
     enabled: process.env.DAILY_REPORT_ENABLED !== 'false',
     to: process.env.DAILY_REPORT_TO || 'report@cpgh.in',
-    hourIst: parseInt(process.env.DAILY_REPORT_HOUR_IST || '8', 10),
+    hourIst: parseInt(process.env.DAILY_REPORT_HOUR_IST || '12', 10),
     minuteIst: parseInt(process.env.DAILY_REPORT_MINUTE_IST || '0', 10),
   },
 };

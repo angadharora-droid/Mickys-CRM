@@ -4,19 +4,47 @@ const { sendMail } = require('../services/email.service');
 const { logActivity } = require('../services/activity.service');
 const ApiError = require('../utils/ApiError');
 const { parseSheetUrl, syncMetaLeads } = require('../services/metaSync.service');
+const { resolveSchedule, rescheduleDailyReport } = require('../services/dailyReport.service');
+
+const pad2 = (n) => String(n).padStart(2, '0');
+
+/**
+ * The daily report's schedule as it will actually run — the saved values
+ * with the environment filling the blanks — so the settings screen can say
+ * "currently 12:00 to report@…" beside fields that may be empty.
+ */
+async function withReportSchedule(obj) {
+  try {
+    const s = await resolveSchedule();
+    obj.dailyReport = {
+      ...(obj.dailyReport || {}),
+      effective: {
+        enabled: s.enabled,
+        envEnabled: s.envEnabled,
+        to: s.to,
+        hourIst: s.hourIst,
+        minuteIst: s.minuteIst,
+        time: `${pad2(s.hourIst)}:${pad2(s.minuteIst)}`,
+      },
+    };
+  } catch (err) {
+    console.error(`[settings] could not resolve the daily report schedule: ${err.message}`);
+  }
+  return obj;
+}
 
 // GET /api/settings
 const getSettings = asyncHandler(async (_req, res) => {
   const settings = await Setting.getGlobal();
   const obj = settings.toObject();
   if (obj.email?.pass) obj.email.pass = '********'; // never expose the SMTP password
-  res.json({ success: true, data: obj });
+  res.json({ success: true, data: await withReportSchedule(obj) });
 });
 
 // PUT /api/settings
 const updateSettings = asyncHandler(async (req, res) => {
   const settings = await Setting.getGlobal();
-  const { email, company, kit, salesOrder, export: exportCfg } = req.body;
+  const { email, company, kit, salesOrder, dailyReport, export: exportCfg } = req.body;
 
   if (email) {
     // Keep the stored password when the client sends back the mask
@@ -26,6 +54,9 @@ const updateSettings = asyncHandler(async (req, res) => {
   if (company) settings.company = { ...settings.company.toObject(), ...company };
   if (kit) settings.kit = { ...settings.kit.toObject(), ...kit };
   if (salesOrder) settings.salesOrder = { ...settings.salesOrder.toObject(), ...salesOrder };
+  // lastSentDay is the mailer's own bookkeeping and rides through the merge
+  // untouched — the schema strips it if a client ever sends it.
+  if (dailyReport) settings.dailyReport = { ...settings.dailyReport.toObject(), ...dailyReport };
   if (exportCfg) {
     // Containers merge per size so a partial edit doesn't wipe the other fields.
     const current = settings.export.toObject();
@@ -40,14 +71,27 @@ const updateSettings = asyncHandler(async (req, res) => {
   }
   await settings.save();
 
+  // A new send time takes effect at once — the pending timer is re-armed
+  // from the saved settings, no restart needed.
+  if (dailyReport) {
+    await rescheduleDailyReport().catch((err) =>
+      console.error(`[settings] daily report reschedule failed: ${err.message}`)
+    );
+  }
+
   await logActivity({
     userId: req.user._id, action: 'SETTINGS_UPDATED', entity: 'Setting', entityId: settings._id,
-    details: 'Updated system settings', ip: req.ip,
+    details:
+      'Updated system settings' +
+      (dailyReport
+        ? ` — daily report ${dailyReport.enabled === false ? 'switched off' : `at ${pad2(settings.dailyReport.hourIst ?? '--')}:${pad2(settings.dailyReport.minuteIst ?? '--')} IST`}`
+        : ''),
+    ip: req.ip,
   });
 
   const obj = settings.toObject();
   if (obj.email?.pass) obj.email.pass = '********';
-  res.json({ success: true, data: obj });
+  res.json({ success: true, data: await withReportSchedule(obj) });
 });
 
 // POST /api/settings/test-email — sends a test message to the current admin

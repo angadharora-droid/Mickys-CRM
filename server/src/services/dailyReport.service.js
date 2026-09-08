@@ -10,9 +10,12 @@
  * poller and FX refresher — and records the last-sent day in Settings so a
  * Railway redeploy can neither skip a day nor send it twice.
  *
- * Configure with DAILY_REPORT_ENABLED / DAILY_REPORT_TO /
- * DAILY_REPORT_HOUR_IST / DAILY_REPORT_MINUTE_IST; admins can also fire it by
- * hand via POST /api/reports/daily-email.
+ * The send time and recipients are set by an admin in the app
+ * (Setting.dailyReport, edited under Sales Orders → Settings); the
+ * DAILY_REPORT_* environment variables are the defaults behind a blank
+ * setting, and DAILY_REPORT_ENABLED=false is the deploy-level kill switch.
+ * Admins can also fire a day's report by hand via POST
+ * /api/reports/daily-email (the "Send now" button).
  */
 const env = require('../config/env');
 const Lead = require('../models/Lead');
@@ -526,11 +529,34 @@ function renderDigestHtml(d) {
   </div>`;
 }
 
+// --------------------------------------------------------------- schedule ----
+
+/**
+ * The schedule in force: what the admin saved in Settings, with the
+ * environment filling any blank. `enabled` needs both — the environment
+ * switch is the deploy-level override, the setting is the everyday one.
+ */
+async function resolveSchedule() {
+  const settings = await Setting.getGlobal();
+  const s = settings.dailyReport || {};
+  const to = (s.to || []).filter(Boolean);
+  return {
+    enabled: env.dailyReport.enabled && s.enabled !== false,
+    envEnabled: env.dailyReport.enabled,
+    to: to.length ? to : [env.dailyReport.to].filter(Boolean),
+    hourIst: s.hourIst ?? env.dailyReport.hourIst,
+    minuteIst: s.minuteIst ?? env.dailyReport.minuteIst,
+    lastSentDay: s.lastSentDay || '',
+  };
+}
+
+const hhmm = (h, m) => `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+
 // ----------------------------------------------------------------- sender ----
 
 /**
  * Builds and emails the digest for one IST day (defaults: yesterday, to the
- * configured report inbox). Returns the send result plus the day's counts.
+ * configured recipients). Returns the send result plus the day's counts.
  */
 async function sendDailyReport({ dayKey, to } = {}) {
   const day = dayKey || yesterdayKey();
@@ -540,7 +566,7 @@ async function sendDailyReport({ dayKey, to } = {}) {
   }
 
   const digest = await buildDailyDigest(day);
-  const recipient = to || env.dailyReport.to;
+  const recipient = to || (await resolveSchedule()).to;
   const result = await sendMail({
     to: recipient,
     subject: `Micky's CRM Daily Report — ${shortDay(day)}`,
@@ -561,7 +587,7 @@ async function sendDailyReport({ dayKey, to } = {}) {
   return {
     ...result,
     day,
-    to: recipient,
+    to: [].concat(recipient).join(', '),
     counts: {
       newLeads: digest.newLeads.length,
       visits: digest.visits.length,
@@ -586,8 +612,9 @@ async function runScheduledSend() {
   running = true;
   try {
     const day = yesterdayKey();
-    const settings = await Setting.getGlobal();
-    if ((settings.dailyReport?.lastSentDay || '') >= day) return; // already sent
+    const schedule = await resolveSchedule();
+    if (!schedule.enabled) return; // switched off in Settings
+    if (schedule.lastSentDay >= day) return; // already sent
 
     const result = await sendDailyReport({});
     if (result.skipped) {
@@ -617,35 +644,72 @@ function msUntilNextRun(hour, minute) {
   return wait;
 }
 
-function scheduleNext(hour, minute) {
+/**
+ * Arms the timer for the next send at the time currently in Settings. The
+ * time is re-read on every arm, so a change saved in the app takes effect
+ * without a restart (rescheduleDailyReport re-arms at once). A settings read
+ * that fails leaves the timer on the environment default rather than dead.
+ */
+async function scheduleNext() {
+  let hour = env.dailyReport.hourIst;
+  let minute = env.dailyReport.minuteIst;
+  try {
+    ({ hourIst: hour, minuteIst: minute } = await resolveSchedule());
+  } catch (err) {
+    console.error(`[daily-report] could not read schedule, using ${hhmm(hour, minute)} IST: ${err.message}`);
+  }
+  if (timer) clearTimeout(timer);
   timer = setTimeout(async () => {
     await runScheduledSend();
-    scheduleNext(hour, minute);
+    scheduleNext();
   }, msUntilNextRun(hour, minute));
   timer.unref(); // never hold the process open on its own
+  return { hour, minute };
+}
+
+/** Called after an admin saves a new time — the pending timer is replaced. */
+async function rescheduleDailyReport() {
+  if (!env.dailyReport.enabled) return null;
+  const { hour, minute } = await scheduleNext();
+  const schedule = await resolveSchedule();
+  console.log(
+    `[daily-report] rescheduled: ${schedule.enabled ? `daily at ${hhmm(hour, minute)} IST to ${schedule.to.join(', ')}` : 'switched off in Settings'}`
+  );
+  // A time moved to earlier today must not skip today: if it is already past
+  // and yesterday's digest has not gone, send it now.
+  const sinceIstMidnight = (Date.now() + IST_OFFSET_MS) % DAY_MS;
+  if (schedule.enabled && sinceIstMidnight >= (hour * 60 + minute) * 60000) runScheduledSend();
+  return schedule;
 }
 
 /**
  * Start the in-process daily mailer. Disable with DAILY_REPORT_ENABLED=false.
  */
 function startDailyReport() {
-  const { enabled, to, hourIst, minuteIst } = env.dailyReport;
-  if (!enabled) {
+  if (!env.dailyReport.enabled) {
     console.log('[daily-report] disabled (DAILY_REPORT_ENABLED=false)');
     return null;
   }
 
-  const at = `${String(hourIst).padStart(2, '0')}:${String(minuteIst).padStart(2, '0')}`;
-  console.log(`[daily-report] mailing yesterday's digest to ${to} daily at ${at} IST`);
-
   // Boot catch-up: a redeploy that overlapped today's send window must not
   // swallow the day — if we're past send time and it hasn't gone out, send now.
-  setTimeout(() => {
-    const sinceIstMidnight = (Date.now() + IST_OFFSET_MS) % DAY_MS;
-    if (sinceIstMidnight >= (hourIst * 60 + minuteIst) * 60000) runScheduledSend();
+  setTimeout(async () => {
+    try {
+      const { hourIst, minuteIst } = await resolveSchedule();
+      const sinceIstMidnight = (Date.now() + IST_OFFSET_MS) % DAY_MS;
+      if (sinceIstMidnight >= (hourIst * 60 + minuteIst) * 60000) runScheduledSend();
+    } catch (err) {
+      console.error(`[daily-report] boot catch-up skipped: ${err.message}`);
+    }
   }, 20_000).unref();
 
-  scheduleNext(hourIst, minuteIst);
+  scheduleNext().then(async ({ hour, minute }) => {
+    const schedule = await resolveSchedule().catch(() => null);
+    console.log(
+      `[daily-report] mailing yesterday's digest daily at ${hhmm(hour, minute)} IST` +
+        (schedule ? ` to ${schedule.to.join(', ')}${schedule.enabled ? '' : ' (currently switched off in Settings)'}` : '')
+    );
+  });
   return timer;
 }
 
@@ -658,6 +722,8 @@ module.exports = {
   buildDailyDigest,
   renderDigestHtml,
   sendDailyReport,
+  resolveSchedule,
+  rescheduleDailyReport,
   startDailyReport,
   stopDailyReport,
   yesterdayKey,

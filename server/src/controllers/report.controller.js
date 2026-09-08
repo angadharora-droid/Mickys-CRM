@@ -79,7 +79,11 @@ const sendDailyEmail = asyncHandler(async (req, res) => {
     userId: req.user._id, action: 'DAILY_REPORT_SENT', entity: 'Report',
     details: `Sent daily report for ${result.day} to ${result.to}`, ip: req.ip,
   });
-  res.json({ success: true, data: { day: result.day, to: result.to, counts: result.counts } });
+  res.json({
+    success: true,
+    message: `Daily report for ${result.day} sent to ${result.to}`,
+    data: { day: result.day, to: result.to, counts: result.counts },
+  });
 });
 
 module.exports = { listReports, getReport, exportAll, sendDailyEmail };

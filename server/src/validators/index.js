@@ -381,6 +381,16 @@ const settingsSchema = z.object({
       monthlyRevenueTarget: z.coerce.number().min(0).optional(),
     })
     .optional(),
+  // The morning digest's schedule. Hour/minute are IST wall-clock; null
+  // (or absent) keeps the environment default.
+  dailyReport: z
+    .object({
+      enabled: z.boolean().optional(),
+      to: accountsEmailsSchema.optional(),
+      hourIst: z.coerce.number().int().min(0).max(23).nullable().optional(),
+      minuteIst: z.coerce.number().int().min(0).max(59).nullable().optional(),
+    })
+    .optional(),
   export: z
     .object({
       containers: z
