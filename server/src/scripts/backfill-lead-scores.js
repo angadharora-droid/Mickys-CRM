@@ -64,7 +64,7 @@ async function run() {
       });
     }
     if (customer) set.clientMadeAt = customer.frozenAt || customer.createdAt || new Date();
-    ops.push({ updateOne: { filter: { _id: l._id }, update: { $set: set, $push: { stageHistory: { $each: history } } } } });
+    ops.push({ updateOne: { filter: { _id: l._id }, update: { $set: set, $push: { stageHistory: { $each: history } } }, timestamps: false } });
   }
   console.log(`[backfill] stages to set — new: ${counts.new}, live: ${counts.live}, client: ${counts.client}`);
 
