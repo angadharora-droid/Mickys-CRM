@@ -6,6 +6,7 @@ const Counter = require('../models/Counter');
 const SalesOrder = require('../models/SalesOrder');
 const Setting = require('../models/Setting');
 const StockItem = require('../models/StockItem');
+const { GST_BASES, SUPPLY_TYPES, computeLine, computeTotals, deriveSupplyType } = require('../utils/gst');
 const { renderSalesOrderPdf } = require('../services/salesOrderPdf.service');
 const { sendOrderEmail } = require('../services/salesOrderEmail.service');
 const {
@@ -54,7 +55,8 @@ const PIPELINE_REFS = [
 const populatePipeline = (order) => order.populate(PIPELINE_REFS.map((path) => ({ path, select: 'name' })));
 
 /**
- * Recomputes line amounts and the total from qty × rate, enriching each line
+ * Recomputes line amounts, GST and the totals from qty × rate under the
+ * order's GST basis and supply type (utils/gst.js), enriching each line
  * with the unit and the stock position from the Tally mirror. The mirror is
  * matched on the normalised nameKey, not the raw name — an appointed
  * customer's lines carry their frozen list's UPPERCASE name and would
@@ -64,7 +66,7 @@ const populatePipeline = (order) => order.populate(PIPELINE_REFS.map((path) => (
  * `excludeOrder` is the order being re-saved: its own lines must not count
  * against its own availability, or every edit would report itself as short.
  */
-async function buildItems(items, { excludeOrder } = {}) {
+async function buildItems(items, { excludeOrder, basis = 'exclusive', supplyType = 'intra' } = {}) {
   const keys = items.map((i) => nameKeyOf(i.name)).filter(Boolean);
   const [stock, { availableByKey, warnings }] = await Promise.all([
     StockItem.find({ nameKey: { $in: keys } }).lean(),
@@ -86,13 +88,14 @@ async function buildItems(items, { excludeOrder } = {}) {
       baseUnits: s?.baseUnits || '',
       qty: i.qty,
       rate: i.rate,
-      amount: Math.round(i.qty * i.rate * 100) / 100,
+      gst: Number(i.gst) || 0,
+      ...computeLine({ qty: i.qty, rate: i.rate, gst: i.gst, basis }),
       stockQtyAtOrder: s ? s.closingQty : null,
       availableAtOrder: availableByKey.has(key) ? availableByKey.get(key) : null,
     };
   });
-  const total = Math.round(built.reduce((sum, i) => sum + i.amount, 0) * 100) / 100;
-  return { built, total, warnings };
+  const totals = computeTotals(built, { supplyType });
+  return { built, totals, total: totals.total, warnings };
 }
 
 /**
@@ -128,8 +131,40 @@ async function applyFrozenCustomer(customerId, items) {
     it.name = f.name;
     it.rate = f.rate;
     it.packSize = f.packSize;
+    // The frozen GST rate travels with the frozen price. A list frozen before
+    // GST was recorded carries none; resolveGst fills the default in then.
+    it.gst = f.gst ?? null;
   }
   return appointed;
+}
+
+/**
+ * The GST treatment of an order (utils/gst.js) and the rate on every line.
+ * An appointed customer's frozen list dictates the basis — the rates were
+ * frozen exclusive or inclusive of GST, and reading them the other way would
+ * re-price the order — and the supply type follows their GSTIN. A plain
+ * Tally-ledger order takes the screen's choices, else Settings' defaults.
+ * The supply type stays the exec's call either way (the goods may go to a
+ * branch in another state); a line with no GST rate of its own gets the
+ * default rate from Settings.
+ */
+async function resolveGst(body, appointed, items) {
+  const settings = await Setting.getGlobal();
+  const so = settings.salesOrder || {};
+  const asked = body.gst || {};
+  const basis = appointed
+    ? appointed.gstBasis || 'exclusive'
+    : GST_BASES.includes(asked.basis)
+      ? asked.basis
+      : so.gstBasis || 'exclusive';
+  const supplyType = SUPPLY_TYPES.includes(asked.supplyType)
+    ? asked.supplyType
+    : deriveSupplyType(appointed?.gstin, settings.company?.gstNumber);
+  const defaultGst = so.defaultGst ?? 5;
+  for (const it of items) {
+    if (it.gst == null) it.gst = defaultGst;
+  }
+  return { basis, supplyType };
 }
 
 /**
@@ -142,11 +177,28 @@ const withWarnings = (order, warnings) => ({
   warnings,
 });
 
+// GET /api/sales-orders/gst-defaults — what a fresh voucher starts with: the
+// basis typed rates are quoted on, the GST rate a new line carries, and the
+// company GSTIN the supply type is judged against.
+const gstDefaults = asyncHandler(async (_req, res) => {
+  const settings = await Setting.getGlobal();
+  const so = settings.salesOrder || {};
+  res.json({
+    success: true,
+    data: {
+      basis: so.gstBasis || 'exclusive',
+      defaultGst: so.defaultGst ?? 5,
+      companyGstin: settings.company?.gstNumber || '',
+    },
+  });
+});
+
 // POST /api/sales-orders
 const createSalesOrder = asyncHandler(async (req, res) => {
   const { customerName, customerId, items, notes } = req.body;
   const appointed = await applyFrozenCustomer(customerId, items);
-  const { built, total, warnings } = await buildItems(items);
+  const gst = await resolveGst(req.body, appointed, items);
+  const { built, totals, total, warnings } = await buildItems(items, gst);
 
   const year = new Date().getFullYear();
   const seq = await Counter.next(`SO-${year}`);
@@ -157,7 +209,8 @@ const createSalesOrder = asyncHandler(async (req, res) => {
     customerName: appointed ? appointed.companyName : customerName,
     customer: appointed?._id,
     items: built,
-    total,
+    gst,
+    ...totals,
     notes: notes || '',
     createdBy: req.user._id,
     history: [{ from: '', to: 'open', by: req.user._id, note: 'Order booked' }],
@@ -261,11 +314,13 @@ const updateSalesOrder = asyncHandler(async (req, res) => {
     customerId || (keepsBookedCustomer ? order.customer : null),
     items
   );
-  const { built, total, warnings } = await buildItems(items, { excludeOrder: order._id });
+  const gst = await resolveGst(req.body, appointed, items);
+  const { built, totals, warnings } = await buildItems(items, { ...gst, excludeOrder: order._id });
   order.customerName = appointed ? appointed.companyName : customerName;
   order.customer = appointed?._id || undefined;
   order.items = built;
-  order.total = total;
+  order.gst = gst;
+  Object.assign(order, totals);
   order.notes = notes || '';
   await order.save();
 
@@ -729,6 +784,7 @@ const salesOrderPdf = asyncHandler(async (req, res) => {
 });
 
 module.exports = {
+  gstDefaults,
   createSalesOrder,
   listSalesOrders,
   getSalesOrder,

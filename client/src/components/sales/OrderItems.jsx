@@ -1,14 +1,18 @@
 import { formatCurrency, formatDateTime, formatQty } from '@/lib/utils';
+import { GST_BASIS_LABELS, orderTotals } from '@/lib/gst';
 
 /**
- * The order itself — customer, lines, total, notes — as every desk sees it.
- * The appointed customer's details (GSTIN, mobile, address) ride along when
- * the order was booked against a frozen price list; a plain Tally-ledger
- * order has only its name.
+ * The order itself — customer, lines, GST, totals, notes — as every desk
+ * sees it. The appointed customer's details (GSTIN, mobile, address) ride
+ * along when the order was booked against a frozen price list; a plain
+ * Tally-ledger order has only its name. An order booked before GST was
+ * recorded carries no GST rows and shows its plain total.
  */
 export default function OrderItems({ order: o }) {
   if (!o) return null;
   const c = o.customer && typeof o.customer === 'object' ? o.customer : null;
+  const t = orderTotals(o);
+  const withGst = t.gstTotal > 0;
   return (
     <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-3">
@@ -42,6 +46,7 @@ export default function OrderItems({ order: o }) {
               <p className="text-xs text-muted-foreground mt-0.5">
                 {formatQty(i.qty, i.baseUnits)} × {formatCurrency(i.rate)}
                 {i.packSize ? ` · ${i.packSize}` : ''}
+                {Number(i.gst) > 0 ? ` · GST ${Number(i.gst)}%` : ''}
               </p>
             </div>
             <p className="text-sm font-semibold tabular-nums shrink-0">
@@ -49,8 +54,36 @@ export default function OrderItems({ order: o }) {
             </p>
           </div>
         ))}
+        {withGst && (
+          <div className="px-3 py-2 bg-muted/30 space-y-0.5 text-sm">
+            <p className="text-[11px] text-muted-foreground">
+              Rates {GST_BASIS_LABELS[t.basis]?.toLowerCase() || 'exclusive of GST'}
+            </p>
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Taxable value</span>
+              <span className="tabular-nums">{formatCurrency(t.taxableTotal)}</span>
+            </div>
+            {t.supplyType === 'inter' ? (
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">IGST</span>
+                <span className="tabular-nums">{formatCurrency(t.igst)}</span>
+              </div>
+            ) : (
+              <>
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">CGST</span>
+                  <span className="tabular-nums">{formatCurrency(t.cgst)}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">SGST</span>
+                  <span className="tabular-nums">{formatCurrency(t.sgst)}</span>
+                </div>
+              </>
+            )}
+          </div>
+        )}
         <div className="flex items-center justify-between px-3 py-2 bg-muted/50">
-          <p className="text-sm font-medium">Total</p>
+          <p className="text-sm font-medium">Total{withGst ? ' (incl. GST)' : ''}</p>
           <p className="text-base font-bold tabular-nums">{formatCurrency(o.total)}</p>
         </div>
       </div>
