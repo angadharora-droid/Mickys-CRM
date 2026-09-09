@@ -7,6 +7,9 @@ import {
   ROLES, ORDER_STATUSES, ORDER_STATUS_LABELS, PAYMENT_MODE_OPTIONS, DISPATCH_MODE_LABELS, orderStageSince, daysSince,
 } from '@/lib/constants';
 import { cn, formatCurrency, formatDate, formatDateTime, todayInput } from '@/lib/utils';
+import {
+  GST_BASIS_OPTIONS, SUPPLY_TYPE_OPTIONS, computeLine, computeTotals, deriveSupplyType, orderTotals,
+} from '@/lib/gst';
 import OrderStatusBadge from '@/components/sales/OrderStatusBadge';
 import OrderDetailDialog from '@/components/sales/OrderDetailDialog';
 import { Label } from '@/components/ui/label';
@@ -149,6 +152,12 @@ function OrderDialog({ open, onClose, order, onSaved }) {
   const itemNav = useRef(false); // true once ↑/↓ used on the current list
   const [lines, setLines] = useState([]);
   const [notes, setNotes] = useState('');
+  // GST: the basis the typed rates are quoted on and the supply type, plus
+  // what a fresh voucher starts with (Sales Order settings). A frozen
+  // customer's list dictates the basis; the rest is the exec's call.
+  const [gstBasis, setGstBasis] = useState('exclusive');
+  const [supplyType, setSupplyType] = useState('intra');
+  const [gstDefaults, setGstDefaults] = useState({ basis: 'exclusive', defaultGst: 5, companyGstin: '' });
   const [saving, setSaving] = useState(false);
   const customerRef = useRef(null);
   const itemRef = useRef(null);
@@ -165,9 +174,19 @@ function OrderDialog({ open, onClose, order, onSaved }) {
     setLines(
       (order?.items || []).map((i) => ({
         name: i.name, baseUnits: i.baseUnits, qty: String(i.qty), rate: String(i.rate), packSize: i.packSize,
+        gst: i.gst != null ? String(i.gst) : '',
       }))
     );
     setNotes(order?.notes || '');
+    setGstBasis(order?.gst?.basis || 'exclusive');
+    setSupplyType(order?.gst?.supplyType || 'intra');
+    api.get('/sales-orders/gst-defaults')
+      .then((r) => {
+        setGstDefaults(r.data.data);
+        // A fresh voucher starts on Settings' basis; an edit keeps the order's.
+        if (!order?._id) setGstBasis(r.data.data.basis || 'exclusive');
+      })
+      .catch(() => {});
     setItemSearch('');
     setStock([]);
     setSelectedCustomer(null);
@@ -310,6 +329,10 @@ function OrderDialog({ open, onClose, order, onSaved }) {
     else if (e.key === 'ArrowUp') { e.preventDefault(); setHl((hl - 1 + count) % count); }
   };
 
+  // A frozen item's GST rate; a list frozen before GST was recorded carries
+  // none, and the server fills the Settings default in — shown here too.
+  const frozenGst = (f) => String(f.gst ?? gstDefaults.defaultGst ?? 0);
+
   const pickCustomer = (entry) => {
     // Lapsed rates are refused by the server on save, so the voucher is stopped
     // here rather than after a whole order has been typed into it.
@@ -325,8 +348,12 @@ function OrderDialog({ open, onClose, order, onSaved }) {
     if (entry.kind === 'appointed') {
       const c = entry.data;
       setSelectedCustomer(c);
+      // The freeze covers the GST basis too; the supply type follows the
+      // customer's GSTIN (the exec can still change it below the lines).
+      setGstBasis(c.gstBasis || 'exclusive');
+      setSupplyType(deriveSupplyType(c.gstin, gstDefaults.companyGstin));
       // Enforce the freeze on any lines already added: keep only items on the
-      // frozen list, at the frozen rate.
+      // frozen list, at the frozen rate and GST.
       const frozen = new Map(c.items.map((i) => [i.name, i]));
       setLines((prev) => {
         const kept = prev.filter((l) => frozen.has(String(l.name).toUpperCase()));
@@ -335,7 +362,7 @@ function OrderDialog({ open, onClose, order, onSaved }) {
         }
         return kept.map((l) => {
           const f = frozen.get(String(l.name).toUpperCase());
-          return { ...l, name: f.name, rate: String(f.rate), packSize: f.packSize };
+          return { ...l, name: f.name, rate: String(f.rate), packSize: f.packSize, gst: frozenGst(f) };
         });
       });
     } else {
@@ -347,8 +374,8 @@ function OrderDialog({ open, onClose, order, onSaved }) {
   const addLine = (s) => {
     const idx = lines.length;
     const line = selectedCustomer
-      ? // Frozen list line: the rate is dictated by the customer's price list.
-        { name: s.name, baseUnits: '', qty: '', rate: String(s.rate), packSize: s.packSize }
+      ? // Frozen list line: rate and GST are dictated by the customer's price list.
+        { name: s.name, baseUnits: '', qty: '', rate: String(s.rate), packSize: s.packSize, gst: frozenGst(s) }
       : {
           name: s.name,
           baseUnits: s.baseUnits,
@@ -356,6 +383,8 @@ function OrderDialog({ open, onClose, order, onSaved }) {
           // Selling-rate prefill: maintained standard price, else the rate of
           // the item's last sales voucher, else the stock valuation rate.
           rate: String(prefillRate(s) || ''),
+          // GST starts at the default in Sales Order settings; editable per line.
+          gst: String(gstDefaults.defaultGst ?? 0),
         };
     // The stock row's figures stand in until the lookup answers, so the new
     // line has something to show the moment it lands.
@@ -372,7 +401,10 @@ function OrderDialog({ open, onClose, order, onSaved }) {
   const setLine = (idx, patch) =>
     setLines((prev) => prev.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
 
-  const total = lines.reduce((sum, l) => sum + (Number(l.qty) || 0) * (Number(l.rate) || 0), 0);
+  // The money, line by line and in total, exactly as the server will save it.
+  const computed = lines.map((l) => computeLine({ qty: l.qty, rate: l.rate, gst: l.gst, basis: gstBasis }));
+  const totals = computeTotals(computed, { supplyType });
+  const total = totals.total;
 
   // An order already on screen for a customer whose rates lapsed since (an edit,
   // or a validity that ran out while the dialog was open) cannot be saved.
@@ -401,7 +433,7 @@ function OrderDialog({ open, onClose, order, onSaved }) {
 
   /** What a line has left to sell, and why it is less than Tally's figure. */
   const lineCaption = (l, a) => {
-    const parts = selectedCustomer ? [l.packSize, 'rate frozen'].filter(Boolean) : [];
+    const parts = selectedCustomer ? [l.packSize, 'rate & GST frozen'].filter(Boolean) : [];
     if (!a) parts.push('checking availability…');
     else if (a.availableQty == null) parts.push('not in stock mirror');
     else {
@@ -416,7 +448,7 @@ function OrderDialog({ open, onClose, order, onSaved }) {
 
   const save = async () => {
     const items = lines
-      .map((l) => ({ name: l.name, qty: Number(l.qty), rate: Number(l.rate) || 0 }))
+      .map((l) => ({ name: l.name, qty: Number(l.qty), rate: Number(l.rate) || 0, gst: l.gst === '' ? null : Number(l.gst) || 0 }))
       .filter((l) => l.qty > 0);
     if (customerName.trim().length < 2) return toast.error('Pick or type a customer name');
     if (!items.length) return toast.error('Add at least one item with a quantity');
@@ -432,6 +464,7 @@ function OrderDialog({ open, onClose, order, onSaved }) {
         customerName: customerName.trim(),
         customerId: selectedCustomer?._id,
         items,
+        gst: { basis: gstBasis, supplyType },
         notes: notes.trim(),
       };
       const { data } = order?._id
@@ -670,7 +703,7 @@ function OrderDialog({ open, onClose, order, onSaved }) {
                         <X className="h-4 w-4" />
                       </Button>
                     </div>
-                    <div className="grid grid-cols-3 gap-2 mt-2">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2">
                       <div>
                         <p className="text-[11px] text-muted-foreground mb-1">Qty{l.baseUnits ? ` (${l.baseUnits})` : ''}</p>
                         <Input
@@ -678,8 +711,8 @@ function OrderDialog({ open, onClose, order, onSaved }) {
                           type="number" min="0" inputMode="decimal" value={l.qty}
                           className={over ? 'border-red-500 text-red-600 focus-visible:border-red-500 focus-visible:ring-red-500/20' : undefined}
                           onChange={(e) => setLine(i, { qty: e.target.value })}
-                          // Frozen rate = disabled field, so Enter skips it and
-                          // goes straight back to the item search.
+                          // Frozen rate and GST = disabled fields, so Enter skips
+                          // them and goes straight back to the item search.
                           onKeyDown={(e) => {
                             if (e.key === 'Enter') {
                               e.preventDefault();
@@ -691,7 +724,7 @@ function OrderDialog({ open, onClose, order, onSaved }) {
                       </div>
                       <div>
                         <p className="text-[11px] text-muted-foreground mb-1">
-                          Rate (Rs.){selectedCustomer ? ' · frozen' : ''}
+                          Rate (Rs.){selectedCustomer ? ' · frozen' : gstBasis === 'inclusive' ? ' · incl. GST' : ' · excl. GST'}
                         </p>
                         <Input
                           ref={(el) => { fieldRefs.current[`rate-${i}`] = el; }}
@@ -699,13 +732,24 @@ function OrderDialog({ open, onClose, order, onSaved }) {
                           disabled={Boolean(selectedCustomer)}
                           title={selectedCustomer ? 'Frozen rate — edit it on the Customers page' : undefined}
                           onChange={(e) => setLine(i, { rate: e.target.value })}
+                          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); focusField(`gst-${i}`); } }}
+                        />
+                      </div>
+                      <div>
+                        <p className="text-[11px] text-muted-foreground mb-1">GST %{selectedCustomer ? ' · frozen' : ''}</p>
+                        <Input
+                          ref={(el) => { fieldRefs.current[`gst-${i}`] = el; }}
+                          type="number" min="0" max="100" inputMode="decimal" value={l.gst}
+                          disabled={Boolean(selectedCustomer)}
+                          title={selectedCustomer ? 'Frozen GST rate — edit it on the Customers page' : 'GST rate on this product'}
+                          onChange={(e) => setLine(i, { gst: e.target.value })}
                           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); itemRef.current?.focus(); } }}
                         />
                       </div>
                       <div>
-                        <p className="text-[11px] text-muted-foreground mb-1">Amount</p>
+                        <p className="text-[11px] text-muted-foreground mb-1">Amount{gstBasis === 'inclusive' ? ' (incl. GST)' : ' (before GST)'}</p>
                         <p className="h-10 flex items-center text-sm font-semibold tabular-nums">
-                          {formatCurrency((Number(l.qty) || 0) * (Number(l.rate) || 0))}
+                          {formatCurrency(computed[i]?.amount || 0)}
                         </p>
                       </div>
                     </div>
@@ -757,9 +801,42 @@ function OrderDialog({ open, onClose, order, onSaved }) {
               }}
             />
           </div>
-          <div className="flex items-center justify-between rounded-lg bg-muted px-4 py-3">
-            <p className="text-sm font-medium">Total</p>
-            <p className="text-lg font-bold tabular-nums">{formatCurrency(total)}</p>
+          {/* GST treatment + totals. The basis is part of an appointed customer's
+              freeze; the supply type follows their GSTIN but stays the exec's call. */}
+          <div className="rounded-lg bg-muted px-4 py-3 space-y-2">
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="text-muted-foreground">Rates are</span>
+              <Select value={gstBasis} onValueChange={setGstBasis} disabled={Boolean(selectedCustomer)}>
+                <SelectTrigger className="h-8 w-44 bg-background text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {GST_BASIS_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <Select value={supplyType} onValueChange={setSupplyType}>
+                <SelectTrigger className="h-8 w-56 bg-background text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {SUPPLY_TYPE_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label} · {o.hint}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              {selectedCustomer && <span className="text-muted-foreground">basis frozen with the rates</span>}
+            </div>
+            {totals.gstTotal > 0 && (
+              <div className="space-y-0.5 text-sm">
+                <div className="flex justify-between"><span className="text-muted-foreground">Taxable value</span><span className="tabular-nums">{formatCurrency(totals.taxableTotal)}</span></div>
+                {supplyType === 'inter' ? (
+                  <div className="flex justify-between"><span className="text-muted-foreground">IGST</span><span className="tabular-nums">{formatCurrency(totals.igst)}</span></div>
+                ) : (
+                  <>
+                    <div className="flex justify-between"><span className="text-muted-foreground">CGST</span><span className="tabular-nums">{formatCurrency(totals.cgst)}</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">SGST</span><span className="tabular-nums">{formatCurrency(totals.sgst)}</span></div>
+                  </>
+                )}
+              </div>
+            )}
+            <div className="flex items-center justify-between border-t pt-2">
+              <p className="text-sm font-medium">Total{totals.gstTotal > 0 ? ' (incl. GST)' : ''}</p>
+              <p className="text-lg font-bold tabular-nums">{formatCurrency(total)}</p>
+            </div>
           </div>
         </div>
 
@@ -931,12 +1008,13 @@ function EmailDialog({ open, order, onClose, onSent }) {
  * itself — WhatsApp renders the *stars* as bold.
  */
 const buildWhatsAppText = (o) => {
+  const t = orderTotals(o);
   const items = (o?.items || [])
     .map(
       (i, n) =>
         `${n + 1}. ${i.name}\n   ${qty(i.qty, i.baseUnits)} × ${formatCurrency(i.rate)} = ${formatCurrency(
           i.amount != null ? i.amount : (Number(i.qty) || 0) * (Number(i.rate) || 0)
-        )}`
+        )}${Number(i.gst) > 0 ? ` (GST ${Number(i.gst)}%)` : ''}`
     )
     .join('\n');
   return [
@@ -950,7 +1028,15 @@ const buildWhatsAppText = (o) => {
     '*Items*',
     items,
     '',
-    `*Total: ${formatCurrency(o?.total)}*`,
+    ...(t.gstTotal > 0
+      ? [
+          `Rates ${t.basis === 'inclusive' ? 'inclusive' : 'exclusive'} of GST · Taxable value: ${formatCurrency(t.taxableTotal)}`,
+          t.supplyType === 'inter'
+            ? `IGST: ${formatCurrency(t.igst)}`
+            : `CGST: ${formatCurrency(t.cgst)} · SGST: ${formatCurrency(t.sgst)}`,
+        ]
+      : []),
+    `*Total${t.gstTotal > 0 ? ' (incl. GST)' : ''}: ${formatCurrency(o?.total)}*`,
   ].join('\n');
 };
 

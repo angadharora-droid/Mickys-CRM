@@ -65,11 +65,11 @@ const colsFor = (hasWeight, hasGst) => {
   const cols = [
     { key: 'idx', label: '#', w: 24, align: 'left' },
     { key: 'name', label: 'ITEM', w: 231, align: 'left' },
-    hasWeight && { key: 'weight', label: 'WEIGHT', w: 60, align: 'right' },
-    { key: 'qty', label: 'QTY', w: 90, align: 'right' },
-    { key: 'rate', label: 'RATE', w: 80, align: 'right' },
-    hasGst && { key: 'gst', label: 'GST', w: 44, align: 'right' },
-    { key: 'amount', label: 'AMOUNT', w: 90, align: 'right' },
+    hasWeight && { key: 'weight', label: 'WEIGHT', w: 56, align: 'right' },
+    { key: 'qty', label: 'QTY', w: 80, align: 'right' },
+    { key: 'rate', label: 'RATE', w: 76, align: 'right' },
+    hasGst && { key: 'gst', label: 'GST', w: 40, align: 'right' },
+    { key: 'amount', label: 'AMOUNT', w: 88, align: 'right' },
   ].filter(Boolean);
   // Whatever the optional columns take comes out of the item name.
   const name = cols.find((c) => c.key === 'name');
