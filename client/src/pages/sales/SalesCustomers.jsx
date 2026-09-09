@@ -14,6 +14,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { GST_BASIS_OPTIONS } from '@/lib/gst';
 import {
   Search, UserCheck, Plus, Trash2, Loader2, Snowflake, X, Pencil,
   CalendarCheck, CalendarClock, CalendarOff, CalendarX, AlertTriangle,
@@ -99,6 +101,9 @@ export function SalesCustomerForm() {
 
   const [form, setForm] = useState({ companyName: '', email: '', gstin: '', mobile: '', address: '' });
   const [items, setItems] = useState([]);
+  // Whether the frozen rates are exclusive or inclusive of GST — the trade
+  // rate cards are exclusive, the B2C MRP card inclusive. Frozen with the rates.
+  const [gstBasis, setGstBasis] = useState('exclusive');
   const [terms, setTerms] = useState({ paymentTerms: '', creditPeriod: '', termsAndConditions: '' });
   // The IST day the frozen rates run out on, as the date input's YYYY-MM-DD.
   // Blank on a new appointment and on customers appointed before validity
@@ -117,7 +122,8 @@ export function SalesCustomerForm() {
         .then(({ data }) => {
           const c = data.data;
           setForm({ companyName: c.companyName, email: c.email, gstin: c.gstin, mobile: c.mobile, address: c.address });
-          setItems(c.items.map((i) => ({ ...i, rate: String(i.rate) })));
+          setItems(c.items.map((i) => ({ ...i, rate: String(i.rate), gst: i.gst != null ? String(i.gst) : '' })));
+          setGstBasis(c.gstBasis || 'exclusive');
           setTerms({
             paymentTerms: c.terms?.paymentTerms || '',
             creditPeriod: c.terms?.creditPeriod || '',
@@ -140,7 +146,11 @@ export function SalesCustomerForm() {
             address: caps([lead.address, lead.city, lead.state].filter(Boolean).join(', ')),
           });
           // The rate list that went out in the kit — netRate is the price
-          // stated on the emailed rate card (exclusive of GST).
+          // stated on the emailed rate card, with its GST rate beside it. The
+          // trade cards quote exclusive of GST; the B2C MRP card is inclusive,
+          // and its master records no GST rate, so those lines start blank and
+          // use the default from Sales Order settings until filled in here.
+          setGstBasis(lead.kitType === 'b2c' ? 'inclusive' : 'exclusive');
           setItems(
             (lead.rates || [])
               .filter((r) => r.included !== false)
@@ -149,6 +159,7 @@ export function SalesCustomerForm() {
                 name: caps(r.productName),
                 packSize: caps(r.packSize || ''),
                 rate: String(r.netRate ?? ''),
+                gst: r.gst != null && !(lead.kitType === 'b2c' && Number(r.gst) === 0) ? String(r.gst) : '',
               }))
           );
           // The commercial terms the kit went out with — the lead's edited
@@ -175,7 +186,14 @@ export function SalesCustomerForm() {
       validUntil,
       items: items
         .filter((i) => i.name.trim())
-        .map((i) => ({ sku: i.sku, name: i.name, packSize: i.packSize, rate: Number(i.rate) || 0 })),
+        .map((i) => ({
+          sku: i.sku,
+          name: i.name,
+          packSize: i.packSize,
+          rate: Number(i.rate) || 0,
+          gst: i.gst === '' || i.gst == null ? null : Number(i.gst) || 0,
+        })),
+      gstBasis,
       terms,
     };
     if (!body.items.length) return toast.error('Keep at least one item in the rate list');
@@ -266,7 +284,7 @@ export function SalesCustomerForm() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setItems((prev) => [...prev, { sku: '', name: '', packSize: '', rate: '' }])}
+            onClick={() => setItems((prev) => [...prev, { sku: '', name: '', packSize: '', rate: '', gst: '' }])}
           >
             <Plus className="h-4 w-4" /> Add item
           </Button>
@@ -305,6 +323,7 @@ export function SalesCustomerForm() {
                 <TableHead>Item</TableHead>
                 <TableHead className="hidden sm:table-cell w-32">Pack</TableHead>
                 <TableHead className="text-right w-36">Rate (Rs.)</TableHead>
+                <TableHead className="text-right w-24">GST %</TableHead>
                 <TableHead className="w-10" />
               </TableRow>
             </TableHeader>
@@ -327,6 +346,16 @@ export function SalesCustomerForm() {
                     />
                   </TableCell>
                   <TableCell>
+                    <Input
+                      className="text-right tabular-nums"
+                      type="number" min="0" max="100" inputMode="decimal"
+                      placeholder="default"
+                      title="GST rate on this product. Blank = the default from Sales Order settings."
+                      value={it.gst ?? ''}
+                      onChange={(e) => setItem(i, { gst: e.target.value })}
+                    />
+                  </TableCell>
+                  <TableCell>
                     <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setItems((prev) => prev.filter((_, idx) => idx !== i))}>
                       <X className="h-4 w-4" />
                     </Button>
@@ -336,8 +365,21 @@ export function SalesCustomerForm() {
             </TableBody>
           </Table>
         )}
+        <div className="flex flex-wrap items-center gap-3 px-4 py-3 border-t">
+          <p className="text-sm font-medium">These rates are</p>
+          <Select value={gstBasis} onValueChange={setGstBasis}>
+            <SelectTrigger className="h-9 w-48"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {GST_BASIS_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            Frozen with the rates — every order for this customer is priced on this basis. A blank GST % uses the
+            default from Sales Order settings.
+          </p>
+        </div>
         <p className="px-4 py-3 text-xs text-muted-foreground border-t">
-          Sales orders for this customer can contain <span className="font-medium">only these items at these rates</span>.
+          Sales orders for this customer can contain <span className="font-medium">only these items, at these rates and GST</span>.
         </p>
       </Card>
 
