@@ -138,9 +138,13 @@ Two ways, both hitting `POST /api/stock/sync` on the backend:
 > invoice covering several orders can list them all. The next push (within
 > 10 minutes, or Ctrl+F10 at once) does the matching; the Invoicing page in
 > the CRM shows how many vouchers the last push carried and how many matched.
-> A voucher keyed without the number can be linked by hand from that page
-> ("Link invoice"). A voucher naming a **cancelled** order is recorded on it
-> and flagged in the sync log — it is never used to revive the order.
+> There is no manual step in the CRM. A voucher keyed without the number
+> shows up in the Invoicing page's "Without order number" count (and in the
+> Sales Register under the "without CRM order" filter): add the number to
+> the voucher in Tally and the next push matches it, since every push
+> re-sends the last 60 days. A voucher naming a **cancelled** order is
+> recorded on it and flagged in the sync log — it is never used to revive
+> the order.
 >
 > Every voucher the push carries — matched or not — is also mirrored into the
 > CRM (`TallyInvoice`), and the morning daily-report email totals the ones

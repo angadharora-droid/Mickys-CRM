@@ -46,7 +46,6 @@ const PIPELINE_REFS = [
   'emails.sentBy',
   'history.by',
   'payment.recordedBy',
-  'accounts.verifiedBy',
   'invoices.linkedBy',
   'dispatch.filledBy',
   'delivery.markedBy',

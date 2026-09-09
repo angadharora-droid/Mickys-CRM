@@ -246,6 +246,11 @@ const dispatchLabel = (d) => {
 // and this is where a voucher finds its order. Matching is forgiving about
 // punctuation ("SO-2026-0042", "SO 2026 42", "so-2026-0042") because the
 // number is typed by hand into Tally.
+//
+// This is the ONLY way an order becomes invoiced — there is no manual link in
+// the CRM. A voucher keyed without the number is fixed in Tally (add the
+// number to it) and the next push, which re-sends the last 60 days, matches
+// it then: an already-mirrored voucher is refreshed, not duplicated.
 // ---------------------------------------------------------------------------
 
 const SO_NUMBER_RX = /\bSO[\s_-]*(\d{4})[\s_-]*(\d{1,5})\b/gi;
@@ -418,42 +423,6 @@ async function matchInvoices(invoices, { syncedAt = new Date(), actor } = {}) {
   return summary;
 }
 
-/**
- * Accounts linking an invoice by hand — the voucher was keyed without the
- * order number on it, or the push has not run yet. Same effect as a matched
- * push. Mutates and saves the order; returns the previous status.
- */
-async function linkInvoiceManually(order, { voucherNumber, date, amount, note }, user) {
-  order.invoices.push({
-    voucherNumber,
-    date: date || null,
-    amount: amount || 0,
-    party: order.customerName,
-    matchedVia: 'manual',
-    source: 'manual',
-    seenAt: new Date(),
-    linkedBy: user._id,
-    note: note || '',
-  });
-  let from = order.status;
-  if (order.status === 'open' || order.status === 'confirmed') {
-    from = applyTransition(order, 'invoiced', {
-      user,
-      note: `Invoice ${voucherNumber} linked by ${user.name}${note ? ` — ${note}` : ''}`,
-    });
-  } else if (!order.invoicedAt) {
-    order.invoicedAt = date || new Date();
-  }
-  await order.save();
-  // If the push has already mirrored this voucher, point it at the order too,
-  // so the daily report can name the order beside the invoice.
-  await TallyInvoice.updateOne(
-    { voucherNumber },
-    { $addToSet: { orders: order._id, orderNumbers: order.number } }
-  ).catch((err) => console.error(`[pipeline] could not link mirrored invoice ${voucherNumber}: ${err.message}`));
-  return from;
-}
-
 // ---------------------------------------------------------------------------
 // The funnel
 // ---------------------------------------------------------------------------
@@ -569,6 +538,5 @@ module.exports = {
   dispatchLabel,
   extractOrderNumbers,
   matchInvoices,
-  linkInvoiceManually,
   funnel,
 };
