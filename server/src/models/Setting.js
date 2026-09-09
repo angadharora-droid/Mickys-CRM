@@ -108,6 +108,12 @@ const settingSchema = new mongoose.Schema(
       // report compares month-to-date invoicing against the pro-rated target
       // and calls it on track or behind; 0 means no target, no verdict.
       monthlyRevenueTarget: { type: Number, default: 0 },
+      // GST defaults for orders booked against plain Tally ledgers (an
+      // appointed customer's frozen list carries its own): the rate (%) a new
+      // line starts with, and whether typed rates are exclusive or inclusive
+      // of GST. 5% is the rate on most of the range.
+      defaultGst: { type: Number, default: 5, min: 0, max: 100 },
+      gstBasis: { type: String, enum: ['exclusive', 'inclusive'], default: 'exclusive' },
     },
     // Daily email digest. lastSentDay is bookkeeping — the last IST day
     // (YYYY-MM-DD) whose report was emailed, so restarts/redeploys never send

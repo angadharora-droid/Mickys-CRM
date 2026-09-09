@@ -414,6 +414,8 @@ const settingsSchema = z.object({
       accountsEmails: accountsEmailsSchema.optional(),
       emailAccountsOnConfirm: z.boolean().optional(),
       monthlyRevenueTarget: z.coerce.number().min(0).optional(),
+      defaultGst: z.coerce.number().min(0).max(100).optional(),
+      gstBasis: z.enum(['exclusive', 'inclusive']).optional(),
     })
     .optional(),
   // Lead score card weights (points per milestone) and the calls threshold.
@@ -525,9 +527,14 @@ const appointedCustomerSchema = z.object({
         name: z.string().trim().min(1).max(200),
         packSize: z.string().trim().max(60).optional().or(z.literal('')),
         rate: z.number().min(0),
+        // GST rate (%) from the kit's rate card; null = not recorded, so
+        // orders use the default rate from Sales Order settings.
+        gst: z.number().min(0).max(100).nullable().optional(),
       })
     )
     .min(1, 'Keep at least one item in the frozen rate list'),
+  // Whether the frozen rates are exclusive or inclusive of GST.
+  gstBasis: z.enum(['exclusive', 'inclusive']).optional(),
   // Commercial terms frozen alongside the rates (same shape as the lead's
   // editable kit terms, minus the distributor agreement rows).
   terms: customTermsSchema.omit({ agreementTermsAndConditions: true }).optional(),
@@ -558,9 +565,20 @@ const salesOrderSchema = z.object({
         name: z.string().trim().min(1).max(200),
         qty: z.number().positive(),
         rate: z.number().min(0),
+        // GST rate (%) on the line; absent = the default in Settings (or the
+        // frozen list's rate for an appointed customer, which always wins).
+        gst: z.number().min(0).max(100).nullable().optional(),
       })
     )
     .min(1, 'Add at least one item'),
+  // How GST applies to the order (see utils/gst.js). Absent = Settings'
+  // basis, and a supply type read off the customer's GSTIN.
+  gst: z
+    .object({
+      basis: z.enum(['exclusive', 'inclusive']).optional(),
+      supplyType: z.enum(['intra', 'inter']).optional(),
+    })
+    .optional(),
   notes: z.string().max(2000).optional().or(z.literal('')),
 });
 

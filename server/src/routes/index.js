@@ -160,6 +160,7 @@ router.post('/stock/availability', authenticate, authorize(ADMIN, EXEC), SALES_M
 router.post('/sales-orders', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, validate(v.salesOrderSchema), salesOrders.createSalesOrder);
 // The funnel and the order reads are shared with the accounts and dispatch
 // desks; /funnel is declared before /:id so it is not read as an order id.
+router.get('/sales-orders/gst-defaults', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, salesOrders.gstDefaults);
 router.get('/sales-orders/funnel', authenticate, PIPELINE_MODULES, salesOrders.orderFunnel);
 router.get('/sales-orders', authenticate, PIPELINE_MODULES, salesOrders.listSalesOrders);
 router.get('/sales-orders/:id', authenticate, PIPELINE_MODULES, salesOrders.getSalesOrder);
