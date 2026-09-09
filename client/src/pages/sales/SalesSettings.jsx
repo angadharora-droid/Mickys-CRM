@@ -8,6 +8,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { GST_BASIS_OPTIONS } from '@/lib/gst';
 import { AlertTriangle, Loader2, Save, TriangleAlert, Send, Clock } from 'lucide-react';
 
 // The accounts list is stored as an array but edited as one comma-separated
@@ -110,6 +112,8 @@ export default function SalesSettings() {
           accountsEmails: emailListText(salesOrder?.accountsEmails),
           emailAccountsOnConfirm: salesOrder?.emailAccountsOnConfirm ?? false,
           monthlyRevenueTarget: Number(salesOrder?.monthlyRevenueTarget) || 0,
+          defaultGst: Number(salesOrder?.defaultGst) || 0,
+          gstBasis: salesOrder?.gstBasis || 'exclusive',
         },
       });
       setSalesOrder(data.data?.salesOrder || {});
@@ -203,6 +207,49 @@ export default function SalesSettings() {
             </div>
           )}
 
+          <Button onClick={save} disabled={saving}>
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+            {saving ? 'Saving…' : 'Save settings'}
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card className="mt-4">
+        <CardHeader>
+          <CardTitle className="text-base">GST on sales orders</CardTitle>
+          <CardDescription>
+            What a new order line starts with when the customer is a plain Tally ledger. An appointed customer&rsquo;s
+            frozen rate list carries its own GST rate per item and its own basis, and those always win.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="defaultGst">Default GST rate (%)</Label>
+              <Input
+                id="defaultGst"
+                type="number"
+                min="0"
+                max="100"
+                inputMode="decimal"
+                value={salesOrder.defaultGst ?? ''}
+                onChange={(e) => setField('defaultGst', e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">Editable on every line of an order. 5% covers most of the range.</p>
+            </div>
+            <div className="space-y-2">
+              <Label>Typed rates are</Label>
+              <Select value={salesOrder.gstBasis || 'exclusive'} onValueChange={(v) => setField('gstBasis', v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {GST_BASIS_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Exclusive adds GST on top of the rate; inclusive treats the rate as already containing it.
+              </p>
+            </div>
+          </div>
           <Button onClick={save} disabled={saving}>
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
             {saving ? 'Saving…' : 'Save settings'}

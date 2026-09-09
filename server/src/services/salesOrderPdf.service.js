@@ -1,5 +1,6 @@
 const PDFDocument = require('pdfkit');
 const brand = require('../config/brand');
+const { gstRateLabel } = require('../utils/gst');
 
 // Same palette + layout idiom as kit.service.js, kept local so the two
 // renderers can evolve independently.
@@ -57,24 +58,24 @@ const bottomLimit = (doc) => doc.page.height - 70;
 
 // Item table column widths (content width is 515 on A4 with 40pt margins).
 // The WEIGHT column appears only when a line carries a pack weight (frozen-list
-// orders); plain Tally-ledger orders have no weight source and skip it.
-const colsFor = (hasWeight) =>
-  hasWeight
-    ? [
-        { key: 'idx', label: '#', w: 24, align: 'left' },
-        { key: 'name', label: 'ITEM', w: 171, align: 'left' },
-        { key: 'weight', label: 'WEIGHT', w: 70, align: 'right' },
-        { key: 'qty', label: 'QTY', w: 80, align: 'right' },
-        { key: 'rate', label: 'RATE', w: 80, align: 'right' },
-        { key: 'amount', label: 'AMOUNT', w: 90, align: 'right' },
-      ]
-    : [
-        { key: 'idx', label: '#', w: 24, align: 'left' },
-        { key: 'name', label: 'ITEM', w: 231, align: 'left' },
-        { key: 'qty', label: 'QTY', w: 90, align: 'right' },
-        { key: 'rate', label: 'RATE', w: 80, align: 'right' },
-        { key: 'amount', label: 'AMOUNT', w: 90, align: 'right' },
-      ];
+// orders); plain Tally-ledger orders have no weight source and skip it. The
+// GST column appears only when the order carries GST, so an order booked
+// before GST was recorded prints exactly as it did.
+const colsFor = (hasWeight, hasGst) => {
+  const cols = [
+    { key: 'idx', label: '#', w: 24, align: 'left' },
+    { key: 'name', label: 'ITEM', w: 231, align: 'left' },
+    hasWeight && { key: 'weight', label: 'WEIGHT', w: 60, align: 'right' },
+    { key: 'qty', label: 'QTY', w: 90, align: 'right' },
+    { key: 'rate', label: 'RATE', w: 80, align: 'right' },
+    hasGst && { key: 'gst', label: 'GST', w: 44, align: 'right' },
+    { key: 'amount', label: 'AMOUNT', w: 90, align: 'right' },
+  ].filter(Boolean);
+  // Whatever the optional columns take comes out of the item name.
+  const name = cols.find((c) => c.key === 'name');
+  name.w = 515 - cols.reduce((sum, c) => sum + (c.key === 'name' ? 0 : c.w), 0);
+  return cols;
+};
 
 function tableHeader(doc, y, cols) {
   const W = doc.page.width - 2 * M;
@@ -161,7 +162,8 @@ function renderSalesOrderPdf(order, exec) {
       y += cardH + 16;
 
       // Items table
-      const cols = colsFor((order.items || []).some((i) => i.packSize));
+      const gstTotal = Number(order.gstTotal) || 0;
+      const cols = colsFor((order.items || []).some((i) => i.packSize), gstTotal > 0);
       const nameCol = cols.find((c) => c.key === 'name');
       const amountCol = cols[cols.length - 1];
       y = tableHeader(doc, y, cols);
@@ -181,6 +183,7 @@ function renderSalesOrderPdf(order, exec) {
           weight: item.packSize || '',
           qty: qtyText(item.qty, item.baseUnits),
           rate: inr2(item.rate),
+          gst: Number(item.gst) > 0 ? `${Number(item.gst)}%` : '-',
           amount: inr2(item.amount),
         };
         let x = M + 6;
@@ -192,14 +195,51 @@ function renderSalesOrderPdf(order, exec) {
         y += rowH;
       });
 
-      // Total band
-      if (y + 26 > bottomLimit(doc)) y = newPage(doc);
+      // Totals. The taxable value and GST rows appear only when the order
+      // carries GST; the band underneath is what the customer pays.
+      const labelW = CW - amountCol.w - 12;
+      const valueX = M + CW - amountCol.w + 2;
+      const valueW = amountCol.w - 12;
+      const rows = [];
+      if (gstTotal > 0) {
+        const rate = gstRateLabel(order.items);
+        // One rate across the order names it on the row ("CGST @ 2.5%");
+        // mixed rates leave the row plain, since the lines show their own.
+        const single = rate && !rate.includes('/') ? Number.parseFloat(rate) : null;
+        rows.push(['Taxable value', order.taxableTotal]);
+        if (order.gst?.supplyType === 'inter') {
+          rows.push([`IGST${single != null ? ` @ ${single}%` : ''}`, order.igst]);
+        } else {
+          const half = single != null ? ` @ ${Math.round((single / 2) * 100) / 100}%` : '';
+          rows.push([`CGST${half}`, order.cgst]);
+          rows.push([`SGST${half}`, order.sgst]);
+        }
+      }
+      if (y + rows.length * 14 + 40 > bottomLimit(doc)) y = newPage(doc);
+      doc.font('Helvetica').fontSize(9).fill(INK);
+      for (const [label, value] of rows) {
+        doc.text(label, M + 6, y + 4, { width: labelW, align: 'right' });
+        doc.text(inr2(value), valueX, y + 4, { width: valueW, align: 'right' });
+        y += 14;
+      }
       doc.rect(M, y, CW, 22).fill(GOLD);
       doc.font('Helvetica-Bold').fontSize(10).fill(MAROON);
-      doc.text('TOTAL', M + 6, y + 6, { width: CW - amountCol.w - 12, align: 'right' });
-      doc.text(inr2(order.total), M + CW - amountCol.w + 2, y + 6, { width: amountCol.w - 12, align: 'right' });
+      doc.text(gstTotal > 0 ? 'TOTAL (INCL. GST)' : 'TOTAL', M + 6, y + 6, { width: labelW, align: 'right' });
+      doc.text(inr2(order.total), valueX, y + 6, { width: valueW, align: 'right' });
       doc.fillColor(INK);
-      y += 22 + 14;
+      y += 22 + 4;
+      if (gstTotal > 0) {
+        // Which way the rates were quoted — the one line that stops a reader
+        // adding GST to an inclusive amount, or forgetting it on an exclusive one.
+        const basisNote =
+          order.gst?.basis === 'inclusive'
+            ? 'Rates and amounts are inclusive of GST; taxable value and GST shown for reference.'
+            : 'Rates and amounts are exclusive of GST; GST added as above.';
+        doc.font('Helvetica-Oblique').fontSize(7.5).fill(SLATE).text(basisNote, M, y, { width: CW, align: 'right' });
+        doc.fillColor(INK);
+        y += 12;
+      }
+      y += 10;
 
       // Notes
       if (order.notes) {

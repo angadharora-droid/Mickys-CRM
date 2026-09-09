@@ -1,6 +1,7 @@
 const { renderSalesOrderPdf } = require('./salesOrderPdf.service');
 const { sendMail } = require('./email.service');
 const { escapeHtml } = require('../utils/sanitize');
+const { gstRateLabel } = require('../utils/gst');
 
 /**
  * Emails a sales order out as its PDF. Two audiences share this one path so
@@ -28,6 +29,23 @@ const fmtDate = (d) =>
  * small details block and the attachment line. The order itself is the PDF;
  * repeating every line item in the body would only invite the two to disagree.
  */
+const detailRow = (label, value) =>
+  `<tr><td style="padding:2px 24px 2px 0;color:#666">${escapeHtml(label)}</td><td>${escapeHtml(value)}</td></tr>`;
+
+/**
+ * Taxable value and GST rows, only when the order carries GST — an order
+ * booked before GST was recorded shows its plain value as before.
+ */
+function gstRows(order) {
+  if (!(Number(order.gstTotal) > 0)) return '';
+  const rate = gstRateLabel(order.items);
+  const split = order.gst?.supplyType === 'inter' ? 'IGST' : 'CGST + SGST';
+  return (
+    detailRow(`Taxable value (${order.gst?.basis === 'inclusive' ? 'rates incl. GST' : 'rates excl. GST'})`, inr(order.taxableTotal)) +
+    detailRow(`GST${rate ? ` @ ${rate}` : ''} (${split})`, inr(order.gstTotal))
+  );
+}
+
 function orderEmailHtml(order, { message, defaultBody }) {
   const intro =
     message && message.trim()
@@ -42,7 +60,8 @@ function orderEmailHtml(order, { message, defaultBody }) {
         <tr><td style="padding:2px 24px 2px 0;color:#666">Customer</td><td>${escapeHtml(order.customerName)}</td></tr>
         <tr><td style="padding:2px 24px 2px 0;color:#666">Order date</td><td>${escapeHtml(fmtDate(order.createdAt))}</td></tr>
         <tr><td style="padding:2px 24px 2px 0;color:#666">Items</td><td>${(order.items || []).length}</td></tr>
-        <tr><td style="padding:2px 24px 2px 0;color:#666">Order value</td><td><strong>${escapeHtml(inr(order.total))}</strong></td></tr>
+        ${gstRows(order)}
+        <tr><td style="padding:2px 24px 2px 0;color:#666">Order value${Number(order.gstTotal) > 0 ? ' (incl. GST)' : ''}</td><td><strong>${escapeHtml(inr(order.total))}</strong></td></tr>
       </table>
       <p style="margin:12px 0 0;color:#666">The order is attached to this email as a PDF.</p>
     </div>`;
