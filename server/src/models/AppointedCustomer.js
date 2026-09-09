@@ -16,6 +16,10 @@ const frozenItemSchema = new mongoose.Schema(
     name: { type: String, required: true, trim: true, uppercase: true },
     packSize: { type: String, trim: true, uppercase: true, default: '' },
     rate: { type: Number, required: true, min: 0 },
+    // GST rate (%) on this product, from the kit's rate card. null on lists
+    // frozen before GST was recorded — orders then fall back to the default
+    // rate in Sales Order settings until the customer is re-frozen.
+    gst: { type: Number, default: null, min: 0, max: 100 },
   },
   { _id: false }
 );
@@ -31,6 +35,11 @@ const appointedCustomerSchema = new mongoose.Schema(
 
     lead: { type: mongoose.Schema.Types.ObjectId, ref: 'Lead', index: true },
     items: { type: [frozenItemSchema], default: [] },
+    // Whether the frozen rates are quoted exclusive of GST (the distributor
+    // and institutional rate cards) or inclusive (the B2C MRP card). Every
+    // order for this customer is priced on this basis — it is part of the
+    // freeze, so the order screen cannot flip it.
+    gstBasis: { type: String, enum: ['exclusive', 'inclusive'], default: 'exclusive' },
 
     // Frozen commercial terms — captured from the kit at appointment time and
     // re-frozen on every edit, like the rates. Document prose, so (like email)

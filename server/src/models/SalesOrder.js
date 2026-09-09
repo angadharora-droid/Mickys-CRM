@@ -121,7 +121,13 @@ const salesOrderSchema = new mongoose.Schema(
         baseUnits: { type: String, trim: true, default: '' },
         qty: { type: Number, required: true, min: 0 },
         rate: { type: Number, default: 0, min: 0 },
-        amount: { type: Number, default: 0 },
+        // GST rate (%) on this line — a property of the product — and the
+        // split of qty × rate it implies under the order's basis (utils/gst.js).
+        gst: { type: Number, default: 0, min: 0, max: 100 },
+        amount: { type: Number, default: 0 }, // qty × rate, as quoted
+        taxable: { type: Number, default: 0 }, // before GST
+        gstAmount: { type: Number, default: 0 },
+        lineTotal: { type: Number, default: 0 }, // taxable + GST
         stockQtyAtOrder: { type: Number, default: null },
         // What was left to sell when this order was saved, computed EXCLUDING
         // this order's own lines — so it legitimately sits this order's qty
@@ -130,6 +136,21 @@ const salesOrderSchema = new mongoose.Schema(
         availableAtOrder: { type: Number, default: null },
       },
     ],
+    // How GST applies: whether the rates are quoted exclusive or inclusive of
+    // it (a property of the price list — the trade rate cards are exclusive,
+    // the B2C MRP card inclusive) and whether the supply is intra-state
+    // (CGST + SGST) or inter-state (IGST), read off the customer's GSTIN.
+    // Orders from before GST was recorded carry none: their totals stand.
+    gst: {
+      basis: { type: String, enum: ['exclusive', 'inclusive'], default: 'exclusive' },
+      supplyType: { type: String, enum: ['intra', 'inter'], default: 'intra' },
+    },
+    taxableTotal: { type: Number, default: 0 },
+    gstTotal: { type: Number, default: 0 },
+    cgst: { type: Number, default: 0 },
+    sgst: { type: Number, default: 0 },
+    igst: { type: Number, default: 0 },
+    // What the customer pays: taxable value + GST.
     total: { type: Number, default: 0 },
     notes: { type: String, trim: true, default: '' },
     status: { type: String, enum: STATUSES, default: 'open', index: true },

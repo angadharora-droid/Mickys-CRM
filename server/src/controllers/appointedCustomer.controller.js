@@ -21,7 +21,11 @@ const pickBody = (body) => ({
     name: i.name,
     packSize: i.packSize || '',
     rate: i.rate,
+    gst: i.gst ?? null,
   })),
+  // The basis the rates are frozen on. Left out (an older client), the
+  // customer keeps whatever basis it has.
+  ...(body.gstBasis ? { gstBasis: body.gstBasis } : {}),
   terms: {
     paymentTerms: body.terms?.paymentTerms || '',
     creditPeriod: body.terms?.creditPeriod || '',
