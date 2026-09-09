@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import api, { apiError } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
@@ -49,7 +49,10 @@ export default function SalesRegister() {
   const [month, setMonth] = useState(months[0].value);
   const [[from, to], setRange] = useState(() => monthRange(months[0].value));
   const [search, setSearch] = useState('');
-  const [unmatched, setUnmatched] = useState(false);
+  // /sales/register?unmatched=true — how the Invoicing page's "Without order
+  // number" card lands here already filtered.
+  const [searchParams] = useSearchParams();
+  const [unmatched, setUnmatched] = useState(searchParams.get('unmatched') === 'true');
   const [page, setPage] = useState(1);
   const [rows, setRows] = useState([]);
   const [meta, setMeta] = useState(null);

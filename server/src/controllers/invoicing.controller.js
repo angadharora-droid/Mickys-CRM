@@ -1,32 +1,38 @@
 const asyncHandler = require('../utils/asyncHandler');
-const ApiError = require('../utils/ApiError');
 const SalesOrder = require('../models/SalesOrder');
 const StockSyncLog = require('../models/StockSyncLog');
 const TallyInvoice = require('../models/TallyInvoice');
-const { linkInvoiceManually, announce, paymentLabel } = require('../services/orderPipeline.service');
 const { dayRangeContext, buildWorkbook } = require('../services/report.service');
 const { SALES_VOUCHER_TYPE, TDL_VERSION } = require('../services/tallyStock.service');
-const { withDocumentRefs, populatePipeline } = require('./salesOrder.controller');
 const { getPagination, buildMeta } = require('../utils/pagination');
 const { logActivity } = require('../services/activity.service');
 const { searchRegex } = require('../utils/sanitize');
-const { istDayStart, istDateKey } = require('../utils/istDate');
+const { istDateKey } = require('../utils/istDate');
 
 /**
- * The accounts desk's view of the pipeline. Accounts do their real work in
- * Tally — checking the payment, keying the tax invoice — so this module is a
- * queue, not a form: which confirmed orders are waiting for an invoice, with
- * the payment the exec confirmed against, and which have come back from Tally
- * matched. The one thing written here is the manual invoice link, for a
- * voucher keyed without the order number on it.
+ * The accounts desk's view of the pipeline — a monitor, not a form. Accounts
+ * do their work in Tally: they key the tax invoice with the CRM order number
+ * on it, the Tally push carries the invoice back, and the CRM moves the order
+ * to Invoiced (and so into the Dispatch queue) on its own — see
+ * services/orderPipeline.service.js matchInvoices. Nothing here writes to an
+ * order. What this screen adds is visibility: which confirmed orders are still
+ * waiting, what the last push carried, and how many recent invoices name no
+ * order at all — keyed without the number, and fixed in Tally, never here.
  */
+
+/**
+ * How far back "recent" reaches for the no-order-number count: the window
+ * the TDL exports, so every invoice counted is one the next push still
+ * re-sends — add the order number to it in Tally and it matches.
+ */
+const UNMATCHED_WINDOW_DAYS = 60;
 
 const STAGES = {
   // Not yet confirmed — shown for context only; nothing to invoice yet.
   open: { filter: { status: 'open' }, sort: { createdAt: -1 } },
   // The queue: confirmed and waiting for the Tally invoice, oldest first.
   awaiting: { filter: { status: 'confirmed' }, sort: { confirmedAt: 1, createdAt: 1 } },
-  // Matched from Tally (or linked by hand), newest first.
+  // Matched from Tally, newest first.
   invoiced: {
     filter: { status: { $in: ['invoiced', 'dispatched', 'delivered', 'closed'] }, invoicedAt: { $ne: null } },
     sort: { invoicedAt: -1 },
@@ -43,14 +49,13 @@ const listQueue = asyncHandler(async (req, res) => {
     filter.$or = [{ number: rx }, { customerName: rx }, { 'invoices.voucherNumber': rx }, { 'payment.reference': rx }];
   }
 
-  const [orders, total, counts, lastSync] = await Promise.all([
+  const [orders, total, counts, lastSync, unmatchedInvoices] = await Promise.all([
     SalesOrder.find(filter)
       .sort(STAGES[stage].sort)
       .skip(skip)
       .limit(limit)
       .populate('createdBy', 'name phone')
       .populate('customer', 'companyName gstin email mobile address')
-      .populate('accounts.verifiedBy', 'name')
       .populate('payment.recordedBy', 'name'),
     SalesOrder.countDocuments(filter),
     Promise.all(
@@ -59,6 +64,14 @@ const listQueue = asyncHandler(async (req, res) => {
     StockSyncLog.findOne()
       .sort({ createdAt: -1 })
       .select('syncedAt invoiceCount invoicesMatched invoicesWithBasic ordersInvoiced tdlVersion source'),
+    // Sales invoices the push mirrored that claim no CRM order — keyed without
+    // the order number, or with one no order has. Same filter as the register's
+    // "without CRM order" view, which is where the card linking to it lands.
+    TallyInvoice.countDocuments({
+      voucherType: SALES_VOUCHER_TYPE,
+      orders: { $size: 0 },
+      date: { $gte: new Date(Date.now() - UNMATCHED_WINDOW_DAYS * 24 * 60 * 60 * 1000) },
+    }),
   ]);
 
   res.json({
@@ -68,6 +81,8 @@ const listQueue = asyncHandler(async (req, res) => {
       ...buildMeta(total, page, limit),
       stage,
       counts: Object.fromEntries(counts),
+      unmatchedInvoices,
+      unmatchedWindowDays: UNMATCHED_WINDOW_DAYS,
       // Whether Tally is sending invoices at all: a push with stock but zero
       // vouchers means the old TDL is still loaded on the Tally machine.
       lastSync: lastSync
@@ -84,85 +99,6 @@ const listQueue = asyncHandler(async (req, res) => {
           }
         : null,
     },
-  });
-});
-
-// POST /api/invoicing/:id/verify — accounts have checked the payment against
-// the bank. Optional bookkeeping; the order does not move.
-const verifyPayment = asyncHandler(async (req, res) => {
-  const order = await withDocumentRefs(SalesOrder.findById(req.params.id));
-  if (!order) throw ApiError.notFound('Sales order not found');
-  if (order.status !== 'confirmed' && order.status !== 'invoiced') {
-    throw ApiError.badRequest(
-      order.status === 'open'
-        ? `Sales order ${order.number} has not been confirmed yet — there is no payment to verify`
-        : `Sales order ${order.number} is ${order.status}`
-    );
-  }
-  order.accounts = { verifiedAt: new Date(), verifiedBy: req.user._id, note: req.body.note || '' };
-  order.history.push({
-    from: order.status,
-    to: order.status,
-    by: req.user._id,
-    note: `Payment verified by accounts${req.body.note ? ` — ${req.body.note}` : ''}`,
-  });
-  await order.save();
-  await populatePipeline(order);
-
-  await logActivity({
-    userId: req.user._id,
-    action: 'SALES_ORDER_PAYMENT_VERIFIED',
-    entity: 'SalesOrder',
-    entityId: order._id,
-    details: `Accounts verified payment on ${order.number} (${paymentLabel(order.payment)})${req.body.note ? ` — ${req.body.note}` : ''}`,
-    ip: req.ip,
-  });
-
-  res.json({ success: true, message: `Payment on ${order.number} marked verified`, data: order });
-});
-
-// POST /api/invoicing/:id/link-invoice — the Tally voucher was keyed without
-// the order number (or the push has not run yet); accounts link it by hand.
-const linkInvoice = asyncHandler(async (req, res) => {
-  const order = await withDocumentRefs(SalesOrder.findById(req.params.id));
-  if (!order) throw ApiError.notFound('Sales order not found');
-  if (order.status === 'cancelled') {
-    throw ApiError.badRequest(`Sales order ${order.number} is cancelled — an admin must reinstate it before it can be invoiced`);
-  }
-  const { voucherNumber, date, amount, note } = req.body;
-  if (order.invoices.some((i) => i.voucherNumber === voucherNumber)) {
-    throw ApiError.badRequest(`Invoice ${voucherNumber} is already linked to ${order.number}`);
-  }
-
-  const from = await linkInvoiceManually(
-    order,
-    { voucherNumber, date: date ? istDayStart(date) : null, amount: amount ?? null, note },
-    req.user
-  );
-  await populatePipeline(order);
-
-  await logActivity({
-    userId: req.user._id,
-    action: from === order.status ? 'SALES_ORDER_INVOICE_LINKED' : 'SALES_ORDER_STATUS',
-    entity: 'SalesOrder',
-    entityId: order._id,
-    meta: from === order.status ? { voucherNumber } : { status: 'invoiced', from, source: 'manual', voucherNumber },
-    details:
-      from === order.status
-        ? `Linked Tally invoice ${voucherNumber} to sales order ${order.number}`
-        : `Sales order ${order.number} marked invoiced — Tally invoice ${voucherNumber} linked by hand` +
-          (from === 'open' ? ' (invoiced while still open — never confirmed in the CRM)' : ''),
-    ip: req.ip,
-  });
-  if (from !== order.status) announce(order, req.user);
-
-  res.json({
-    success: true,
-    message:
-      from !== order.status
-        ? `${order.number} marked invoiced (Tally invoice ${voucherNumber})`
-        : `Invoice ${voucherNumber} linked to ${order.number}`,
-    data: order,
   });
 });
 
@@ -338,4 +274,4 @@ const exportRegister = asyncHandler(async (req, res) => {
   res.send(Buffer.from(buffer));
 });
 
-module.exports = { listQueue, verifyPayment, linkInvoice, listRegister, exportRegister };
+module.exports = { listQueue, listRegister, exportRegister };

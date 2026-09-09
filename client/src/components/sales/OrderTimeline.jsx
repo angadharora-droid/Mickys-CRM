@@ -3,7 +3,7 @@ import { cn, formatCurrency, formatDate, formatDateTime } from '@/lib/utils';
 import {
   PIPELINE_STAGES, ORDER_STAGE_STAMP, ORDER_STATUS_LABELS, PAYMENT_MODE_LABELS, DISPATCH_MODE_LABELS, daysSince,
 } from '@/lib/constants';
-import { Check, XCircle, Star, History, ChevronDown, ChevronUp, Landmark } from 'lucide-react';
+import { Check, XCircle, Star, History, ChevronDown, ChevronUp } from 'lucide-react';
 
 /** ★★★★☆ */
 export function Stars({ value, className }) {
@@ -67,15 +67,6 @@ function StageDetails({ order: o, stage }) {
           )}
           {p?.receivedOn && <Row label="Received on">{formatDate(p.receivedOn)}</Row>}
           {p?.notes && <Row label="Notes">{p.notes}</Row>}
-          {o.accounts?.verifiedAt && (
-            <Row label="Accounts">
-              <span className="inline-flex items-center gap-1 text-emerald-700">
-                <Landmark className="h-3 w-3" /> verified {formatDateTime(o.accounts.verifiedAt)}
-                {o.accounts.verifiedBy?.name ? ` by ${o.accounts.verifiedBy.name}` : ''}
-              </span>
-              {o.accounts.note ? ` — ${o.accounts.note}` : ''}
-            </Row>
-          )}
           {o.accountsEmailedAt && <Row label="Emailed">accounts, {formatDateTime(o.accountsEmailedAt)}</Row>}
         </>
       );

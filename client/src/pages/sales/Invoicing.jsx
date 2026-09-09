@@ -3,7 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import api, { apiError } from '@/lib/api';
 import { PAYMENT_MODE_LABELS, daysSince } from '@/lib/constants';
-import { cn, formatCurrency, formatDate, formatDateTime, todayInput } from '@/lib/utils';
+import { cn, formatCurrency, formatDate, formatDateTime } from '@/lib/utils';
 import PageHeader from '@/components/shared/PageHeader';
 import StatCard from '@/components/shared/StatCard';
 import EmptyState from '@/components/shared/EmptyState';
@@ -14,143 +14,22 @@ import OrderDetailDialog from '@/components/sales/OrderDetailDialog';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
-import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import {
-  Search, Banknote, FileCheck2, Link2, Loader2, RefreshCw, AlertTriangle, Landmark, Clock, Eye, CheckCircle2,
-  FileSpreadsheet,
-} from 'lucide-react';
+import { Search, Banknote, FileCheck2, FileQuestion, RefreshCw, AlertTriangle, Clock, Eye, FileSpreadsheet } from 'lucide-react';
 
 const paymentText = (p) => {
   if (!p?.mode) return 'Not recorded';
   return [PAYMENT_MODE_LABELS[p.mode] || p.mode, p.amount != null ? formatCurrency(p.amount) : '', p.reference].filter(Boolean).join(' · ');
 };
 
-/** Accounts link a Tally voucher that was keyed without the order number. */
-function LinkInvoiceDialog({ open, order, onClose, onLinked }) {
-  const [form, setForm] = useState({ voucherNumber: '', date: todayInput(), amount: '', note: '' });
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    if (!open || !order) return;
-    setForm({ voucherNumber: '', date: todayInput(), amount: order.total ?? '', note: '' });
-  }, [open, order]);
-
-  const submit = async () => {
-    if (!form.voucherNumber.trim()) return toast.error('Type the Tally invoice number');
-    setBusy(true);
-    try {
-      const { data } = await api.post(`/invoicing/${order._id}/link-invoice`, {
-        voucherNumber: form.voucherNumber.trim(),
-        date: form.date || '',
-        amount: form.amount === '' ? null : Number(form.amount),
-        note: form.note.trim(),
-      });
-      toast.success(data.message);
-      onLinked(data.data);
-      onClose();
-    } catch (err) {
-      toast.error(apiError(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle>Link Tally invoice to {order?.number}</DialogTitle>
-          <DialogDescription>
-            For a voucher keyed without the order number on it. Normally the Tally push matches invoices on its own —
-            write <span className="font-medium">{order?.number}</span> in the invoice's Order No(s), Ref or Narration.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="grid gap-3">
-          <div className="space-y-1.5">
-            <Label>Tally invoice number *</Label>
-            <Input autoFocus value={form.voucherNumber} onChange={(e) => setForm((f) => ({ ...f, voucherNumber: e.target.value }))} placeholder="e.g. CPF/26-27/0142" />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>Invoice date</Label>
-              <Input type="date" value={form.date} onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))} />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Invoice amount</Label>
-              <Input type="number" min="0" inputMode="decimal" value={form.amount} onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))} />
-            </div>
-          </div>
-          <div className="space-y-1.5">
-            <Label>Note</Label>
-            <Textarea rows={2} value={form.note} onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))} placeholder="Why it was linked by hand (optional)" />
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={busy}>Cancel</Button>
-          <Button onClick={submit} disabled={busy}>
-            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />} Link invoice
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-/** Accounts note that the payment checked out against the bank. */
-function VerifyDialog({ open, order, onClose, onVerified }) {
-  const [note, setNote] = useState('');
-  const [busy, setBusy] = useState(false);
-  useEffect(() => { if (open) setNote(''); }, [open]);
-
-  const submit = async () => {
-    setBusy(true);
-    try {
-      const { data } = await api.post(`/invoicing/${order._id}/verify`, { note: note.trim() });
-      toast.success(data.message);
-      onVerified(data.data);
-      onClose();
-    } catch (err) {
-      toast.error(apiError(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle>Verify payment on {order?.number}</DialogTitle>
-          <DialogDescription>
-            Sales confirmed this order against: <span className="font-medium">{paymentText(order?.payment)}</span>
-            {order?.payment?.receivedOn ? `, received ${formatDate(order.payment.receivedOn)}` : ''}. Mark it verified once
-            the bank / cash book agrees. The order does not move — the Tally invoice does that.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="space-y-1.5">
-          <Label>Note</Label>
-          <Textarea rows={2} autoFocus value={note} onChange={(e) => setNote(e.target.value)} placeholder="Bank reference, partial payment, anything accounts should remember (optional)" />
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={busy}>Cancel</Button>
-          <Button onClick={submit} disabled={busy}>
-            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Landmark className="h-4 w-4" />} Mark verified
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 /**
- * The accounts desk. Accounts key the invoice in Tally; this screen tells
- * them which confirmed orders are waiting for one (with the payment sales
- * confirmed against) and shows the invoices Tally has sent back.
+ * The accounts desk — a monitor, not a form. Accounts key the invoice in
+ * Tally with the order number on it; the Tally push brings it back and the
+ * CRM moves the order to Invoiced and into the Dispatch queue on its own.
+ * This screen shows which confirmed orders are waiting for that, which have
+ * come back matched, and how many recent Tally invoices name no order at all
+ * (keyed without the number — fixed in Tally, and matched by the next push).
  */
 export default function Invoicing() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -161,8 +40,6 @@ export default function Invoicing() {
   const [meta, setMeta] = useState(null);
   const [loading, setLoading] = useState(true);
   const [detail, setDetail] = useState(null);
-  const [linkFor, setLinkFor] = useState(null);
-  const [verifyFor, setVerifyFor] = useState(null);
 
   const fetchQueue = useCallback(async () => {
     setLoading(true);
@@ -194,13 +71,10 @@ export default function Invoicing() {
       .finally(() => setSearchParams({}, { replace: true }));
   }, [searchParams, setSearchParams]);
 
-  const afterChange = (updated) => {
-    fetchQueue();
-    setDetail((d) => (d && String(d._id) === String(updated._id) ? updated : d));
-  };
-
   const counts = meta?.counts || {};
   const lastSync = meta?.lastSync;
+  const unmatched = meta?.unmatchedInvoices ?? 0;
+  const windowDays = meta?.unmatchedWindowDays || 60;
   // A push that carried no invoices, or one from a TDL copy older than the
   // current template, both mean the Tally machine needs the new file.
   const tdlStale = lastSync && (lastSync.invoiceCount === 0 || lastSync.tdlCurrent === false);
@@ -209,7 +83,7 @@ export default function Invoicing() {
     <div>
       <PageHeader
         title="Invoicing"
-        description="Confirmed orders waiting for their Tally invoice, and the ones Tally has matched back"
+        description="Confirmed orders waiting for their Tally invoice. The Tally push moves them to Invoiced and on to dispatch — nothing to do here."
       >
         <Button variant="outline" onClick={fetchQueue}>
           <RefreshCw className="h-4 w-4" /> Refresh
@@ -219,15 +93,32 @@ export default function Invoicing() {
         </Button>
       </PageHeader>
 
-      <div className="grid gap-4 sm:grid-cols-3 mb-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4 mb-4">
         <StatCard
           title="Awaiting invoice"
           value={counts.awaiting ?? '—'}
-          hint="Confirmed by sales — key the invoice in Tally"
+          hint="Confirmed by sales — key the invoice in Tally with the order number on it"
           icon={Clock}
           tone={counts.awaiting > 0 ? 'warning' : 'success'}
         />
-        <StatCard title="Invoiced" value={counts.invoiced ?? '—'} hint="Matched from Tally or linked by hand" icon={FileCheck2} tone="success" />
+        <StatCard title="Invoiced" value={counts.invoiced ?? '—'} hint="Matched from Tally and passed to dispatch" icon={FileCheck2} tone="success" />
+        <Link
+          to="/sales/register?unmatched=true"
+          className="block rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          title="Open these invoices in the sales register"
+        >
+          <StatCard
+            title="Without order number"
+            value={meta ? unmatched : '—'}
+            hint={
+              unmatched > 0
+                ? `Tally invoices from the last ${windowDays} days naming no CRM order. For a CRM order, add the SO number to the voucher in Tally — the next push matches it.`
+                : `Every Tally invoice in the last ${windowDays} days names a CRM order`
+            }
+            icon={FileQuestion}
+            tone={unmatched > 0 ? 'warning' : 'success'}
+          />
+        </Link>
         <StatCard
           title="Last Tally push"
           value={lastSync ? formatDateTime(lastSync.at).replace(/,? \d{4}/, '') : '—'}
@@ -284,7 +175,7 @@ export default function Invoicing() {
                   <TableHead className="text-right">Value</TableHead>
                   <TableHead>Payment</TableHead>
                   <TableHead className="hidden lg:table-cell">{stage === 'invoiced' ? 'Tally invoice' : stage === 'open' ? 'Booked' : 'Confirmed'}</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+                  <TableHead className="text-right">View</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -305,14 +196,9 @@ export default function Invoicing() {
                       <TableCell className="text-right tabular-nums font-semibold">{formatCurrency(o.total)}</TableCell>
                       <TableCell>
                         <p className="text-sm">{paymentText(o.payment)}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {o.payment?.receivedOn ? `received ${formatDate(o.payment.receivedOn)}` : ''}
-                          {o.accounts?.verifiedAt && (
-                            <Badge variant="outline" className="ml-1 border bg-emerald-100 text-emerald-800 border-emerald-200 text-[10px]">
-                              <CheckCircle2 className="h-3 w-3 mr-0.5" /> verified
-                            </Badge>
-                          )}
-                        </p>
+                        {o.payment?.receivedOn && (
+                          <p className="text-xs text-muted-foreground">received {formatDate(o.payment.receivedOn)}</p>
+                        )}
                       </TableCell>
                       <TableCell className="hidden lg:table-cell">
                         {stage === 'invoiced' ? (
@@ -328,27 +214,15 @@ export default function Invoicing() {
                           <>
                             <p className="text-sm">{formatDateTime(o.confirmedAt)}</p>
                             <p className={cn('text-xs', waiting > 2 ? 'text-red-600 font-medium' : 'text-muted-foreground')}>
-                              waiting {waiting} day{waiting === 1 ? '' : 's'}
+                              waiting {waiting} day{waiting === 1 ? '' : 's'} for the Tally invoice
                             </p>
                           </>
                         )}
                       </TableCell>
                       <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-                        <div className="flex items-center justify-end gap-1">
-                          <Button variant="ghost" size="icon" className="h-8 w-8" title="View order" onClick={() => setDetail(o)}>
-                            <Eye className="h-4 w-4" />
-                          </Button>
-                          {o.status === 'confirmed' && !o.accounts?.verifiedAt && (
-                            <Button variant="ghost" size="icon" className="h-8 w-8" title="Mark payment verified" onClick={() => setVerifyFor(o)}>
-                              <Landmark className="h-4 w-4" />
-                            </Button>
-                          )}
-                          {(o.status === 'confirmed' || o.status === 'open') && (
-                            <Button variant="ghost" size="icon" className="h-8 w-8" title="Link Tally invoice by hand" onClick={() => setLinkFor(o)}>
-                              <Link2 className="h-4 w-4" />
-                            </Button>
-                          )}
-                        </div>
+                        <Button variant="ghost" size="icon" className="h-8 w-8" title="View order" onClick={() => setDetail(o)}>
+                          <Eye className="h-4 w-4" />
+                        </Button>
                       </TableCell>
                     </TableRow>
                   );
@@ -363,21 +237,21 @@ export default function Invoicing() {
       <Card className="mt-4">
         <CardHeader className="pb-2">
           <CardTitle className="text-base">How an order gets invoiced</CardTitle>
-          <CardDescription>The invoice is keyed in Tally, not here. The CRM only needs to recognise it.</CardDescription>
+          <CardDescription>Everything happens in Tally. The CRM only recognises the invoice and moves the order along.</CardDescription>
         </CardHeader>
         <CardContent>
           <ol className="grid gap-2 text-sm sm:grid-cols-3">
             <li className="rounded-lg border p-3">
-              <p className="font-medium">1. Check the payment</p>
-              <p className="text-xs text-muted-foreground mt-1">Sales confirm each order against a payment (or approved credit) — it is shown in the Payment column. Verify it if you keep that record.</p>
+              <p className="font-medium">1. Sales confirm the order</p>
+              <p className="text-xs text-muted-foreground mt-1">It lands in <span className="font-medium">Awaiting invoice</span> with the payment sales confirmed against. Nothing to click here.</p>
             </li>
             <li className="rounded-lg border p-3">
               <p className="font-medium">2. Key the sales invoice in Tally</p>
               <p className="text-xs text-muted-foreground mt-1">Write the order number (e.g. <span className="font-mono">SO-2026-0042</span>) in the invoice's <span className="font-medium">Order No(s)</span>, <span className="font-medium">Ref</span> or <span className="font-medium">Narration</span>. Case and spacing do not matter.</p>
             </li>
             <li className="rounded-lg border p-3">
-              <p className="font-medium">3. Wait for the push</p>
-              <p className="text-xs text-muted-foreground mt-1">Tally pushes to the CRM every 10 minutes (Ctrl+F10 on the Mickys Stock Export for at once). The order moves to Invoiced and dispatch is told. Forgot the number? Use Link invoice.</p>
+              <p className="font-medium">3. The push does the rest</p>
+              <p className="text-xs text-muted-foreground mt-1">Tally pushes to the CRM every 10 minutes (Ctrl+F10 on the Mickys Stock Export for at once). The order moves to <span className="font-medium">Invoiced</span> and into the Dispatch queue on its own. Forgot the number? Add it to the voucher in Tally — the next push picks it up.</p>
             </li>
           </ol>
         </CardContent>
@@ -387,24 +261,8 @@ export default function Invoicing() {
         open={Boolean(detail)}
         order={detail}
         onClose={() => setDetail(null)}
-        renderActions={(o) => (
-          <>
-            {o.status === 'confirmed' && !o.accounts?.verifiedAt && (
-              <Button variant="outline" onClick={() => setVerifyFor(o)}>
-                <Landmark className="h-4 w-4" /> Mark payment verified
-              </Button>
-            )}
-            {(o.status === 'confirmed' || o.status === 'open') && (
-              <Button onClick={() => setLinkFor(o)}>
-                <Link2 className="h-4 w-4" /> Link Tally invoice
-              </Button>
-            )}
-            <Button variant="outline" onClick={() => setDetail(null)}>Close</Button>
-          </>
-        )}
+        renderActions={() => <Button variant="outline" onClick={() => setDetail(null)}>Close</Button>}
       />
-      <LinkInvoiceDialog open={Boolean(linkFor)} order={linkFor} onClose={() => setLinkFor(null)} onLinked={afterChange} />
-      <VerifyDialog open={Boolean(verifyFor)} order={verifyFor} onClose={() => setVerifyFor(null)} onVerified={afterChange} />
     </div>
   );
 }

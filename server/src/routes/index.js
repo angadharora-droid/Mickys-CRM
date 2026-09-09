@@ -174,18 +174,15 @@ router.post('/sales-orders/:id/email', authenticate, authorize(ADMIN, EXEC), SAL
 router.delete('/sales-orders/:id', authenticate, authorize(ADMIN), salesOrders.deleteSalesOrder);
 
 // ---------- Invoicing module (accounts) ----------
-// A queue of confirmed orders waiting for their Tally invoice, and the ones
-// matched back. The invoice itself is keyed in Tally; the push matches it
-// (POST /stock/sync) — the manual link covers a voucher keyed without the
-// order number on it.
+// Read-only: a queue of confirmed orders waiting for their Tally invoice, and
+// the ones matched back. The invoice itself is keyed in Tally and the push
+// (POST /stock/sync) moves the order to invoiced — there is no manual step.
 router.get('/invoicing/queue', authenticate, INVOICING_MODULE, invoicing.listQueue);
 // The Tally sales register (every mirrored invoice, as Tally's register reads
 // it) is read by sales as well as accounts; export is the same rows as Excel.
 const REGISTER_MODULES = requireAnyModule('sales_orders', 'invoicing');
 router.get('/invoicing/register', authenticate, REGISTER_MODULES, invoicing.listRegister);
 router.get('/invoicing/register/export', authenticate, REGISTER_MODULES, invoicing.exportRegister);
-router.post('/invoicing/:id/verify', authenticate, INVOICING_MODULE, validate(v.accountsVerifySchema), invoicing.verifyPayment);
-router.post('/invoicing/:id/link-invoice', authenticate, INVOICING_MODULE, validate(v.invoiceLinkSchema), invoicing.linkInvoice);
 
 // ---------- Dispatch module ----------
 // Invoiced orders waiting to go, and the dispatch form that sends them.

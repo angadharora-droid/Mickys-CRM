@@ -78,9 +78,9 @@ const historySchema = new mongoose.Schema(
 );
 
 /**
- * A Tally sales invoice matched to this order. Normally written by the stock
- * push (source 'tally'); accounts can also link one by hand when the voucher
- * was keyed without the order number on it (source 'manual').
+ * A Tally sales invoice matched to this order, written by the stock push
+ * (source 'tally'). 'manual' and `linkedBy` survive only on invoices linked
+ * by hand before matching became automatic; nothing writes them any more.
  */
 const invoiceSchema = new mongoose.Schema(
   {
@@ -155,17 +155,11 @@ const salesOrderSchema = new mongoose.Schema(
       recordedAt: { type: Date, default: null },
     },
 
-    // ---- Step 2: accounts' own check before keying the invoice (optional) ----
-    accounts: {
-      verifiedAt: { type: Date, default: null },
-      verifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-      note: { type: String, trim: true, default: '' },
-    },
-
-    // ---- Step 3: the Tally invoice(s) matched to this order ----
+    // ---- Step 2: the Tally invoice(s) matched to this order — written by
+    // the Tally push, never by hand ----
     invoices: { type: [invoiceSchema], default: [] },
 
-    // ---- Step 4: how the goods went ----
+    // ---- Step 3: how the goods went ----
     dispatch: {
       mode: { type: String, enum: [...DISPATCH_MODES, ''], default: '' },
       carrier: { type: String, trim: true, default: '' }, // courier / transporter
@@ -183,7 +177,7 @@ const salesOrderSchema = new mongoose.Schema(
       filledAt: { type: Date, default: null },
     },
 
-    // ---- Step 5: the customer has the goods ----
+    // ---- Step 4: the customer has the goods ----
     delivery: {
       deliveredOn: { type: Date, default: null },
       receivedBy: { type: String, trim: true, default: '' },
@@ -192,7 +186,7 @@ const salesOrderSchema = new mongoose.Schema(
       markedAt: { type: Date, default: null },
     },
 
-    // ---- Step 6: what the customer thought ----
+    // ---- Step 5: what the customer thought ----
     feedback: {
       rating: { type: Number, min: 1, max: 5, default: null }, // overall
       quality: { type: Number, min: 1, max: 5, default: null },

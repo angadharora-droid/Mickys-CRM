@@ -618,16 +618,6 @@ const dispatchFormSchema = z.object({
   expectedDeliveryOn: isoDay.optional().or(z.literal('')),
   remarks: shortText(1000),
 });
-const invoiceLinkSchema = z.object({
-  voucherNumber: z.string().trim().min(1, 'Type the Tally invoice number').max(60),
-  date: isoDay.optional().or(z.literal('')),
-  amount: blankableNumber(z.number().min(0)).optional(),
-  note: shortText(500),
-});
-const accountsVerifySchema = z.object({
-  note: shortText(500),
-});
-
 // Manual send of the order PDF to the customer. Everything is optional: the
 // recipient falls back to the appointed customer's address and the subject and
 // body to the standard covering note.
@@ -692,8 +682,6 @@ module.exports = {
   salesOrderDeliverySchema,
   salesOrderFeedbackSchema,
   dispatchFormSchema,
-  invoiceLinkSchema,
-  accountsVerifySchema,
   appointedCustomerSchema,
   appointedCustomerCreateSchema,
 };
