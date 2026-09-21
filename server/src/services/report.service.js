@@ -1,5 +1,6 @@
 const ExcelJS = require('exceljs');
 const Lead = require('../models/Lead');
+const SalesOrder = require('../models/SalesOrder');
 const ApiError = require('../utils/ApiError');
 const { getScoreConfig, linkedOrdersByLead, buildScoreCard } = require('./leadScore.service');
 
@@ -374,6 +375,234 @@ async function instructionRows(ctx) {
   return rows;
 }
 
+/**
+ * The lead's internal note as one text: the shared note, plus any legacy
+ * per-author notes that have not been consolidated into it yet (oldest first).
+ */
+function internalNoteText(l) {
+  const legacy = [...(l.notes || [])]
+    .sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0))
+    .map((n) => String(n.text || '').trim());
+  return [...new Set([String(l.internalNotes || '').trim(), ...legacy].filter(Boolean))].join('\n');
+}
+
+/**
+ * The enquiry register: every enquiry received in the period with the full
+ * lead details, the team's internal notes and where it stands — last contact,
+ * next action and funnel stage.
+ */
+async function enquiryRows(ctx) {
+  const leads = await Lead.find({ ...ctx.scope, leadDate: { $gte: ctx.from, $lte: ctx.to } })
+    .select(
+      'refNumber businessName contactPerson designation mobileNumber email whatsappNumber city state address gstin ' +
+      'businessType leadSource dailyUsage assignedExecId leadDate stage status turnDownReason actionPoint ' +
+      'followUp.date followUp.status internalNotes notes.text notes.createdAt ' +
+      'visitReports.visitDate visitReports.visitType visitReports.note createdBy'
+    )
+    .populate({ path: 'assignedExecId', select: 'name' })
+    .populate({ path: 'createdBy', select: 'name' })
+    .sort({ leadDate: -1 })
+    .lean();
+
+  return leads.map((l) => {
+    const contacts = (l.visitReports || [])
+      .filter((v) => v.visitDate)
+      .sort((a, b) => new Date(b.visitDate) - new Date(a.visitDate));
+    const last = contacts[0];
+    return {
+      leadDate: l.leadDate ? new Date(l.leadDate) : null,
+      ...leadBasics(l),
+      contactPerson: l.contactPerson || '',
+      designation: l.designation || '',
+      mobileNumber: l.mobileNumber || '',
+      whatsappNumber: l.whatsappNumber || '',
+      email: l.email || '',
+      state: l.state || '',
+      address: l.address || '',
+      gstin: l.gstin || '',
+      businessType: l.businessType || '',
+      leadSource: l.leadSource || '',
+      dailyUsage: l.dailyUsage || '',
+      stage: STAGE_LABELS[l.stage] || 'New',
+      status: STATUS_LABELS[l.status] || l.status,
+      internalNotes: internalNoteText(l),
+      interactions: contacts.length,
+      lastContact: last ? new Date(last.visitDate) : null,
+      lastContactType: last ? (last.visitType === 'call' ? 'Call' : 'Field visit') : '',
+      lastContactNote: last?.note || '',
+      actionPoint: l.actionPoint || '',
+      followUpDate: l.followUp?.status === 'open' && l.followUp?.date ? new Date(l.followUp.date) : null,
+      turnDownReason: l.turnDownReason || '',
+      createdBy: l.createdBy?.name || '—',
+    };
+  });
+}
+
+const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+/**
+ * Enquiries that became clients in the period: how long the conversion took,
+ * the work that went into it, who made it, and the business booked since.
+ */
+async function conversionRows(ctx) {
+  const leads = await Lead.find({ ...ctx.scope, clientMadeAt: { $gte: ctx.from, $lte: ctx.to } })
+    .select(
+      'refNumber businessName contactPerson mobileNumber city state businessType leadSource assignedExecId kitType ' +
+      'leadDate createdAt stage clientMadeAt stageHistory visitReports.visitType samples.givenOn'
+    )
+    .populate({ path: 'assignedExecId', select: 'name' })
+    .populate({ path: 'stageHistory.changedBy', select: 'name' })
+    .sort({ clientMadeAt: -1 })
+    .lean();
+  const ordersByLead = await linkedOrdersByLead(leads.map((l) => l._id));
+
+  return leads.map((l) => {
+    const orders = ordersByLead.get(String(l._id)) || [];
+    const enquiredAt = l.leadDate || l.createdAt;
+    const visits = l.visitReports || [];
+    // clientMadeAt is stamped by the first move to `client`, so that entry is
+    // the conversion (older leads backfilled with a date may have none).
+    const made = (l.stageHistory || []).find((h) => h.to === 'client');
+    return {
+      clientMadeAt: new Date(l.clientMadeAt),
+      ...leadBasics(l),
+      contactPerson: l.contactPerson || '',
+      mobileNumber: l.mobileNumber || '',
+      state: l.state || '',
+      businessType: l.businessType || '',
+      leadSource: l.leadSource || '',
+      leadDate: enquiredAt ? new Date(enquiredAt) : null,
+      daysToConvert: enquiredAt
+        ? Math.max(0, Math.round((new Date(l.clientMadeAt) - new Date(enquiredAt)) / 86400000))
+        : null,
+      stage: STAGE_LABELS[l.stage] || 'New',
+      kitType: KIT_TYPE_LABELS[l.kitType] || '',
+      visits: visits.filter((v) => v.visitType !== 'call').length,
+      calls: visits.filter((v) => v.visitType === 'call').length,
+      samples: (l.samples || []).length,
+      orders: orders.length,
+      orderValue: round2(orders.reduce((sum, o) => sum + (Number(o.total) || 0), 0)),
+      firstOrder: orders[0]?.number || '',
+      firstOrderDate: orders[0]?.createdAt ? new Date(orders[0].createdAt) : null,
+      lastOrderDate: orders.length ? new Date(orders[orders.length - 1].createdAt) : null,
+      convertedBy: made?.changedBy?.name || (made?.source === 'system' ? 'System' : '—'),
+      conversionNote: made?.reason || '',
+    };
+  });
+}
+
+/**
+ * Headline figures for the conversion report. The rate sets the clients made
+ * in the period against the enquiries received in the same period — the rows
+ * alone can't give it, since they list only the enquiries that converted.
+ */
+async function conversionSummary(ctx, rows) {
+  const enquiries = await Lead.countDocuments({ ...ctx.scope, leadDate: { $gte: ctx.from, $lte: ctx.to } });
+  const timed = rows.filter((r) => r.daysToConvert !== null);
+  const avgDays = timed.length
+    ? Math.round((timed.reduce((sum, r) => sum + r.daysToConvert, 0) / timed.length) * 10) / 10
+    : 0;
+  const orderValue = rows.reduce((sum, r) => sum + r.orderValue, 0);
+  return [
+    { label: 'Clients made', value: rows.length, tone: 'green' },
+    { label: 'Enquiries received', value: enquiries, tone: 'sky' },
+    { label: 'Conversion rate', value: enquiries ? `${Math.round((rows.length / enquiries) * 1000) / 10}%` : '—' },
+    { label: 'Avg days to convert', value: avgDays },
+    { label: 'With orders', value: rows.filter((r) => r.orders > 0).length },
+    { label: 'Order value', value: `₹${Math.round(orderValue).toLocaleString('en-IN')}`, tone: 'amber' },
+  ];
+}
+
+/**
+ * Every piece of client feedback taken in the period, from both places the CRM
+ * records it: feedback logged on the lead (on the samples / kit / offer) and
+ * the rated feedback collected on a delivered sales order. Order feedback is
+ * joined back to its lead through the appointed customer, so it obeys the same
+ * executive scope as everything else here.
+ */
+async function feedbackRows(ctx) {
+  const range = { $gte: ctx.from, $lte: ctx.to };
+  const orders = await SalesOrder.find({ 'feedback.submittedAt': range, status: { $ne: 'cancelled' } })
+    .select('number customer feedback')
+    .populate({ path: 'customer', select: 'lead' })
+    .populate({ path: 'feedback.submittedBy', select: 'name' })
+    .lean();
+  const ordersByLead = new Map();
+  for (const o of orders) {
+    const leadId = o.customer?.lead ? String(o.customer.lead) : '';
+    if (!leadId) continue;
+    if (!ordersByLead.has(leadId)) ordersByLead.set(leadId, []);
+    ordersByLead.get(leadId).push(o);
+  }
+
+  const leads = await Lead.find({
+    ...ctx.scope,
+    $or: [
+      { feedbacks: { $elemMatch: { takenOn: range } } },
+      { _id: { $in: [...ordersByLead.keys()] } },
+    ],
+  })
+    .select(
+      'refNumber businessName contactPerson mobileNumber city businessType assignedExecId stage ' +
+      'feedbacks samples.givenOn samples.products'
+    )
+    .populate({ path: 'assignedExecId', select: 'name' })
+    .populate({ path: 'feedbacks.createdBy', select: 'name' })
+    .lean();
+
+  const rows = [];
+  for (const l of leads) {
+    const shared = {
+      ...leadBasics(l),
+      contactPerson: l.contactPerson || '',
+      mobileNumber: l.mobileNumber || '',
+      businessType: l.businessType || '',
+      stage: STAGE_LABELS[l.stage] || 'New',
+    };
+    const samples = [...(l.samples || [])].sort((a, b) => new Date(b.givenOn) - new Date(a.givenOn));
+    for (const f of l.feedbacks || []) {
+      if (!inRange(f.takenOn, ctx)) continue;
+      // What the client was reacting to: the latest samples given by then.
+      const sample = samples.find((s) => new Date(s.givenOn) <= new Date(f.takenOn));
+      rows.push({
+        feedbackDate: new Date(f.takenOn),
+        feedbackOn: 'Lead',
+        orderNumber: '',
+        ...shared,
+        note: f.note || '',
+        rating: null,
+        quality: null,
+        deliveryRating: null,
+        packaging: null,
+        wouldReorder: '',
+        sampleProducts: sample?.products || '',
+        takenBy: f.createdBy?.name || '—',
+        loggedAt: f.createdAt ? new Date(f.createdAt) : null,
+      });
+    }
+    for (const o of ordersByLead.get(String(l._id)) || []) {
+      const fb = o.feedback;
+      rows.push({
+        feedbackDate: new Date(fb.submittedAt),
+        feedbackOn: 'Sales order',
+        orderNumber: o.number || '',
+        ...shared,
+        note: fb.comments || '',
+        rating: fb.rating ?? null,
+        quality: fb.quality ?? null,
+        deliveryRating: fb.delivery ?? null,
+        packaging: fb.packaging ?? null,
+        wouldReorder: fb.wouldReorder == null ? '' : fb.wouldReorder ? 'Yes' : 'No',
+        sampleProducts: '',
+        takenBy: fb.submittedBy?.name || '—',
+        loggedAt: new Date(fb.submittedAt),
+      });
+    }
+  }
+  rows.sort((a, b) => b.feedbackDate - a.feedbackDate || (b.loggedAt || 0) - (a.loggedAt || 0));
+  return rows;
+}
+
 /** One lean scan powering the two aggregate reports. */
 function activityScan(ctx) {
   return Lead.find(ctx.scope)
@@ -606,6 +835,99 @@ const REPORTS = {
       { key: 'internalNotes', header: 'Internal Notes', width: 40, wrap: true },
       { key: 'createdBy', header: 'Created By', width: 16 },
       { key: 'createdAt', header: 'Created At', type: 'datetime', width: 18 },
+    ],
+  },
+  enquiries: {
+    label: 'Enquiry Report',
+    description: 'Every enquiry received in the period with the full lead details and internal notes, plus where it stands: last contact, next action and funnel stage.',
+    build: enquiryRows,
+    columns: [
+      { key: 'leadDate', header: 'Enquiry Date', type: 'date', width: 13 },
+      { key: 'refNumber', header: 'Ref', width: 20 },
+      { key: 'businessName', header: 'Business', width: 26 },
+      { key: 'contactPerson', header: 'Contact', width: 18 },
+      { key: 'designation', header: 'Designation', width: 14 },
+      { key: 'mobileNumber', header: 'Mobile', width: 14 },
+      { key: 'whatsappNumber', header: 'WhatsApp', width: 14 },
+      { key: 'email', header: 'Email', width: 24 },
+      { key: 'city', header: 'City', width: 14 },
+      { key: 'state', header: 'State', width: 14 },
+      { key: 'businessType', header: 'Type', width: 13 },
+      { key: 'leadSource', header: 'Source', width: 14 },
+      { key: 'dailyUsage', header: 'Daily Usage', width: 18 },
+      { key: 'executive', header: 'Executive', width: 16 },
+      { key: 'stage', header: 'Funnel Stage', width: 13 },
+      { key: 'status', header: 'Kit Status', width: 15 },
+      { key: 'internalNotes', header: 'Internal Notes', width: 50, wrap: true },
+      { key: 'interactions', header: 'Visits + Calls', type: 'number', width: 12 },
+      { key: 'lastContact', header: 'Last Contact', type: 'date', width: 13 },
+      { key: 'lastContactType', header: 'Contact Type', width: 12 },
+      { key: 'lastContactNote', header: 'Last Contact Note', width: 44, wrap: true },
+      { key: 'actionPoint', header: 'Action Point', width: 18 },
+      { key: 'followUpDate', header: 'Follow-up Due', type: 'date', width: 14 },
+      { key: 'turnDownReason', header: 'Turn-down Reason', width: 30, wrap: true },
+      { key: 'gstin', header: 'GSTIN', width: 18 },
+      { key: 'address', header: 'Address', width: 34, wrap: true },
+      { key: 'createdBy', header: 'Captured By', width: 16 },
+    ],
+  },
+  conversions: {
+    label: 'Conversion Report',
+    description: 'Enquiries that became clients in the period — days taken, the work behind it, who converted it and the orders booked since. Conversion rate = clients made ÷ enquiries received in the same period.',
+    build: conversionRows,
+    summary: conversionSummary,
+    columns: [
+      { key: 'clientMadeAt', header: 'Converted On', type: 'date', width: 13 },
+      { key: 'refNumber', header: 'Ref', width: 20 },
+      { key: 'businessName', header: 'Business', width: 26 },
+      { key: 'contactPerson', header: 'Contact', width: 18 },
+      { key: 'mobileNumber', header: 'Mobile', width: 14 },
+      { key: 'city', header: 'City', width: 14 },
+      { key: 'state', header: 'State', width: 14 },
+      { key: 'businessType', header: 'Type', width: 13 },
+      { key: 'leadSource', header: 'Source', width: 14 },
+      { key: 'executive', header: 'Executive', width: 16 },
+      { key: 'leadDate', header: 'Enquiry Date', type: 'date', width: 13 },
+      { key: 'daysToConvert', header: 'Days to Convert', type: 'number', width: 14 },
+      { key: 'stage', header: 'Current Stage', width: 13 },
+      { key: 'kitType', header: 'Kit', width: 15 },
+      { key: 'visits', header: 'Field Visits', type: 'number', width: 11 },
+      { key: 'calls', header: 'Calls', type: 'number', width: 8 },
+      { key: 'samples', header: 'Samples', type: 'number', width: 9 },
+      { key: 'orders', header: 'Orders', type: 'number', width: 8 },
+      { key: 'orderValue', header: 'Order Value (₹)', type: 'number', width: 15 },
+      { key: 'firstOrder', header: 'First Order', width: 15 },
+      { key: 'firstOrderDate', header: 'First Order On', type: 'date', width: 14 },
+      { key: 'lastOrderDate', header: 'Last Order On', type: 'date', width: 14 },
+      { key: 'convertedBy', header: 'Converted By', width: 16 },
+      { key: 'conversionNote', header: 'Conversion Note', width: 34, wrap: true },
+    ],
+  },
+  feedback: {
+    label: 'Feedback Report',
+    description: 'All client feedback taken in the period — feedback logged on the lead (samples / kit / offer) and the rated feedback collected on delivered sales orders.',
+    build: feedbackRows,
+    columns: [
+      { key: 'feedbackDate', header: 'Feedback Date', type: 'date', width: 13 },
+      { key: 'feedbackOn', header: 'Feedback On', width: 12 },
+      { key: 'orderNumber', header: 'Order No.', width: 15 },
+      { key: 'refNumber', header: 'Ref', width: 20 },
+      { key: 'businessName', header: 'Business', width: 26 },
+      { key: 'contactPerson', header: 'Contact', width: 18 },
+      { key: 'mobileNumber', header: 'Mobile', width: 14 },
+      { key: 'city', header: 'City', width: 14 },
+      { key: 'businessType', header: 'Type', width: 13 },
+      { key: 'executive', header: 'Executive', width: 16 },
+      { key: 'stage', header: 'Funnel Stage', width: 13 },
+      { key: 'note', header: 'Feedback', width: 50, wrap: true },
+      { key: 'rating', header: 'Rating (1-5)', type: 'number', width: 11 },
+      { key: 'quality', header: 'Quality', type: 'number', width: 9 },
+      { key: 'deliveryRating', header: 'Delivery', type: 'number', width: 9 },
+      { key: 'packaging', header: 'Packaging', type: 'number', width: 10 },
+      { key: 'wouldReorder', header: 'Would Reorder', width: 13 },
+      { key: 'sampleProducts', header: 'Samples Given', width: 30, wrap: true },
+      { key: 'takenBy', header: 'Taken By', width: 16 },
+      { key: 'loggedAt', header: 'Logged At', type: 'datetime', width: 18 },
     ],
   },
   'follow-ups': {
@@ -883,6 +1205,8 @@ async function runReport(type, ctx) {
     columns: def.columns,
     rows,
     totals: def.totals ? totalsRow(def, rows) : null,
+    // Headline figures the rows alone can't give (e.g. a conversion rate).
+    summary: def.summary ? await def.summary(ctx, rows) : null,
   };
 }
 
@@ -906,6 +1230,13 @@ function addSheet(wb, report, rangeLabel) {
   title.value = `Micky's CRM — ${report.label} (${period})`;
   title.font = { bold: true, size: 13, color: { argb: BRAND_ARGB } };
   ws.getRow(1).height = 22;
+
+  if (report.summary?.length) {
+    ws.mergeCells(2, 1, 2, Math.max(colCount, 1));
+    const summary = ws.getCell(2, 1);
+    summary.value = report.summary.map((s) => `${s.label}: ${s.value}`).join('   |   ');
+    summary.font = { italic: true, color: { argb: 'FF555555' } };
+  }
 
   const headerRow = ws.getRow(3);
   report.columns.forEach((c, i) => {

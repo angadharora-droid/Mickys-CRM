@@ -40,9 +40,12 @@ const getReport = asyncHandler(async (req, res) => {
     data: {
       type,
       label: report.label,
-      columns: report.columns.map(({ key, header, type: colType }) => ({ key, header, type: colType || 'string' })),
+      columns: report.columns.map(({ key, header, type: colType, wrap }) => ({
+        key, header, type: colType || 'string', wrap: Boolean(wrap),
+      })),
       rows: report.rows,
       totals: report.totals,
+      summary: report.summary,
       meta: { from: ctx.fromStr, to: ctx.toStr, count: report.rows.length },
     },
   });
