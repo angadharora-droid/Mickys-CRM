@@ -107,6 +107,33 @@ function summarize(type, report) {
         { label: 'Kit generated', value: count((r) => Boolean(r.generatedAt)) },
         { label: 'Delivered', value: count((r) => r.delivered === 'Yes'), tone: 'green' },
       ];
+    case 'enquiries':
+      return [
+        { label: 'Enquiries', value: rows.length, tone: 'sky' },
+        { label: 'With notes', value: count((r) => Boolean(r.internalNotes)) },
+        { label: 'Contacted', value: count((r) => r.interactions > 0) },
+        { label: 'Live', value: count((r) => r.stage === 'Live'), tone: 'amber' },
+        { label: 'Clients made', value: count((r) => r.stage === 'Client made'), tone: 'green' },
+        { label: 'Turned down', value: count((r) => r.stage === 'Turned down'), tone: 'red' },
+      ];
+    case 'conversions':
+      // Computed on the server — the rate needs the period's enquiry count.
+      return report.summary || [];
+    case 'feedback': {
+      const rated = rows.filter((r) => r.rating);
+      return [
+        { label: 'Feedback taken', value: rows.length, tone: 'sky' },
+        { label: 'On leads', value: count((r) => r.feedbackOn === 'Lead') },
+        { label: 'On orders', value: count((r) => r.feedbackOn === 'Sales order') },
+        { label: 'Businesses', value: uniq('refNumber') },
+        {
+          label: 'Avg rating',
+          value: rated.length ? Math.round((rated.reduce((s, r) => s + r.rating, 0) / rated.length) * 10) / 10 : '—',
+          tone: 'amber',
+        },
+        { label: 'Would reorder', value: count((r) => r.wouldReorder === 'Yes'), tone: 'green' },
+      ];
+    }
     case 'follow-ups':
       return [
         { label: 'Open', value: count((r) => r.status === 'Open'), tone: 'sky' },
@@ -437,7 +464,7 @@ export default function Reports() {
                                 className={cn(
                                   'py-2.5 align-top text-sm',
                                   c.type === 'number' && 'text-right tabular-nums',
-                                  ['note', 'closingNote', 'text', 'subject', 'attachments', 'address', 'internalNotes'].includes(c.key)
+                                  c.wrap || ['note', 'closingNote', 'text', 'subject', 'attachments', 'address', 'internalNotes'].includes(c.key)
                                     ? 'min-w-[16rem] max-w-md whitespace-pre-wrap break-words'
                                     : 'whitespace-nowrap'
                                 )}
