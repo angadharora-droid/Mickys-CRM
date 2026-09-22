@@ -1,7 +1,27 @@
 import { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import api, { setAccessToken, refreshSession } from '@/lib/api';
+import { resolveSsoToken, ssoLogout } from '@/lib/sso';
 
 const AuthContext = createContext(null);
+
+/**
+ * Central sign-on: with no local session, the portal cookie may still identify
+ * this visitor. Exchanges the portal's hand-off token for a normal session —
+ * the backend issues the same access token and refresh cookie as /auth/login.
+ * Resolves to the user, or null when SSO is off, the visitor is not signed in
+ * to the portal, or no CRM account is linked.
+ */
+async function restoreFromSso() {
+  const token = await resolveSsoToken();
+  if (!token) return null;
+  try {
+    const { data } = await api.post('/auth/sso', { token });
+    setAccessToken(data.data.accessToken);
+    return data.data.user;
+  } catch {
+    return null;
+  }
+}
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
@@ -18,7 +38,9 @@ export function AuthProvider({ children }) {
         if (!cancelled) setUser(restoredUser);
       } catch {
         setAccessToken(null);
-        if (!cancelled) setUser(null);
+        // No refresh cookie: try the portal before falling through to /login.
+        const ssoUser = await restoreFromSso();
+        if (!cancelled) setUser(ssoUser);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -44,6 +66,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   const logout = useCallback(async () => {
+    ssoLogout(); // end the portal session too, or the next load signs back in
     try {
       await api.post('/auth/logout');
     } catch {

@@ -7,6 +7,8 @@ const upload = require('../middleware/upload');
 const v = require('../validators');
 
 const auth = require('../controllers/auth.controller');
+const sso = require('../controllers/sso.controller');
+const { directoryGuard } = require('../lib/ssoClient');
 const users = require('../controllers/user.controller');
 const rateItems = require('../controllers/rateItem.controller');
 const leads = require('../controllers/lead.controller');
@@ -48,10 +50,15 @@ const DISPATCH_MODULE = requireModule('dispatch');
 
 // ---------- Auth ----------
 router.post('/auth/login', loginLimiter, validate(v.loginSchema), auth.login);
+// Central sign-on from the CPG portal (no-op until AUTH_SERVICE_URL is set).
+router.post('/auth/sso', loginLimiter, auth.ssoLogin);
 router.post('/auth/refresh', authLimiter, auth.refresh);
 router.post('/auth/logout', auth.logout);
 router.get('/auth/me', authenticate, auth.me);
 router.post('/auth/change-password', authLimiter, authenticate, validate(v.changePasswordSchema), auth.changePassword);
+
+// ---------- Central sign-on directory (shared secret, no user session) ----------
+router.get('/sso/users', directoryGuard, sso.listUsers);
 
 // ---------- Users (admin only, except exec picker list) ----------
 router.get('/users', authenticate, users.listUsers); // role-filtered lists used by lead-assignment pickers
