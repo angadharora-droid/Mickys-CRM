@@ -1,10 +1,12 @@
 const bcrypt = require('bcryptjs');
+const mongoose = require('mongoose');
 const env = require('../config/env');
 const asyncHandler = require('../utils/asyncHandler');
 const ApiError = require('../utils/ApiError');
 const User = require('../models/User');
 const tokenService = require('../services/token.service');
 const { logActivity } = require('../services/activity.service');
+const { verifySsoToken } = require('../lib/ssoClient');
 const { passwordAllowedFor, PASSWORD_RULE_MESSAGE } = require('../validators');
 
 // A throwaway hash to compare against when the email doesn't exist, so a
@@ -83,6 +85,16 @@ const login = asyncHandler(async (req, res) => {
   }
   if (!user.isActive) throw ApiError.forbidden('Your account has been deactivated');
 
+  await completeLogin(req, res, user);
+});
+
+/**
+ * Everything a successful login does once the caller is authenticated: issue
+ * the token pair (recording a session), clear any lockout state, stamp
+ * lastLoginAt, log the activity, set the refresh cookie and send the standard
+ * { user, accessToken } payload. Shared by password login and central sign-on.
+ */
+async function completeLogin(req, res, user, details = `${user.name} logged in`) {
   const { accessToken, refreshToken } = await tokenService.issueTokenPair(user, sessionContext(req));
   // Successful login clears any accumulated failure/lock state.
   const now = new Date();
@@ -94,11 +106,31 @@ const login = asyncHandler(async (req, res) => {
 
   await logActivity({
     userId: user._id, action: 'LOGIN', entity: 'User', entityId: user._id,
-    details: `${user.name} logged in`, ip: req.ip,
+    details, ip: req.ip,
   });
 
   res.cookie(tokenService.REFRESH_COOKIE, refreshToken, tokenService.refreshCookieOptions());
   res.json({ success: true, data: { user, accessToken } });
+}
+
+// POST /api/auth/sso — central sign-on from the CPG portal. The browser brings
+// a hand-off token; the auth service tells us which CRM user it belongs to and
+// the rest is the normal login (session, refresh cookie, same payload). Does
+// nothing useful until AUTH_SERVICE_URL is set; password login is unchanged.
+const ssoLogin = asyncHandler(async (req, res) => {
+  const token = typeof req.body?.token === 'string' ? req.body.token : '';
+  if (!token) throw ApiError.badRequest('token is required');
+
+  const verified = await verifySsoToken(token);
+  if (!verified) throw ApiError.unauthorized('SSO sign-in failed');
+
+  // The link table stores this app's Mongo _id; anything else can't match.
+  const user = mongoose.isValidObjectId(verified.localUserId)
+    ? await User.findById(verified.localUserId).select('+failedLoginAttempts +lockUntil')
+    : null;
+  if (!user || !user.isActive) throw ApiError.notFound('No account linked');
+
+  await completeLogin(req, res, user, `${user.name} logged in via portal sign-on`);
 });
 
 // POST /api/auth/refresh
@@ -148,4 +180,4 @@ const changePassword = asyncHandler(async (req, res) => {
   res.json({ success: true, message: 'Password updated. Please log in again on other devices.' });
 });
 
-module.exports = { login, refresh, logout, me, changePassword };
+module.exports = { login, ssoLogin, refresh, logout, me, changePassword };
