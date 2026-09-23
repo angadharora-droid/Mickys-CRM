@@ -25,6 +25,7 @@ const RateItem = require('../models/RateItem');
 const StockItem = require('../models/StockItem');
 const AppointedCustomer = require('../models/AppointedCustomer');
 const SalesOrder = require('../models/SalesOrder');
+const Customer = require('../models/Customer');
 const { nameKeyOf } = require('./stockAvailability.service');
 
 const cleanSku = (s) => String(s || '').trim().toUpperCase();
@@ -240,7 +241,95 @@ async function saveLinks(links) {
   return { saved, unknown, ordersRelinked };
 }
 
+// ---------------------------------------------------------------------------
+// Appointed customer <-> Tally ledger links (manual, with suggestions)
+// ---------------------------------------------------------------------------
+
+/** Words that do not tell two companies apart. */
+const PARTY_NOISE = new Set([
+  'M', 'S', 'MS', 'THE', 'AND', 'PVT', 'PRIVATE', 'LTD', 'LIMITED', 'LLP', 'CO', 'COMPANY', 'CORP', 'INC', 'OPC',
+]);
+
+function partyTokens(name) {
+  return new Set(
+    String(name || '')
+      .toUpperCase()
+      .replace(/&/g, ' AND ')
+      .replace(/[^A-Z0-9 ]+/g, ' ')
+      .split(/\s+/)
+      .filter((w) => w && !PARTY_NOISE.has(w))
+  );
+}
+
+function partyScore(a, b) {
+  if (!a.size || !b.size) return 0;
+  let common = 0;
+  for (const w of a) if (b.has(w)) common += 1;
+  return Math.round((common / new Set([...a, ...b]).size) * 100) / 100;
+}
+
+/**
+ * One row per appointed customer: the linked ledger (and whether it is still
+ * in Tally), a suggestion and candidates from the Sundry Debtors mirror.
+ * Nothing is linked without a person saving it.
+ */
+async function suggestCustomerLinks() {
+  const [customers, ledgers] = await Promise.all([
+    AppointedCustomer.find({}).select('companyName gstin tallyLedger').sort({ companyName: 1 }).lean(),
+    Customer.find({}).select('name group').lean(),
+  ]);
+  const ledgerRows = ledgers.map((l) => ({ ...l, tokens: partyTokens(l.name) }));
+  const names = new Set(ledgers.map((l) => l.name));
+  // A ledger already linked to one customer is not suggested for another.
+  const taken = new Set(customers.map((c) => c.tallyLedger).filter(Boolean));
+
+  return customers.map((c) => {
+    const probe = partyTokens(c.companyName);
+    const candidates = ledgerRows
+      .map((l) => ({ name: l.name, group: l.group || '', score: partyScore(probe, l.tokens) }))
+      .filter((x) => x.score > 0)
+      .sort((x, y) => y.score - x.score || x.name.localeCompare(y.name))
+      .slice(0, 8);
+    const best = candidates.find((x) => !taken.has(x.name) || x.name === c.tallyLedger);
+    return {
+      id: String(c._id),
+      companyName: c.companyName,
+      gstin: c.gstin || '',
+      tallyLedger: c.tallyLedger || '',
+      linkedInTally: c.tallyLedger ? names.has(c.tallyLedger) : false,
+      suggestion: best && best.score >= 0.75 ? best : null,
+      candidates,
+    };
+  });
+}
+
+/** Saves customer links ({ id, tallyLedger }); '' unlinks. Unknown ledgers are skipped. */
+async function saveCustomerLinks(links) {
+  const wanted = [...new Set(links.map((l) => String(l.tallyLedger || '').trim()).filter(Boolean))];
+  const known = new Set((await Customer.find({ name: { $in: wanted } }).select('name').lean()).map((l) => l.name));
+  const unknown = wanted.filter((n) => !known.has(n));
+  let saved = 0;
+  for (const l of links) {
+    const tallyLedger = String(l.tallyLedger || '').trim();
+    if (tallyLedger && !known.has(tallyLedger)) continue;
+    const r = await AppointedCustomer.updateOne({ _id: l.id }, { $set: { tallyLedger } });
+    saved += r.modifiedCount || 0;
+  }
+  return { saved, unknown };
+}
+
+/** Marks each customer's link as live or stale against the ledger mirror (list screens). */
+async function withLedgerStatus(customers) {
+  const linked = [...new Set(customers.map((c) => c.tallyLedger).filter(Boolean))];
+  const known = new Set((await Customer.find({ name: { $in: linked } }).select('name').lean()).map((l) => l.name));
+  for (const c of customers) c.tallyLedgerInTally = c.tallyLedger ? known.has(c.tallyLedger) : false;
+  return customers;
+}
+
 module.exports = {
+  suggestCustomerLinks,
+  saveCustomerLinks,
+  withLedgerStatus,
   resolveLines,
   withTallyItems,
   relinkOpenOrders,

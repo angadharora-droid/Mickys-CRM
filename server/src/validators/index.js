@@ -554,6 +554,13 @@ const stockAvailabilitySchema = z.object({
   excludeOrder: objectId.optional(),
 });
 
+// Appointed customer -> Tally ledger links; tallyLedger '' removes a link.
+const customerTallyLinksSchema = z.object({
+  links: z
+    .array(z.object({ id: objectId, tallyLedger: z.string().trim().max(300) }))
+    .max(2000),
+});
+
 // Rate card SKU -> Tally stock item links; tallyItem '' removes a link.
 const tallyLinksSchema = z.object({
   links: z
@@ -667,6 +674,7 @@ const salesOrderEmailSchema = z.object({
 });
 
 module.exports = {
+  customerTallyLinksSchema,
   tallyLinksSchema,
   objectId,
   BUSINESS_TYPES,

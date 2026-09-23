@@ -16,9 +16,10 @@ import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { GST_BASIS_OPTIONS } from '@/lib/gst';
+import CustomerLinksDialog from './CustomerLinksDialog';
 import {
   Search, UserCheck, Plus, Trash2, Loader2, Snowflake, X, Pencil,
-  CalendarCheck, CalendarClock, CalendarOff, CalendarX, AlertTriangle,
+  CalendarCheck, CalendarClock, CalendarOff, CalendarX, AlertTriangle, Link2,
 } from 'lucide-react';
 
 /** All appointed-customer details are entered and stored in CAPS. */
@@ -425,6 +426,7 @@ export default function SalesCustomers() {
 
   const [customers, setCustomers] = useState(null);
   const [search, setSearch] = useState('');
+  const [linksOpen, setLinksOpen] = useState(false);
 
   const fetchCustomers = useCallback(() => {
     api.get('/sales-customers', { params: search ? { search } : {} })
@@ -457,7 +459,14 @@ export default function SalesCustomers() {
 
   return (
     <div>
-      <PageHeader title="Customers" description="Appointed from delivered leads with frozen rate lists — orders use only these items and rates" />
+      <PageHeader title="Customers" description="Appointed from delivered leads with frozen rate lists — orders use only these items and rates">
+        {isAdmin && (
+          <Button variant="outline" onClick={() => setLinksOpen(true)}>
+            <Link2 className="h-4 w-4" /> Link to Tally
+          </Button>
+        )}
+      </PageHeader>
+      <CustomerLinksDialog open={linksOpen} onOpenChange={setLinksOpen} onSaved={fetchCustomers} />
 
       <Card className="p-4 mb-4">
         <div className="relative">
@@ -529,6 +538,17 @@ export default function SalesCustomers() {
                 >
                   <TableCell>
                     <p className="font-medium leading-tight">{c.companyName}</p>
+                    {c.tallyLedger ? (
+                      <p
+                        className={`text-xs mt-0.5 flex items-center gap-1 ${c.tallyLedgerInTally ? 'text-muted-foreground' : 'text-red-600'}`}
+                        title={c.tallyLedgerInTally ? 'Tally ledger this customer is linked to' : 'This ledger is no longer in Tally — re-link it'}
+                      >
+                        <Link2 className="h-3 w-3 shrink-0" /> {c.tallyLedger}
+                        {!c.tallyLedgerInTally && ' (not in Tally)'}
+                      </p>
+                    ) : (
+                      <p className="text-xs mt-0.5 text-amber-700">Not linked to a Tally ledger</p>
+                    )}
                     <p className="text-xs text-muted-foreground mt-0.5 sm:hidden">{c.mobile}</p>
                     <Badge className={`mt-1.5 sm:hidden ${v.cls}`} title={v.title}>
                       <v.icon className="h-3 w-3 mr-1" />

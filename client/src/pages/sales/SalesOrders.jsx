@@ -299,7 +299,9 @@ function OrderDialog({ open, onClose, order, onSaved }) {
         validity: rateValidity(c),
         data: c,
       }));
+    const linked = new Set(appointed.map((c) => c.tallyLedger).filter(Boolean));
     const tally = (q ? customers.filter((c) => matchesAllWords(`${c.name} ${c.group || ''}`, q)) : customers)
+      .filter((c) => !linked.has(c.name))
       .map((c) => ({ kind: 'tally', key: `t-${c._id}`, name: c.name, sub: c.group || '', data: c }));
     return [
       ...rankByPrefix(apps, q, (e) => e.name),
