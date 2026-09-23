@@ -58,6 +58,12 @@ const appointedCustomerSchema = new mongoose.Schema(
     // existed, who keeps trading while the admin works through the list.
     validUntil: { type: Date, default: null },
 
+    // The customer's own ledger in Tally (exact name, from the Sundry Debtors
+    // mirror), linked by hand on the Customers page — the CRM name comes from
+    // the lead and seldom matches Tally's spelling. Used as the party when
+    // orders go to Tally. '' = not linked yet. Kept as typed in Tally, not CAPS.
+    tallyLedger: { type: String, trim: true, default: '' },
+
     frozenAt: { type: Date, default: Date.now },
     appointedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   },

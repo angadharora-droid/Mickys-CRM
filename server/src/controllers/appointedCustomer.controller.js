@@ -6,7 +6,40 @@ const { logActivity } = require('../services/activity.service');
 const { searchRegex } = require('../utils/sanitize');
 const { istDayStart, istDateLabel } = require('../utils/istDate');
 const { setStage, refreshLeadScore, refreshLeadScoreById } = require('../services/leadScore.service');
-const { withTallyItems } = require('../services/tallyLink.service');
+const {
+  withTallyItems,
+  withLedgerStatus,
+  suggestCustomerLinks,
+  saveCustomerLinks,
+} = require('../services/tallyLink.service');
+
+// GET /api/sales-customers/tally-links — every appointed customer with its
+// linked Tally ledger, a suggestion and candidates from Sundry Debtors.
+const listTallyLinks = asyncHandler(async (_req, res) => {
+  res.json({ success: true, data: await suggestCustomerLinks() });
+});
+
+// PUT /api/sales-customers/tally-links — body { links: [{ id, tallyLedger }] }
+const updateTallyLinks = asyncHandler(async (req, res) => {
+  const result = await saveCustomerLinks(req.body.links);
+  await logActivity({
+    userId: req.user._id,
+    action: 'CUSTOMERS_LINKED',
+    entity: 'AppointedCustomer',
+    details:
+      `Linked appointed customers to Tally ledgers (${req.body.links.length} sent, ${result.saved} changed` +
+      (result.unknown.length ? `; not in Tally: ${result.unknown.join(', ')}` : '') +
+      ')',
+    ip: req.ip,
+  });
+  res.json({
+    success: true,
+    message:
+      `${result.saved} customer link(s) saved` +
+      (result.unknown.length ? `. Skipped (no such ledger in Tally): ${result.unknown.join(', ')}` : ''),
+    data: result,
+  });
+});
 
 const pickBody = (body) => ({
   companyName: body.companyName,
@@ -110,7 +143,7 @@ const listCustomers = asyncHandler(async (req, res) => {
     .lean();
   // Each frozen item carries the Tally stock item its SKU is linked to, so the
   // order dialog can show and reserve the right stock for a rate-card name.
-  res.json({ success: true, data: await withTallyItems(customers) });
+  res.json({ success: true, data: await withLedgerStatus(await withTallyItems(customers)) });
 });
 
 // GET /api/sales-customers/:id
@@ -164,4 +197,12 @@ const deleteCustomer = asyncHandler(async (req, res) => {
   res.json({ success: true, message: `${customer.companyName} removed` });
 });
 
-module.exports = { createCustomer, listCustomers, getCustomer, updateCustomer, deleteCustomer };
+module.exports = {
+  createCustomer,
+  listCustomers,
+  getCustomer,
+  updateCustomer,
+  deleteCustomer,
+  listTallyLinks,
+  updateTallyLinks,
+};

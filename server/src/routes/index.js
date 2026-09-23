@@ -205,6 +205,9 @@ router.post('/dispatch/:id', authenticate, DISPATCH_MODULE, validate(v.dispatchF
 // rates frozen; their sales orders then only contain those items/rates.
 router.post('/sales-customers', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, validate(v.appointedCustomerCreateSchema), salesCustomers.createCustomer);
 router.get('/sales-customers', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, salesCustomers.listCustomers);
+// Appointed customer -> Tally ledger links (CRM and Tally spell names differently).
+router.get('/sales-customers/tally-links', authenticate, authorize(ADMIN), SALES_MODULE, salesCustomers.listTallyLinks);
+router.put('/sales-customers/tally-links', authenticate, authorize(ADMIN), SALES_MODULE, validate(v.customerTallyLinksSchema), salesCustomers.updateTallyLinks);
 router.get('/sales-customers/:id', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, salesCustomers.getCustomer);
 router.put('/sales-customers/:id', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, validate(v.appointedCustomerSchema), salesCustomers.updateCustomer);
 router.delete('/sales-customers/:id', authenticate, authorize(ADMIN), salesCustomers.deleteCustomer);
