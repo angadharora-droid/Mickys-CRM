@@ -554,6 +554,18 @@ const stockAvailabilitySchema = z.object({
   excludeOrder: objectId.optional(),
 });
 
+// Rate card SKU -> Tally stock item links; tallyItem '' removes a link.
+const tallyLinksSchema = z.object({
+  links: z
+    .array(
+      z.object({
+        sku: z.string().trim().min(1).max(60),
+        tallyItem: z.string().trim().max(300),
+      })
+    )
+    .max(1000),
+});
+
 // ---------- Sales orders ----------
 // Amounts are recomputed server-side; the client only sends qty and rate.
 const salesOrderSchema = z.object({
@@ -655,6 +667,7 @@ const salesOrderEmailSchema = z.object({
 });
 
 module.exports = {
+  tallyLinksSchema,
   objectId,
   BUSINESS_TYPES,
   passwordAllowedFor,

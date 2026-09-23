@@ -5,6 +5,37 @@ const Lead = require('../models/Lead');
 const { getPagination, buildMeta } = require('../utils/pagination');
 const { logActivity } = require('../services/activity.service');
 const { searchRegex } = require('../utils/sanitize');
+const { suggestLinks, saveLinks } = require('../services/tallyLink.service');
+
+// GET /api/rate-items/tally-links — one row per SKU: its Tally link, the
+// auto-match suggestion and candidates from the stock mirror.
+const listTallyLinks = asyncHandler(async (_req, res) => {
+  res.json({ success: true, data: await suggestLinks() });
+});
+
+// PUT /api/rate-items/tally-links — body { links: [{ sku, tallyItem }] }
+const updateTallyLinks = asyncHandler(async (req, res) => {
+  const result = await saveLinks(req.body.links);
+  await logActivity({
+    userId: req.user._id,
+    action: 'RATE_ITEMS_LINKED',
+    entity: 'RateItem',
+    details:
+      `Linked rate card SKUs to Tally stock items (${req.body.links.length} sent, ${result.saved} rows changed` +
+      (result.ordersRelinked ? `, ${result.ordersRelinked} open orders re-pointed` : '') +
+      (result.unknown.length ? `; not in Tally stock: ${result.unknown.join(', ')}` : '') +
+      ')',
+    ip: req.ip,
+  });
+  res.json({
+    success: true,
+    message:
+      `Tally links saved` +
+      (result.ordersRelinked ? ` — ${result.ordersRelinked} open order(s) now reserve the linked stock` : '') +
+      (result.unknown.length ? `. Skipped (not in Tally stock): ${result.unknown.join(', ')}` : ''),
+    data: result,
+  });
+});
 
 /**
  * Lead rate lines are snapshots of the master taken when rates were confirmed.
@@ -140,6 +171,8 @@ const deleteRateItem = asyncHandler(async (req, res) => {
 });
 
 module.exports = {
+  listTallyLinks,
+  updateTallyLinks,
   listRateItems,
   listCategories,
   getRateItem,

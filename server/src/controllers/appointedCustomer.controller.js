@@ -6,6 +6,7 @@ const { logActivity } = require('../services/activity.service');
 const { searchRegex } = require('../utils/sanitize');
 const { istDayStart, istDateLabel } = require('../utils/istDate');
 const { setStage, refreshLeadScore, refreshLeadScoreById } = require('../services/leadScore.service');
+const { withTallyItems } = require('../services/tallyLink.service');
 
 const pickBody = (body) => ({
   companyName: body.companyName,
@@ -105,8 +106,11 @@ const listCustomers = asyncHandler(async (req, res) => {
   const customers = await AppointedCustomer.find(filter)
     .sort({ companyName: 1 })
     .limit(500)
-    .populate('appointedBy', 'name');
-  res.json({ success: true, data: customers });
+    .populate('appointedBy', 'name')
+    .lean();
+  // Each frozen item carries the Tally stock item its SKU is linked to, so the
+  // order dialog can show and reserve the right stock for a rate-card name.
+  res.json({ success: true, data: await withTallyItems(customers) });
 });
 
 // GET /api/sales-customers/:id

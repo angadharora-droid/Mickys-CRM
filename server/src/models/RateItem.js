@@ -21,6 +21,12 @@ const rateItemSchema = new mongoose.Schema(
     suggestiveMargin: { type: Number, min: 0, max: 100, default: 0 }, // % (distributor)
     gst: { type: Number, required: true, min: 0, max: 100, default: 18 },
     isActive: { type: Boolean, default: true },
+    // The Tally stock item this SKU is sold as (exact Tally name) and that
+    // item's product code / alias. Card names and Tally names differ, so
+    // orders reach Tally stock only through this link (services/tallyLink).
+    // Same value on every master row sharing the SKU.
+    tallyItem: { type: String, trim: true, default: '' },
+    tallyCode: { type: String, trim: true, uppercase: true, default: '' },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   },
   { timestamps: true }

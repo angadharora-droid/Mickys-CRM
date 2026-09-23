@@ -22,6 +22,7 @@ const {
 } = require('../services/tallyStock.service');
 const { matchInvoices } = require('../services/orderPipeline.service');
 const TallyInvoice = require('../models/TallyInvoice');
+const { relinkOpenOrders } = require('../services/tallyLink.service');
 const {
   nameKeyOf,
   reservedByNameKey,
@@ -153,6 +154,12 @@ const syncStock = asyncHandler(async (req, res) => {
   const removed = await StockItem.deleteMany({
     $or: [{ syncedAt: { $lt: syncedAt } }, { syncedAt: null }],
   });
+
+  // Open orders booked from a rate card reach Tally stock through their SKU's
+  // link, resolved by product code first. A rename in Tally keeps the code, so
+  // re-pointing after each sync keeps those orders reserving the right row.
+  // Never allowed to fail the sync itself.
+  await relinkOpenOrders().catch((err) => console.error(`[stock-sync] relink failed: ${err.message}`));
 
   // Day-wise register: one snapshot per item per IST day. The first sync of
   // the day freezes dayOpen* (opening position); later syncs only refresh the
