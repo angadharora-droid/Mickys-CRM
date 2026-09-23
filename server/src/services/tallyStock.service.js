@@ -13,7 +13,7 @@
  */
 
 const TAG_NAMES = [
-  'NAME', 'GROUP', 'CATEGORY', 'BASEUNITS',
+  'NAME', 'ALIAS', 'PARTNO', 'GROUP', 'CATEGORY', 'BASEUNITS',
   'OPENINGQTY', 'OPENINGRATE', 'OPENINGVALUE',
   'INWARDQTY', 'INWARDVALUE', 'OUTWARDQTY', 'OUTWARDVALUE',
   'CLOSINGQTY', 'CLOSINGRATE', 'CLOSINGVALUE',
@@ -58,6 +58,19 @@ function tagValue(block, name) {
 }
 
 /**
+ * The item's CRM product code (SFG-006-250 …), kept in Tally as the stock
+ * item's alias — TDL v5 sends it as <ALIAS>. Tally's own Part No. field
+ * (<PARTNO>) stands in when no alias is set, so codes entered in either
+ * place arrive. Upper-cased with inner whitespace collapsed so "sfg-006-250"
+ * and "SFG-006-250" are one code; '' when the item has neither (or the
+ * loaded TDL predates v5).
+ */
+function codeOf(raw) {
+  const pick = cleanName(raw.ALIAS || '') || cleanName(raw.PARTNO || '');
+  return pick.replace(/\s+/g, ' ').toUpperCase();
+}
+
+/**
  * Parses the full export (any wrapper — Tally's HTTP response envelope or the
  * bare <MICKYSSTOCK> file) into plain stock objects. Items without a name are
  * dropped; duplicate names keep the last occurrence.
@@ -77,6 +90,7 @@ function parseTallyStockXml(xml) {
 
     const item = {
       name,
+      code: codeOf(raw),
       group: cleanName(raw.GROUP),
       category: cleanName(raw.CATEGORY),
       baseUnits: raw.BASEUNITS.trim(),
@@ -177,7 +191,7 @@ function parseTallyDate(raw) {
  * say whether the copy loaded on the Tally machine is the current one. Bump
  * it whenever the template changes.
  */
-const TDL_VERSION = '4';
+const TDL_VERSION = '5';
 
 const parseTallyTdlVersion = (xml) => (typeof xml === 'string' ? tagValue(xml, 'TDLVERSION') : '');
 

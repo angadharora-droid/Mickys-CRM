@@ -110,14 +110,16 @@ const matchesAllWords = (text, query) => {
   return query.toLowerCase().split(/\s+/).filter(Boolean).every((w) => t.includes(w));
 };
 
-/** Names starting with the query rank above mid-word matches. */
-const rankByPrefix = (list, query, getName) => {
+/**
+ * Names (or product codes, where the rows carry one) starting with the
+ * query rank above mid-word matches.
+ */
+const rankByPrefix = (list, query, getName, getCode = () => '') => {
   const q = query.trim().toLowerCase();
   if (!q) return list;
-  return [...list].sort(
-    (a, b) =>
-      Number(getName(b).toLowerCase().startsWith(q)) - Number(getName(a).toLowerCase().startsWith(q))
-  );
+  const hit = (x) =>
+    Number(getName(x).toLowerCase().startsWith(q) || (getCode(x) || '').toLowerCase().startsWith(q));
+  return [...list].sort((a, b) => hit(b) - hit(a));
 };
 
 /** The rate the order line would be prefilled with. */
@@ -313,7 +315,7 @@ function OrderDialog({ open, onClose, order, onSaved }) {
         .filter((f) => !lines.some((l) => l.name === f.name))
         .slice(0, 20);
     }
-    const base = q ? rankByPrefix(stock, q, (s) => s.name) : itemFocus ? defaultStock : [];
+    const base = q ? rankByPrefix(stock, q, (s) => s.name, (s) => s.code) : itemFocus ? defaultStock : [];
     return base.filter((s) => !lines.some((l) => l.name === s.name)).slice(0, 20);
   }, [selectedCustomer, stock, defaultStock, itemFocus, itemSearch, lines]);
 
@@ -651,7 +653,10 @@ function OrderDialog({ open, onClose, order, onSaved }) {
                       onMouseDown={() => addLine(s)}
                       onMouseEnter={() => setItemHl(i)}
                     >
-                      <span className="truncate">{s.name}</span>
+                      <span className="truncate">
+                        {s.name}
+                        {s.code && <span className="ml-2 font-mono text-[11px] text-muted-foreground">{s.code}</span>}
+                      </span>
                       <span className="ml-2 shrink-0 text-right">
                         {a && a.availableQty != null && (
                           <span className={`block text-xs ${availTone(a.availableQty)}`}>

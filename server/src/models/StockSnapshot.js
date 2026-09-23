@@ -15,6 +15,7 @@ const stockSnapshotSchema = new mongoose.Schema(
   {
     date: { type: String, required: true }, // 'YYYY-MM-DD' in IST
     name: { type: String, required: true, trim: true },
+    code: { type: String, trim: true, default: '' },
     group: { type: String, trim: true, default: '' },
     category: { type: String, trim: true, default: '' },
     baseUnits: { type: String, trim: true, default: '' },

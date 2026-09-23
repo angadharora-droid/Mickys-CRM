@@ -127,6 +127,16 @@ const syncStock = asyncHandler(async (req, res) => {
   }
   const keyCollisions = [...keyCounts.values()].filter((n) => n > 1).length;
 
+  // Product codes ride on the item's Tally alias (TDL v5+). Two items with
+  // the same alias would be a data-entry slip in Tally — logged, not fatal.
+  const codeCounts = new Map();
+  for (const item of items) {
+    if (!item.code) continue;
+    codeCounts.set(item.code, (codeCounts.get(item.code) || 0) + 1);
+  }
+  const codedItems = [...codeCounts.values()].reduce((s, n) => s + n, 0);
+  const codeCollisions = [...codeCounts.entries()].filter(([, n]) => n > 1).map(([c]) => c);
+
   // Mirror semantics: upsert everything present, then drop whatever this sync
   // didn't touch (items deleted/renamed in Tally).
   const syncedAt = new Date();
@@ -155,6 +165,7 @@ const syncStock = asyncHandler(async (req, res) => {
         filter: { date: dateKey, name: item.name },
         update: {
           $set: {
+            code: item.code,
             group: item.group,
             category: item.category,
             baseUnits: item.baseUnits,
@@ -245,6 +256,7 @@ const syncStock = asyncHandler(async (req, res) => {
     invoicesMatched: invoiceResult?.matched || 0,
     invoicesWithBasic,
     ordersInvoiced: invoiceResult?.advanced || [],
+    codedItems,
     tdlVersion,
     source: req.tallyPush ? 'push' : 'upload',
     syncedBy: req.user?._id,
@@ -258,6 +270,8 @@ const syncStock = asyncHandler(async (req, res) => {
     details:
       `Synced ${items.length} stock items from Tally (${req.tallyPush ? 'Tally push' : 'manual upload'}` +
       `; TDL ${tdlVersion ? `v${tdlVersion}` : 'pre-v4'}${tdlCurrent ? '' : ` — OUTDATED, current is v${TDL_VERSION}`})` +
+      (codedItems ? `; product codes on ${codedItems} of ${items.length} items` : '; no product codes (aliases) in this push') +
+      (codeCollisions.length ? `; DUPLICATE CODES on more than one item: ${codeCollisions.join(', ')}` : '') +
       (vendors.length ? `, ${vendors.length} vendors` : '') +
       (customers.length ? `, ${customers.length} customers` : '') +
       (otherTypes.length
@@ -289,6 +303,8 @@ const syncStock = asyncHandler(async (req, res) => {
   // upload gets the usual JSON envelope.
   const summary = [
     `${items.length} stock items`,
+    codedItems ? `codes on ${codedItems}` : '',
+    codeCollisions.length ? `DUPLICATE CODES: ${codeCollisions.join(', ')}` : '',
     vendors.length ? `${vendors.length} vendors` : '',
     customers.length ? `${customers.length} customers` : '',
     invoices.length
@@ -312,6 +328,8 @@ const syncStock = asyncHandler(async (req, res) => {
     message: `Synced ${summary}${tdlNote}`,
     data: {
       itemCount: items.length,
+      codedItems,
+      codeCollisions,
       vendorCount: vendors.length,
       customerCount: customers.length,
       invoiceCount: invoices.length,
@@ -349,14 +367,19 @@ const listStock = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.group) filter.group = req.query.group;
   if (req.query.inStock === 'true') filter.closingQty = { $gt: 0 };
+  // coded=true → items carrying a product code; coded=false → the ones still
+  // without an alias in Tally (the list to work through after adding codes).
+  if (req.query.coded === 'true') filter.code = { $nin: ['', null] };
+  else if (req.query.coded === 'false') filter.code = { $in: ['', null] };
   if (req.query.search) {
     // Word-order-independent search: every typed word must appear somewhere
-    // in name/group/category, so "chicken 1kg" finds "CP Chicken Nuggets
-    // 1kg" even though the words aren't adjacent.
+    // in name/code/group/category, so "chicken 1kg" finds "CP Chicken
+    // Nuggets 1kg" even though the words aren't adjacent, and "006-250"
+    // finds SFG-006-250.
     const terms = String(req.query.search).trim().split(/\s+/).slice(0, 6);
     filter.$and = terms.map((t) => {
       const rx = searchRegex(t);
-      return { $or: [{ name: rx }, { group: rx }, { category: rx }] };
+      return { $or: [{ name: rx }, { code: rx }, { group: rx }, { category: rx }] };
     });
   }
 
@@ -456,6 +479,7 @@ const dailyStock = asyncHandler(async (req, res) => {
     const next = nextByName.get(d.name);
     return {
       name: d.name,
+      code: d.code || '',
       group: d.group,
       category: d.category,
       baseUnits: d.baseUnits,
@@ -500,6 +524,7 @@ const EMPTY_TOTALS = {
   inwardValue: 0,
   outwardValue: 0,
   missingNameKeyItems: 0,
+  codedItems: 0,
 };
 
 // GET /api/stock/summary — dashboard stats + last-sync banner. `inStock` and
@@ -528,6 +553,11 @@ const stockSummary = asyncHandler(async (_req, res) => {
           // exactly like "nobody ordered anything".
           missingNameKeyItems: {
             $sum: { $cond: [{ $eq: [{ $ifNull: ['$nameKey', ''] }, ''] }, 1, 0] },
+          },
+          // Items whose Tally alias carries a product code — the stock page
+          // shows how many still lack one.
+          codedItems: {
+            $sum: { $cond: [{ $ne: [{ $ifNull: ['$code', ''] }, ''] }, 1, 0] },
           },
         },
       },
@@ -566,6 +596,7 @@ const stockSummary = asyncHandler(async (_req, res) => {
         ? {
             at: lastSync.syncedAt || lastSync.createdAt,
             itemCount: lastSync.itemCount,
+            codedItems: lastSync.codedItems || 0,
             invoiceCount: lastSync.invoiceCount || 0,
             invoicesMatched: lastSync.invoicesMatched || 0,
             invoicesWithBasic: lastSync.invoicesWithBasic || 0,

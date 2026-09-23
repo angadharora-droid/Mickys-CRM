@@ -6,8 +6,10 @@
 ;;      pull over Tally's XML/HTTP gateway (the port shown in
 ;;      Client/Server configuration - 9001 in our setup).
 ;;    * For every stock item it returns: group, category, base unit,
-;;      opening qty/rate/value, inward qty/value, outward qty/value,
-;;      closing qty/rate/value, standard cost and standard price.
+;;      the item's alias (the CRM product code, e.g. SFG-006-250) and
+;;      part number, opening qty/rate/value, inward qty/value, outward
+;;      qty/value, closing qty/rate/value, standard cost and standard
+;;      price.
 ;;    * It also returns every vendor (ledgers under Sundry Creditors)
 ;;      as <VENDOR> elements and every customer (ledgers under Sundry
 ;;      Debtors) as <CUSTOMER> elements: name and group, sub-groups
@@ -138,7 +140,8 @@
 
 ;; One repeated line per stock item -> one <STOCKITEM> element each
 [Line: MickysStockLine]
-    Fields : MSItemName, MSItemGroup, MSItemCategory, MSItemUnits
+    Fields : MSItemName, MSItemAlias, MSItemPartNo
+    Fields : MSItemGroup, MSItemCategory, MSItemUnits
     Fields : MSOpeningQty, MSOpeningRate, MSOpeningValue
     Fields : MSInwardQty, MSInwardValue
     Fields : MSOutwardQty, MSOutwardValue
@@ -152,6 +155,24 @@
     Type   : String
     Set as : $Name
     XMLTag : "NAME"
+
+;; The item's alias - the "(alias)" line under the name on the Stock Item
+;; master. Mickys keeps the CRM product code there (SFG-<item no>-<grams>,
+;; e.g. SFG-006-250), so the CRM reads ALIAS as the item's code and matches
+;; it to the stock row. $OnlyAlias returns the first alias only; an item
+;; with no alias exports an empty tag.
+[Field: MSItemAlias]
+    Type   : String
+    Set as : $OnlyAlias
+    XMLTag : "ALIAS"
+
+;; Tally's own "Part No." field (F12 > "Use part numbers for stock items").
+;; Sent as a fallback: the CRM uses it as the code only when ALIAS is empty,
+;; so either place works for entering codes. Empty when not maintained.
+[Field: MSItemPartNo]
+    Type   : String
+    Set as : $PartNo
+    XMLTag : "PARTNO"
 
 [Field: MSItemGroup]
     Type   : String
@@ -249,7 +270,7 @@
 ;; --------------------------- Collection ------------------------------
 [Collection: MickysStockItems]
     Type  : Stock Item
-    Fetch : Name, Parent, Category, BaseUnits
+    Fetch : Name, OnlyAlias, PartNo, Parent, Category, BaseUnits
     Fetch : OpeningBalance, OpeningRate, OpeningValue
     Fetch : ClosingBalance, ClosingRate, ClosingValue
     Fetch : StandardCost, StandardPrice
