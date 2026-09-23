@@ -26,6 +26,9 @@ const stockSyncLogSchema = new mongoose.Schema(
     // How many of the push's invoices carried a usable pre-GST basic value.
     invoicesWithBasic: { type: Number, default: 0 },
     ordersInvoiced: { type: [String], default: [] },
+    // How many of the push's items carried a product code (Tally alias) —
+    // 0 on a push from a TDL older than v5.
+    codedItems: { type: Number, default: 0 },
     // The TDL version the push declared ('' for copies older than the tag),
     // so the Invoicing page can say whether the Tally machine is current.
     tdlVersion: { type: String, default: '' },

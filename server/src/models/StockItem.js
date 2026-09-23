@@ -13,11 +13,18 @@ const mongoose = require('mongoose');
  * never matches Tally's mixed-case name directly. It is deliberately not
  * unique: Tally allows "CP Nuggets" and "CP NUGGETS" to coexist, and a unique
  * index would make the whole sync fail rather than surface the clash.
+ *
+ * `code` is the CRM product code (SFG-<item no>-<grams>, e.g. SFG-006-250),
+ * read from the stock item's alias in Tally (Part No. as a fallback) by TDL
+ * v5+. '' for items that have no alias yet. Not unique for the same reason
+ * as nameKey: a code typed on two Tally items should show up as a clash on
+ * the stock page, not block the whole sync.
  */
 const stockItemSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true, unique: true },
     nameKey: { type: String, trim: true, default: '', index: true },
+    code: { type: String, trim: true, default: '', index: true },
     group: { type: String, trim: true, default: '', index: true },
     category: { type: String, trim: true, default: '' },
     baseUnits: { type: String, trim: true, default: '' },

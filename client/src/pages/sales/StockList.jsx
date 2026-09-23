@@ -25,6 +25,14 @@ const ALL = '__all__';
 const AVAILABILITY_FILTERS = ['in', 'available', 'short'];
 
 /**
+ * The product code Tally sends for an item (its alias, e.g. SFG-006-250),
+ * shown under the name wherever items are listed. Nothing is shown for an
+ * item without one — the "Without code" filter is the list to work through.
+ */
+const CodeLine = ({ code }) =>
+  code ? <p className="font-mono text-xs text-muted-foreground mt-0.5">{code}</p> : null;
+
+/**
  * Cancelled orders never hold stock, so only these three ever reach the
  * drill-down. Same colours as the Sales Orders list, so a status reads
  * identically on both screens.
@@ -90,7 +98,11 @@ function DailyView() {
 
   const q = search.trim().toLowerCase();
   const items = data.items.filter(
-    (i) => !q || i.name.toLowerCase().includes(q) || (i.group || '').toLowerCase().includes(q)
+    (i) =>
+      !q ||
+      i.name.toLowerCase().includes(q) ||
+      (i.code || '').toLowerCase().includes(q) ||
+      (i.group || '').toLowerCase().includes(q)
   );
   const provisional = items.some((i) => !i.settled);
 
@@ -107,7 +119,7 @@ function DailyView() {
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Search items…"
+              placeholder="Search items or codes…"
               className="pl-9"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -141,6 +153,7 @@ function DailyView() {
                     <TableRow key={item.name}>
                       <TableCell>
                         <p className="font-medium leading-tight">{item.name}</p>
+                        <CodeLine code={item.code} />
                         <p className="text-xs text-muted-foreground md:hidden mt-0.5">{item.group || 'Ungrouped'}</p>
                       </TableCell>
                       <TableCell className="hidden md:table-cell">
@@ -279,7 +292,10 @@ function ReservationsDialog({ item, onClose }) {
       <DialogContent>
         <DialogHeader>
           <DialogTitle className="text-base pr-6">{item?.name}</DialogTitle>
-          <DialogDescription>Sales orders holding this item</DialogDescription>
+          <DialogDescription>
+            {item?.code ? <span className="font-mono">{item.code}</span> : null}
+            {item?.code ? ' · ' : ''}Sales orders holding this item
+          </DialogDescription>
         </DialogHeader>
 
         {!data ? (
@@ -358,6 +374,8 @@ export default function StockList() {
   const [groups, setGroups] = useState([]);
   const [lastSync, setLastSync] = useState(null);
   const [orphans, setOrphans] = useState(null);
+  const [codedCount, setCodedCount] = useState(null); // items carrying a product code
+  const [codeFilter, setCodeFilter] = useState(ALL); // ALL | 'true' | 'false'
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [page, setPage] = useState(1);
@@ -390,6 +408,7 @@ export default function StockList() {
       setGroups(groupsRes.data.data);
       setLastSync(summaryRes.data.data.lastSync);
       setOrphans(summaryRes.data.data.orphanReservations);
+      setCodedCount(summaryRes.data.data.totals?.codedItems ?? null);
     } catch {
       // Non-fatal: the list itself still loads.
     }
@@ -405,6 +424,7 @@ export default function StockList() {
       // filter behaves exactly as it always has.
       if (stockFilter === 'in') params.inStock = 'true';
       else if (stockFilter !== ALL) params.availability = stockFilter;
+      if (codeFilter !== ALL) params.coded = codeFilter;
       const { data } = await api.get('/stock', { params });
       setItems(data.data);
       setMeta(data.meta);
@@ -413,7 +433,7 @@ export default function StockList() {
     } finally {
       setLoading(false);
     }
-  }, [page, search, group, stockFilter]);
+  }, [page, search, group, stockFilter, codeFilter]);
 
   useEffect(() => {
     fetchMetaData();
@@ -448,7 +468,8 @@ export default function StockList() {
         title="Stock from Tally"
         description={
           lastSync
-            ? `Last synced ${formatDateTime(lastSync.at)} · ${lastSync.itemCount} items (${lastSync.source === 'push' ? 'Tally push' : 'manual upload'})`
+            ? `Last synced ${formatDateTime(lastSync.at)} · ${lastSync.itemCount} items (${lastSync.source === 'push' ? 'Tally push' : 'manual upload'})` +
+              (codedCount != null ? ` · product codes on ${codedCount}` : '')
             : 'Upload the Mickys Stock Export XML from Tally to bring your inventory in'
         }
       >
@@ -469,11 +490,11 @@ export default function StockList() {
 
         <TabsContent value="live">
           <Card className="p-4 mb-4">
-            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
               <div className="relative col-span-2">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder="Search items…"
+                  placeholder="Search items or codes…"
                   className="pl-9"
                   value={search}
                   onChange={(e) => { setSearch(e.target.value); setPage(1); }}
@@ -495,6 +516,14 @@ export default function StockList() {
                   <SelectItem value="short">Short (oversold)</SelectItem>
                 </SelectContent>
               </Select>
+              <Select value={codeFilter} onValueChange={(v) => { setCodeFilter(v); setPage(1); }}>
+                <SelectTrigger><SelectValue placeholder="Product code" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL}>Coded or not</SelectItem>
+                  <SelectItem value="true">With product code</SelectItem>
+                  <SelectItem value="false">Without product code</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </Card>
 
@@ -504,9 +533,9 @@ export default function StockList() {
             ) : items.length === 0 ? (
               <EmptyState
                 icon={Boxes}
-                title={meta?.total === 0 && !search && group === ALL && stockFilter === ALL ? 'No stock data yet' : 'No matching items'}
+                title={meta?.total === 0 && !search && group === ALL && stockFilter === ALL && codeFilter === ALL ? 'No stock data yet' : 'No matching items'}
                 description={
-                  meta?.total === 0 && !search && group === ALL && stockFilter === ALL
+                  meta?.total === 0 && !search && group === ALL && stockFilter === ALL && codeFilter === ALL
                     ? 'Export the report from Tally (Mickys Stock Export → Alt+E → XML) and upload the file here.'
                     : 'Try a different search or filter.'
                 }
@@ -540,6 +569,7 @@ export default function StockList() {
                         >
                           <TableCell>
                             <p className="font-medium leading-tight">{item.name}</p>
+                            <CodeLine code={item.code} />
                             <p className="text-xs text-muted-foreground md:hidden mt-0.5">{item.group || 'Ungrouped'}</p>
                             {held && (
                               <p className="text-xs text-amber-600 sm:hidden mt-0.5">
@@ -587,6 +617,11 @@ export default function StockList() {
                     reached Tally yet. Available = Closing − On order, so it is what you can still sell today; a red
                     figure means more has been sold than there is stock for. Tap any row with an on-order quantity to
                     see which orders are holding it.
+                  </p>
+                  <p>
+                    The product code under an item&rsquo;s name is its alias in Tally (Stock Item → alias, e.g.
+                    SFG-006-250). Add or correct it there and the next sync brings it in; use the &ldquo;Without
+                    product code&rdquo; filter to see which items still need one.
                   </p>
                   {orphans?.items > 0 && (
                     <p>

@@ -3,7 +3,8 @@
 Files:
 
 - `../server/src/assets/mickys-stock.tdl` — the TDL **template** (the sync key appears as `{{TALLY_SYNC_KEY}}`). The backend serves it, key filled in, at
-  `https://api.mickys-crm.centrepointgroup.in/api/stock/tdl?key=<TALLY_SYNC_KEY>` — Tally loads it straight from that URL. Defines report `MickysStockReport` (opening / inward / outward / closing stock per item, plus group, category, unit, standard cost/price — and every vendor & customer, i.e. ledgers under Sundry Creditors / Sundry Debtors).
+  `https://api.mickys-crm.centrepointgroup.in/api/stock/tdl?key=<TALLY_SYNC_KEY>` — Tally loads it straight from that URL. Defines report `MickysStockReport` (opening / inward / outward / closing stock per item, plus the item's alias = **product code**, part no., group, category, unit, standard cost/price — and every vendor & customer, i.e. ledgers under Sundry Creditors / Sundry Debtors).
+- `sfg-product-codes.csv` — the code ↔ Tally item name mapping issued for the Semi Finished Goods items (`SFG-<item no>-<grams>`). The codes are entered in Tally as each stock item's **alias**; this file is the reference list, not something the CRM reads.
 - `sample-stock-request.xml` — the request envelope the CRM backend POSTs to Tally to pull that report.
 
 ## 1. One-time Tally setup (on the PC running Tally Prime)
@@ -44,6 +45,8 @@ The response contains one `<STOCKITEM>` element per item:
 ```xml
 <STOCKITEM>
   <NAME>CP Chicken Nuggets 1kg</NAME>
+  <ALIAS>SFG-006-250</ALIAS>
+  <PARTNO></PARTNO>
   <GROUP>CP Foods</GROUP>
   <CATEGORY>Frozen</CATEGORY>
   <BASEUNITS>pkt</BASEUNITS>
@@ -90,6 +93,17 @@ Confirmed against a real export from TallyPrime 7.0 (Gold):
 - `LASTSALEPRICE` / `LASTPURCHASECOST` carry the rate of the item's most
   recent sale/purchase voucher. The sales order form prefills the rate as:
   standard price → last sale price → closing (valuation) rate.
+- **`ALIAS` is the product code** (TDL v5+). It is the stock item's alias in
+  Tally — the `(alias)` line under the name on the Stock Item master, where
+  Mickys keeps `SFG-006-250` etc. `PARTNO` (Tally's "Part No." field) is sent
+  as a fallback and used only when the alias is empty. The backend
+  upper-cases the code and stores it on the mirrored item (`code`); the
+  Stock page shows it under the item name, searches on it, and has a
+  "Without product code" filter listing the items still to be coded in
+  Tally. The reply Tally shows after Ctrl+F10 says `codes on N`, and names
+  any code that sits on more than one item. A push from an older TDL simply
+  carries no codes (all items show none) — that is the sign the Tally
+  machine still runs a pre-v5 copy.
 
 ## 4. Getting it into the CRM
 
@@ -162,10 +176,11 @@ Two ways, both hitting `POST /api/stock/sync` on the backend:
 > total and mark the row with `*`.
 >
 > **TDL version check.** The served file carries `<TDLVERSION>` (currently
-> v4) in every push. The reply Tally shows after Ctrl+F10 ends with
-> `[TDL v4]` when the loaded copy is current, or `[OLD TDL … loaded - download
-> v4 …]` when it is not; the Invoicing page's "Last Tally push" card says the
-> same. Whenever the register shows billed totals with `*`, check this first.
+> v5) in every push. The reply Tally shows after Ctrl+F10 ends with
+> `[TDL v5]` when the loaded copy is current, or `[OLD TDL … loaded - download
+> v5 …]` when it is not; the Invoicing page's "Last Tally push" card says the
+> same. Whenever the register shows billed totals with `*`, or the Stock page
+> shows no product codes after they were entered in Tally, check this first.
 >
 > If a push arrives with stock but **zero invoices**, the Tally machine is
 > still running the old TDL — re-download it from the URL and replace the
