@@ -114,7 +114,14 @@ const salesOrderSchema = new mongoose.Schema(
     items: [
       {
         name: { type: String, required: true, trim: true },
+        // The key every stock join runs on: the linked Tally item's name
+        // normalised when the line's SKU is linked on the rate master, else
+        // the line's own name (services/tallyLink.service.js).
         nameKey: { type: String, trim: true, default: '', index: true },
+        // Rate card SKU (from the frozen list) and the Tally stock item it is
+        // linked to; both blank on lines picked straight from Tally stock.
+        sku: { type: String, trim: true, default: '' },
+        tallyItem: { type: String, trim: true, default: '' },
         // Pack weight from the appointed customer's frozen list (e.g. "1 KG");
         // plain Tally-ledger orders have no weight source and leave it blank.
         packSize: { type: String, trim: true, default: '' },

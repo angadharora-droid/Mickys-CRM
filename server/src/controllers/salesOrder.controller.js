@@ -6,6 +6,7 @@ const Counter = require('../models/Counter');
 const SalesOrder = require('../models/SalesOrder');
 const Setting = require('../models/Setting');
 const StockItem = require('../models/StockItem');
+const { resolveLines } = require('../services/tallyLink.service');
 const { GST_BASES, SUPPLY_TYPES, computeLine, computeTotals, deriveSupplyType } = require('../utils/gst');
 const { renderSalesOrderPdf } = require('../services/salesOrderPdf.service');
 const { sendOrderEmail } = require('../services/salesOrderEmail.service');
@@ -67,7 +68,14 @@ const populatePipeline = (order) => order.populate(PIPELINE_REFS.map((path) => (
  * against its own availability, or every edit would report itself as short.
  */
 async function buildItems(items, { excludeOrder, basis = 'exclusive', supplyType = 'intra' } = {}) {
-  const keys = items.map((i) => nameKeyOf(i.name)).filter(Boolean);
+  // Rate-card lines reach Tally stock through their SKU's link; the resolved
+  // key is what the line stores and what availability is measured on.
+  const resolved = await resolveLines(items);
+  items.forEach((i, idx) => {
+    i.nameKey = resolved[idx].nameKey;
+    i.tallyItem = resolved[idx].tallyItem;
+  });
+  const keys = items.map((i) => i.nameKey).filter(Boolean);
   const [stock, { availableByKey, warnings }] = await Promise.all([
     StockItem.find({ nameKey: { $in: keys } }).lean(),
     checkLineAvailability(items, { excludeOrder }),
@@ -79,11 +87,13 @@ async function buildItems(items, { excludeOrder, basis = 'exclusive', supplyType
   }
 
   const built = items.map((i) => {
-    const key = nameKeyOf(i.name);
+    const key = i.nameKey;
     const s = byKey.get(key);
     return {
       name: i.name,
       nameKey: key,
+      sku: i.sku || '',
+      tallyItem: i.tallyItem || '',
       packSize: i.packSize || '',
       baseUnits: s?.baseUnits || '',
       qty: i.qty,
@@ -129,6 +139,7 @@ async function applyFrozenCustomer(customerId, items) {
       );
     }
     it.name = f.name;
+    it.sku = f.sku || '';
     it.rate = f.rate;
     it.packSize = f.packSize;
     // The frozen GST rate travels with the frozen price. A list frozen before

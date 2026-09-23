@@ -86,6 +86,13 @@ const qty = (n, unit) => {
  */
 const nameKeyOf = (name) => String(name || '').trim().toUpperCase().replace(/\s+/g, ' ');
 
+/**
+ * The Tally stock item a line or frozen item draws on. Rate-card names differ
+ * from Tally's, so a frozen item carries the Tally item its SKU is linked to
+ * (Rate Master → Link to Tally); lines picked from Tally stock are their own.
+ */
+const stockName = (x) => x?.tallyItem || x?.name || '';
+
 /** Something left to sell, nothing left, or oversold. */
 const availTone = (n) => (n > 0 ? 'text-emerald-600' : n < 0 ? 'text-red-600' : 'text-amber-600');
 
@@ -176,7 +183,7 @@ function OrderDialog({ open, onClose, order, onSaved }) {
     setLines(
       (order?.items || []).map((i) => ({
         name: i.name, baseUnits: i.baseUnits, qty: String(i.qty), rate: String(i.rate), packSize: i.packSize,
-        gst: i.gst != null ? String(i.gst) : '',
+        gst: i.gst != null ? String(i.gst) : '', tallyItem: i.tallyItem || '',
       }))
     );
     setNotes(order?.notes || '');
@@ -240,8 +247,8 @@ function OrderDialog({ open, onClose, order, onSaved }) {
       const key = nameKeyOf(name);
       if (key && key.length <= 200 && !byKey.has(key)) byKey.set(key, String(name));
     };
-    lines.forEach((l) => want(l.name));
-    (selectedCustomer?.items || []).forEach((f) => want(f.name));
+    lines.forEach((l) => want(stockName(l)));
+    (selectedCustomer?.items || []).forEach((f) => want(stockName(f)));
     return [...byKey.values()];
   }, [lines, selectedCustomer]);
 
@@ -377,7 +384,7 @@ function OrderDialog({ open, onClose, order, onSaved }) {
     const idx = lines.length;
     const line = selectedCustomer
       ? // Frozen list line: rate and GST are dictated by the customer's price list.
-        { name: s.name, baseUnits: '', qty: '', rate: String(s.rate), packSize: s.packSize, gst: frozenGst(s) }
+        { name: s.name, tallyItem: s.tallyItem || '', baseUnits: '', qty: '', rate: String(s.rate), packSize: s.packSize, gst: frozenGst(s) }
       : {
           name: s.name,
           baseUnits: s.baseUnits,
@@ -419,7 +426,7 @@ function OrderDialog({ open, onClose, order, onSaved }) {
   const shortfalls = useMemo(() => {
     const byKey = new Map();
     lines.forEach((l) => {
-      const key = nameKeyOf(l.name);
+      const key = nameKeyOf(stockName(l));
       const a = avail[key];
       if (!a || a.availableQty == null) return;
       const seen = byKey.get(key);
@@ -437,7 +444,9 @@ function OrderDialog({ open, onClose, order, onSaved }) {
   const lineCaption = (l, a) => {
     const parts = selectedCustomer ? [l.packSize, 'rate & GST frozen'].filter(Boolean) : [];
     if (!a) parts.push('checking availability…');
-    else if (a.availableQty == null) parts.push('not in stock mirror');
+    else if (a.availableQty == null) {
+      parts.push(selectedCustomer && !l.tallyItem ? 'not linked to a Tally item (Rate Master → Link to Tally)' : 'not in stock mirror');
+    }
     else {
       const unit = a.baseUnits || l.baseUnits;
       parts.push(`${qty(a.availableQty, unit)} available`);
@@ -643,7 +652,7 @@ function OrderDialog({ open, onClose, order, onSaved }) {
                 {itemMatches.map((s, i) => {
                   // A frozen item has no stock figures of its own; a searched
                   // stock row does, and stands in until the lookup answers.
-                  const a = selectedCustomer ? availOf(s.name) : availOf(s.name, s);
+                  const a = selectedCustomer ? availOf(stockName(s)) : availOf(s.name, s);
                   return (
                     <button
                       key={s._id || s.name}
@@ -692,7 +701,7 @@ function OrderDialog({ open, onClose, order, onSaved }) {
           {lines.length > 0 && (
             <div className="space-y-2">
               {lines.map((l, i) => {
-                const a = availOf(l.name);
+                const a = availOf(stockName(l));
                 const over = Boolean(a) && a.availableQty != null && (Number(l.qty) || 0) > a.availableQty;
                 return (
                   <div key={l.name} className={`rounded-lg border p-3 ${over ? 'border-red-300' : ''}`}>

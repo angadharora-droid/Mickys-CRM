@@ -70,6 +70,9 @@ router.delete('/users/:id', authenticate, authorize(ADMIN), users.deleteUser);
 // ---------- Rate master (two masters: distributor & institutional) ----------
 router.get('/rate-items', authenticate, rateItems.listRateItems);
 router.get('/rate-items/categories', authenticate, rateItems.listCategories);
+// Rate card SKU -> Tally stock item links (card and Tally names differ).
+router.get('/rate-items/tally-links', authenticate, authorize(ADMIN), rateItems.listTallyLinks);
+router.put('/rate-items/tally-links', authenticate, authorize(ADMIN), validate(v.tallyLinksSchema), rateItems.updateTallyLinks);
 router.get('/rate-items/:id', authenticate, rateItems.getRateItem);
 router.post('/rate-items', authenticate, authorize(ADMIN), validate(v.rateItemSchema), rateItems.createRateItem);
 router.put('/rate-items/:id', authenticate, authorize(ADMIN), validate(v.rateItemSchema.partial()), rateItems.updateRateItem);

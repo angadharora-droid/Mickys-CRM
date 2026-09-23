@@ -360,10 +360,13 @@ async function orphanReservations() {
  * skipped — an unknown quantity cannot be short.
  */
 async function checkLineAvailability(items, options = {}) {
-  const rows = (items || []).filter((i) => nameKeyOf(i.name));
+  // A line may arrive with its key already resolved (a rate-card line linked
+  // to its Tally item); otherwise its own name is the key.
+  const keyOf = (i) => i.nameKey || nameKeyOf(i.name);
+  const rows = (items || []).filter((i) => keyOf(i));
   if (!rows.length) return { availableByKey: new Map(), warnings: [] };
 
-  const keys = uniqueKeys(rows.map((i) => i.name));
+  const keys = [...new Set(rows.map(keyOf))];
   const [stock, reserved] = await Promise.all([
     StockItem.find({ nameKey: { $in: keys } }).select('name nameKey closingQty').lean(),
     reservedByNameKey(keys, options),
@@ -381,7 +384,7 @@ async function checkLineAvailability(items, options = {}) {
   // they are warned about together rather than each measured on its own.
   const requestedByKey = new Map();
   for (const i of rows) {
-    const key = nameKeyOf(i.name);
+    const key = keyOf(i);
     requestedByKey.set(key, round3((requestedByKey.get(key) || 0) + (Number(i.qty) || 0)));
   }
 

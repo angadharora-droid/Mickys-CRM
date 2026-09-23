@@ -18,7 +18,8 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { ChevronDown, ChevronRight, Plus, Search, Tags, Pencil, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, Plus, Search, Tags, Pencil, Trash2, Link2 } from 'lucide-react';
+import TallyLinksDialog from './TallyLinksDialog';
 
 const schema = z.object({
   sku: z.string().min(1, 'Required'),
@@ -34,6 +35,7 @@ const schema = z.object({
 const EMPTY = { sku: '', productName: '', packSize: '', category: '', mrp: 0, netRate: 0, suggestiveMargin: 0, gst: 18 };
 
 export default function RateMaster() {
+  const [linksOpen, setLinksOpen] = useState(false);
   const [kitType, setKitType] = useState('distributor');
   const [items, setItems] = useState([]);
   const [meta, setMeta] = useState(null);
@@ -125,8 +127,10 @@ export default function RateMaster() {
   return (
     <div>
       <PageHeader title="Rate Master" description="Master price lists used to pre-fill kit rate cards">
+        <Button variant="outline" onClick={() => setLinksOpen(true)}><Link2 className="h-4 w-4" /> Link to Tally</Button>
         <Button onClick={openCreate}><Plus className="h-4 w-4" /> New Rate</Button>
       </PageHeader>
+      <TallyLinksDialog open={linksOpen} onOpenChange={setLinksOpen} />
 
       <Tabs value={kitType} onValueChange={(v) => { setKitType(v); setPage(1); setExpandedRows({}); }} className="mb-4">
         <TabsList>
