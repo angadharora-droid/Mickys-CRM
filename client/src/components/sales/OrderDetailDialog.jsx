@@ -7,6 +7,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import OrderStatusBadge from './OrderStatusBadge';
 import OrderItems from './OrderItems';
 import OrderTimeline from './OrderTimeline';
+import OrderTallyStatus from './OrderTallyStatus';
 
 /**
  * One order, in full, for any desk: the voucher on the left and its journey
@@ -60,6 +61,7 @@ export default function OrderDetailDialog({ open, order: initial, onClose, rende
           <div className="grid gap-6 lg:grid-cols-5">
             <div className="lg:col-span-3">
               <OrderItems order={o} />
+              <OrderTallyStatus order={o} onChange={update} />
             </div>
             <div className="lg:col-span-2 lg:border-l lg:pl-5">
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">

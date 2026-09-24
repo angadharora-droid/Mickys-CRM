@@ -18,13 +18,20 @@
 ;;      elements (number, date, party, reference, order no(s),
 ;;      narration, amount) so the CRM can match each invoice to the
 ;;      sales order whose number accounts wrote on it.
+;;    * After every push it also syncs sales orders with the CRM: it
+;;      reports the sales orders Tally holds, then collects the confirmed
+;;      CRM orders due in Tally and creates each one as a Sales Order
+;;      voucher (Tally numbers it; Order no. = the CRM number, TEST/<no.>
+;;      in test mode). Set up in the CRM: Sales Order Settings > Orders
+;;      into Tally. "Mickys CRM Orders" in Gateway of Tally lists them,
+;;      Ctrl+F9 there runs the order sync at once.
 ;;    * Opening figures respect SVFROMDATE and closing figures respect
 ;;      SVTODATE sent in the request, so the same report also answers
 ;;      "stock as on <date>".
 ;;
 ;;  How to get the current file (always up to date, key filled in):
 ;;    Open this URL in any browser and save/copy the text:
-;;      https://api.mickys-crm.centrepointgroup.in/api/stock/tdl?key=31a80f69783d9fb21e74b5b31ddc059bbcf83c4184d76769
+;;      https://api.mickys-crm.centrepointgroup.in/api/stock/tdl?key={{TALLY_SYNC_KEY}}
 ;;    (TallyPrime's Manage Local TDLs screen only accepts local file
 ;;    paths - it rejects URLs - so the URL is the download source, not
 ;;    the load path.)
@@ -50,6 +57,7 @@
 ;; ---- Optional menu entry: view the report inside Tally itself -------
 [#Menu: Gateway of Tally]
     Add : Key Item : Mickys Stock Export : M : Display : MickysStockReport
+    Add : Key Item : Mickys CRM Orders   : J : Display : MickysCrmSalesOrders
 
 ;; ---------------- Push to Mickys CRM (Sync button) --------------------
 ;; The key in the URL must match the TALLY_SYNC_KEY environment variable on
@@ -86,6 +94,7 @@
 ;; with the wrong company active can never overwrite Mickys stock.
 [Function: MickysPushToCrm]
     00 : HTTP Post : @@MickysSyncURL : ASCII : MickysStockReport
+    10 : CALL : MickysCrmOrdersRun
 
 ;; Both 0- and 1-based positions are checked because $$StringPart's start
 ;; index differs across releases - either match passes the guard.
@@ -476,3 +485,193 @@
     MickysIsSalesVch    : ($VoucherTypeName = "Sales") AND (NOT $IsCancelled) AND (NOT $IsOptional) AND ($Date >= @@MickysInvoiceFrom)
     MickysIsSalesLedger : $$IsLedOfGrp:$LedgerName:$$GroupSales
     MickysIsTaxLedger   : $$IsLedOfGrp:$LedgerName:"Duties & Taxes"
+
+;; =====================================================================
+;;  Sales orders: CRM -> Tally
+;; ---------------------------------------------------------------------
+;;  Confirmed CRM orders become Sales Order vouchers here, built the way the
+;;  company's own orders are (proven on this Tally with a one-off test
+;;  add-on, SO/26-27/246): Tally's own number, Order no. = CRM number,
+;;  godown from the CRM settings with batch "Any" (the batch is picked at
+;;  invoicing), Sales A/c on each item, CGST/SGST (or IGST) and round-off as
+;;  ledger lines. The CRM side is server/src/services/tallyOrder.service.js.
+;; =====================================================================
+
+[System: Formula]
+    MickysOrdersFeedURL   : "https://api.mickys-crm.centrepointgroup.in/api/stock/tally-orders?claim=1&key={{TALLY_SYNC_KEY}}"
+    MickysOrdersSeenURL   : "https://api.mickys-crm.centrepointgroup.in/api/stock/tally-orders/seen?key={{TALLY_SYNC_KEY}}"
+    MickysOrdersFrom      : $$MachineDate - 60
+    MickysIsCrmSalesOrder : ($VoucherTypeName = "{{VOUCHER_TYPE}}") AND (NOT $IsCancelled) AND (NOT $IsOptional) AND ($Date >= @@MickysOrdersFrom)
+
+[Button: MickysCrmPullBtn]
+    Key    : Ctrl + F9
+    Title  : "Get CRM orders"
+    Action : Call : MickysCrmOrdersRun
+
+;; Runs after every stock push (Load Company + the 10-minute timer) and on
+;; Ctrl+F9 in the "Mickys CRM Orders" report. Report first, then collect: the
+;; CRM hands out only orders Tally does not already hold, so what it learns
+;; from the report keeps it from handing out an order twice.
+[Function: MickysCrmOrdersRun]
+    00 : IF : NOT (($$StringPart:##SVCurrentCompany:0:12 = "CENTRE POINT") OR ($$StringPart:##SVCurrentCompany:1:12 = "CENTRE POINT"))
+    01 :    RETURN
+    02 : END IF
+    10 : HTTP Post : @@MickysOrdersSeenURL : ASCII : MickysCrmSalesOrders
+    20 : CALL : MickysCrmCreateOrders
+
+;; ---------------- Creating the orders the CRM hands out ----------------
+;; The CRM sends one flat <ROW> per step: HEAD starts a voucher, ITEM adds an
+;; item line (godown, batch Any, Order no., due date, sales ledger), LEDGER
+;; adds a party / GST / round-off line (amount signed as Tally keeps it:
+;; debit negative), END saves the voucher. Row fields are read through
+;; $$LoopCollObj so they come from the row whatever the target object is.
+;; The collection is referenced once only - every reference fetches it again,
+;; and the CRM hands each order out once.
+[Collection: MickysCrmOrderFeed]
+    Remote URL      : @@MickysOrdersFeedURL
+    XML Object Path : ROW : 1 : MICKYSORDERS
+
+[Function: MickysCrmCreateOrders]
+    Variable : SVViewName : String
+    Variable : MCRQty     : Number
+    Variable : MCRRate    : Number
+
+    ;; An item voucher built from TDL needs its view in BOTH the SVViewName
+    ;; variable and the voucher's PersistedView - with PersistedView alone
+    ;; Tally saves the order without its item lines (TDL FAQ "No Entries in
+    ;; Voucher"; proven on the company's Tally with the one-off test add-on).
+    00 : SET : SVViewName : "Invoice Voucher View"
+    01 : WALK COLLECTION : MickysCrmOrderFeed
+    10 :    IF : $$LoopCollObj:$KIND = "HEAD"
+    11 :       NEW OBJECT : Voucher
+    12 :       SET VALUE  : PersistedView      : ##SVViewName
+    13 :       SET VALUE  : Date               : $$Date:($$LoopCollObj:$DATE)
+    14 :       SET VALUE  : VoucherTypeName    : $$LoopCollObj:$VCHTYPE
+    15 :       SET VALUE  : PartyLedgerName    : $$LoopCollObj:$PARTY
+    16 :       SET VALUE  : PartyName          : $$LoopCollObj:$PARTY
+    17 :       SET VALUE  : BasicBuyerName     : $$LoopCollObj:$PARTY
+    18 :       SET VALUE  : BasicBasePartyName : $$LoopCollObj:$PARTY
+    19 :       SET VALUE  : Reference          : $$LoopCollObj:$ORDERNO
+    20 :       SET VALUE  : Narration          : $$LoopCollObj:$NARRATION
+    21 :       SET VALUE  : IsInvoice          : No
+    22 :    END IF
+    30 :    IF : $$LoopCollObj:$KIND = "ITEM"
+    31 :       INSERT COLLECTION OBJECT : AllInventoryEntries
+    32 :       SET VALUE  : StockItemName    : $$LoopCollObj:$ITEM
+    33 :       SET VALUE  : IsDeemedPositive : No
+    ;; Quantity and rate arrive as plain numbers and are converted in the
+    ;; item line's own context, which knows the item's unit - text such as
+    ;; "1 Nos" or a value read in the row's context fails (Tally Help FAQ
+    ;; 6520; the text form stopped the one-off test add-on at this point).
+    ;; Outward quantity is held negative inside Tally - a positive one shows
+    ;; on the order as "(-)1 Nos".
+    34 :       SET        : MCRQty           : 0 - $$Number:($$LoopCollObj:$QTY)
+    35 :       SET        : MCRRate          : $$Number:($$LoopCollObj:$RATE)
+    36 :       SET VALUE  : Rate             : $$TGTObject:$$AsRate:##MCRRate
+    37 :       SET VALUE  : ActualQty        : $$TGTObject:$$AsQty:##MCRQty
+    38 :       SET VALUE  : BilledQty        : $$TGTObject:$$AsQty:##MCRQty
+    39 :       SET VALUE  : Amount           : $$Number:($$LoopCollObj:$AMOUNT)
+    40 :       INSERT COLLECTION OBJECT : BatchAllocations
+    41 :       SET VALUE  : GodownName       : $$LoopCollObj:$GODOWN
+    42 :       SET VALUE  : BatchName        : $$SysName:Any
+    43 :       SET VALUE  : OrderNo          : $$LoopCollObj:$ORDERNO
+    ;; The due date is Tally's "due date" type: set through $$DateRange, the
+    ;; form proven by the one-off test add-on (a plain date stops the function).
+    44 :       SET VALUE  : OrderDueDate     : $$DateRange:($$LoopCollObj:$DUE):($$Date:($$LoopCollObj:$DATE)):True
+    45 :       SET VALUE  : Amount           : $$Number:($$LoopCollObj:$AMOUNT)
+    46 :       SET VALUE  : ActualQty        : $$TGTObject:$$AsQty:##MCRQty
+    47 :       SET VALUE  : BilledQty        : $$TGTObject:$$AsQty:##MCRQty
+    48 :       SET TARGET : ..
+    49 :       INSERT COLLECTION OBJECT : AccountingAllocations
+    50 :       SET VALUE  : LedgerName       : $$LoopCollObj:$LEDGER
+    51 :       SET VALUE  : IsDeemedPositive : No
+    52 :       SET VALUE  : Amount           : $$Number:($$LoopCollObj:$AMOUNT)
+    53 :       SET TARGET : ..
+    54 :       SET TARGET : ..
+    55 :    END IF
+    60 :    IF : $$LoopCollObj:$KIND = "LEDGER"
+    61 :       INSERT COLLECTION OBJECT : LedgerEntries
+    62 :       SET VALUE  : LedgerName       : $$LoopCollObj:$LEDGER
+    63 :       SET VALUE  : IsDeemedPositive : ($$LoopCollObj:$DEEMED = "Yes")
+    64 :       SET VALUE  : IsPartyLedger    : ($$LoopCollObj:$ISPARTY = "Yes")
+    65 :       SET VALUE  : Amount           : $$Number:($$LoopCollObj:$AMOUNT)
+    66 :       SET TARGET : ..
+    67 :    END IF
+    70 :    IF : $$LoopCollObj:$KIND = "END"
+    71 :       CREATE TARGET
+    72 :    END IF
+    80 : END WALK
+
+;; ---------------- Tally's sales orders, reported to the CRM ------------
+;; Shown on screen from Gateway of Tally, and posted to the CRM as XML by
+;; MickysCrmOrdersRun: one <SALESORDER> per sales order of the last 60 days.
+[Report: MickysCrmSalesOrders]
+    Forms : MickysCrmSOForm
+    Title : "Mickys CRM - Sales Orders in Tally"
+
+[Form: MickysCrmSOForm]
+    Parts   : MickysCrmSOHead, MickysCrmSOList
+    Buttons : MickysCrmPullBtn
+    XMLTag  : "MICKYSSALESORDERS"
+
+[Part: MickysCrmSOHead]
+    Lines : MickysCrmSOHeadLine
+
+[Line: MickysCrmSOHeadLine]
+    Fields : MickysCrmSOCompany, MickysCrmSOVersion
+
+[Field: MickysCrmSOCompany]
+    Type   : String
+    Set as : ##SVCurrentCompany
+    XMLTag : "COMPANY"
+
+[Field: MickysCrmSOVersion]
+    Type   : String
+    Set as : "{{TDL_VERSION}}"
+    XMLTag : "TDLVERSION"
+
+[Part: MickysCrmSOList]
+    Lines    : MickysCrmSOLine
+    Repeat   : MickysCrmSOLine : MickysCrmTallyOrders
+    Scrolled : Vertical
+
+[Line: MickysCrmSOLine]
+    Fields : MCSVchNo, MCSDate, MCSParty, MCSRef, MCSNarration, MCSGuid
+    XMLTag : "SALESORDER"
+
+[Field: MCSVchNo]
+    Type   : String
+    Set as : $VoucherNumber
+    XMLTag : "VOUCHERNUMBER"
+
+[Field: MCSDate]
+    Type   : String
+    Set as : $$String:$Date:UniversalDate
+    XMLTag : "DATE"
+
+[Field: MCSParty]
+    Type   : String
+    Set as : $PartyLedgerName
+    XMLTag : "PARTY"
+
+;; The sales order's "Order no." - the CRM number on orders the CRM created.
+[Field: MCSRef]
+    Type   : String
+    Set as : $Reference
+    XMLTag : "REFERENCE"
+
+[Field: MCSNarration]
+    Type   : String
+    Set as : $Narration
+    XMLTag : "NARRATION"
+
+[Field: MCSGuid]
+    Type   : String
+    Set as : $GUID
+    XMLTag : "GUID"
+
+[Collection: MickysCrmTallyOrders]
+    Type   : Voucher
+    Filter : MickysIsCrmSalesOrder
+    Fetch  : Date, VoucherNumber, VoucherTypeName, PartyLedgerName
+    Fetch  : Reference, Narration, GUID, IsCancelled, IsOptional

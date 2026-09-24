@@ -191,7 +191,7 @@ function parseTallyDate(raw) {
  * say whether the copy loaded on the Tally machine is the current one. Bump
  * it whenever the template changes.
  */
-const TDL_VERSION = '5';
+const TDL_VERSION = '6';
 
 const parseTallyTdlVersion = (xml) => (typeof xml === 'string' ? tagValue(xml, 'TDLVERSION') : '');
 
@@ -301,6 +301,8 @@ const parseTallyCompany = (xml) =>
   typeof xml === 'string' ? tagValue(xml, 'COMPANY') : '';
 
 module.exports = {
+  tagValue,
+  cleanName,
   parseTallyStockXml,
   parseTallyVendors,
   parseTallyCustomers,

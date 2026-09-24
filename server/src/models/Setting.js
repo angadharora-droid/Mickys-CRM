@@ -115,6 +115,37 @@ const settingSchema = new mongoose.Schema(
       defaultGst: { type: Number, default: 5, min: 0, max: 100 },
       gstBasis: { type: String, enum: ['exclusive', 'inclusive'], default: 'exclusive' },
     },
+    // Confirmed orders go into Tally as Sales Order vouchers: the stock TDL
+    // (mickys-stock.tdl) collects them from the CRM and creates them (see
+    // services/tallyOrder.service.js). Test mode books every order against
+    // one dummy ledger with a TEST/ order number so nobody invoices it; live
+    // mode books it against the customer's own ledger. Names must match Tally
+    // exactly; {rate} in a GST ledger name is the rate on that ledger (2.5 for
+    // CGST on a 5% item, 5 for IGST).
+    tallyOrders: {
+      enabled: { type: Boolean, default: false },
+      mode: { type: String, enum: ['test', 'live'], default: 'test' },
+      testLedger: { type: String, trim: true, default: 'TEST' },
+      voucherType: { type: String, trim: true, default: 'Sales Order' },
+      godown: { type: String, trim: true, default: 'PRIMARY PACKAGING SFG' },
+      salesLedger: { type: String, trim: true, default: 'Sales A/c' },
+      cgstLedger: { type: String, trim: true, default: 'OUTPUT CGST @ {rate}%' },
+      sgstLedger: { type: String, trim: true, default: 'OUTPUT SGST @ {rate}%' },
+      igstLedger: { type: String, trim: true, default: 'OUTPUT IGST @ {rate}%' },
+      // Blank = no rounding; otherwise the total is rounded to the rupee
+      // through this ledger, as accounts do on their own orders.
+      roundOffLedger: { type: String, trim: true, default: 'Round Off' },
+      // Orders confirmed before this moment are never sent — they predate the
+      // switch-on and accounts may already have keyed them by hand. Stamped
+      // the first time the feature is switched on.
+      sendFrom: { type: Date, default: null },
+      // Bookkeeping from the Tally side, shown on the settings screen.
+      lastPullAt: { type: Date, default: null }, // add-on last collected orders
+      lastPullCount: { type: Number, default: 0 },
+      lastSeenAt: { type: Date, default: null }, // add-on last reported Tally's sales orders
+      lastSeenCount: { type: Number, default: 0 },
+      lastTdlVersion: { type: String, default: '' },
+    },
     // Daily email digest. lastSentDay is bookkeeping — the last IST day
     // (YYYY-MM-DD) whose report was emailed, so restarts/redeploys never send
     // a day twice. The rest is the schedule an admin sets in the app; a null

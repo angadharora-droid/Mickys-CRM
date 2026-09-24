@@ -55,7 +55,7 @@ const getSettings = asyncHandler(async (_req, res) => {
 // PUT /api/settings
 const updateSettings = asyncHandler(async (req, res) => {
   const settings = await Setting.getGlobal();
-  const { email, company, kit, salesOrder, dailyReport, leadScore, export: exportCfg } = req.body;
+  const { email, company, kit, salesOrder, tallyOrders, dailyReport, leadScore, export: exportCfg } = req.body;
 
   let scoresRecomputed = null;
   if (leadScore) {
@@ -75,6 +75,17 @@ const updateSettings = asyncHandler(async (req, res) => {
   if (company) settings.company = { ...settings.company.toObject(), ...company };
   if (kit) settings.kit = { ...settings.kit.toObject(), ...kit };
   if (salesOrder) settings.salesOrder = { ...settings.salesOrder.toObject(), ...salesOrder };
+  if (tallyOrders) {
+    const current = settings.tallyOrders.toObject();
+    const next = { ...current, ...tallyOrders };
+    if (next.mode === 'test' && !String(next.testLedger || '').trim()) {
+      throw ApiError.badRequest('Test mode needs the name of the test ledger in Tally');
+    }
+    // Switching on starts the clock: orders confirmed before this moment are
+    // never sent — accounts may already have keyed them by hand.
+    if (next.enabled && !current.sendFrom) next.sendFrom = new Date();
+    settings.tallyOrders = next;
+  }
   // lastSentDay is the mailer's own bookkeeping and rides through the merge
   // untouched — the schema strips it if a client ever sends it.
   if (dailyReport) settings.dailyReport = { ...settings.dailyReport.toObject(), ...dailyReport };
