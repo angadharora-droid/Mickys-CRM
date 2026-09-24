@@ -259,8 +259,13 @@ const SO_NUMBER_RX = /\bSO[\s_-]*(\d{4})[\s_-]*(\d{1,5})\b/gi;
 function extractOrderNumbers(text) {
   const found = new Set();
   const rx = new RegExp(SO_NUMBER_RX.source, 'gi');
+  const s = String(text || '');
   let m;
-  while ((m = rx.exec(String(text || '')))) {
+  while ((m = rx.exec(s))) {
+    // TEST/SO-2026-0042 is the test copy of an order booked in Tally against
+    // the dummy ledger (services/tallyOrder.service.js) — an invoice naming it
+    // is a mistake to look at, never the real order's invoice.
+    if (/TEST\s*\/\s*$/i.test(s.slice(0, m.index))) continue;
     // Leading zeros are re-derived, so "42", "0042" and "00042" all name
     // SO-YYYY-0042 (numbers past 9999 keep their fifth digit).
     found.add(`SO-${m[1]}-${String(Number(m[2])).padStart(4, '0')}`);

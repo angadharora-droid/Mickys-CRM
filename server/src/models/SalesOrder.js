@@ -228,6 +228,25 @@ const salesOrderSchema = new mongoose.Schema(
 
     history: { type: [historySchema], default: [] },
 
+    // ---- The order as a Sales Order voucher in Tally (services/
+    // tallyOrder.service.js). The Tally add-on collects confirmed orders and
+    // creates them; Tally numbers the voucher itself (SO/26-27/245) and the
+    // CRM number goes in as the voucher's Order no. — TEST/SO-2026-0042 in
+    // test mode. The add-on's next report of Tally's sales orders brings
+    // Tally's number back. ----
+    tally: {
+      mode: { type: String, enum: ['', 'test', 'live'], default: '' }, // mode of the last send
+      orderNo: { type: String, default: '' }, // Order no. it went with
+      sentAt: { type: Date, default: null }, // when the add-on collected it
+      sendCount: { type: Number, default: 0 },
+      voucherNumber: { type: String, default: '' }, // Tally's own number, once seen
+      guid: { type: String, default: '' },
+      seenAt: { type: Date, default: null }, // last report from Tally that carried it
+      // Why it cannot be sent as it stands (item not linked, customer without
+      // a Tally ledger…) — refreshed each time the add-on asks.
+      holdReason: { type: String, default: '' },
+    },
+
     // When accounts were emailed this order's confirmation. Cleared whenever
     // the order leaves confirmed, so re-confirming an order that has since been
     // re-opened and edited mails accounts the new version.

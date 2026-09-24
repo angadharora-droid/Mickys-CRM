@@ -26,6 +26,7 @@ const salesCustomers = require('../controllers/appointedCustomer.controller');
 const salesReports = require('../controllers/salesReport.controller');
 const invoicing = require('../controllers/invoicing.controller');
 const dispatch = require('../controllers/dispatch.controller');
+const tallyOrders = require('../controllers/tallyOrder.controller');
 
 const router = express.Router();
 
@@ -150,6 +151,13 @@ router.post('/export/rate-card/preview', authenticate, validate(v.exportRateCard
 router.post('/stock/sync', stock.tallyKeyOrAdmin, stock.syncStock);
 // TallyPrime loads its TDL from this URL (key-gated, key injected on serve).
 router.get('/stock/tdl', stock.tallyKeyOrAdmin, stock.serveTdl);
+// Confirmed orders into Tally as Sales Order vouchers: the order part of the
+// stock TDL is fed and reported to here, key-gated like the stock sync. Only
+// its own feed request (claim=1) hands orders out.
+router.get('/stock/tally-orders', stock.tallyKeyOrAdmin, tallyOrders.orderFeed);
+router.post('/stock/tally-orders/seen', stock.tallyKeyOrAdmin, tallyOrders.ordersSeen);
+router.get('/tally-orders/overview', authenticate, authorize(ADMIN), tallyOrders.tallyOrdersOverview);
+router.get('/tally-orders/import-file', authenticate, authorize(ADMIN), tallyOrders.tallyImportFile);
 router.get('/stock', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, stock.listStock);
 router.get('/stock/daily', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, stock.dailyStock);
 router.get('/stock/vendors', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, stock.listVendors);
@@ -183,6 +191,9 @@ router.post('/sales-orders/:id/deliver', authenticate, authorize(ADMIN, EXEC), S
 router.post('/sales-orders/:id/feedback', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, validate(v.salesOrderFeedbackSchema), salesOrders.submitFeedback);
 router.post('/sales-orders/:id/email', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, emailLimiter, validate(v.salesOrderEmailSchema), salesOrders.emailSalesOrder);
 router.delete('/sales-orders/:id', authenticate, authorize(ADMIN), salesOrders.deleteSalesOrder);
+// An order that went to Tally but never arrived (or was deleted there) is
+// offered to the add-on again — an admin's call, after checking Tally.
+router.post('/sales-orders/:id/tally-resend', authenticate, authorize(ADMIN), tallyOrders.resendToTally);
 
 // ---------- Invoicing module (accounts) ----------
 // Read-only: a queue of confirmed orders waiting for their Tally invoice, and

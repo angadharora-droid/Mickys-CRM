@@ -418,6 +418,22 @@ const settingsSchema = z.object({
       gstBasis: z.enum(['exclusive', 'inclusive']).optional(),
     })
     .optional(),
+  // Confirmed orders into Tally (services/tallyOrder.service.js). Names must
+  // match Tally exactly; the add-on's bookkeeping fields are never client-set.
+  tallyOrders: z
+    .object({
+      enabled: z.boolean().optional(),
+      mode: z.enum(['test', 'live']).optional(),
+      testLedger: z.string().trim().max(200).optional(),
+      voucherType: z.string().trim().min(1).max(100).optional(),
+      godown: z.string().trim().min(1).max(200).optional(),
+      salesLedger: z.string().trim().min(1).max(200).optional(),
+      cgstLedger: z.string().trim().min(1).max(200).optional(),
+      sgstLedger: z.string().trim().min(1).max(200).optional(),
+      igstLedger: z.string().trim().min(1).max(200).optional(),
+      roundOffLedger: z.string().trim().max(200).optional(),
+    })
+    .optional(),
   // Lead score card weights (points per milestone) and the calls threshold.
   leadScore: z
     .object({

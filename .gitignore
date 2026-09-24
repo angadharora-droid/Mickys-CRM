@@ -13,6 +13,12 @@ build/
 # Runtime uploads (generated kits, attachments)
 server/uploads/
 
+# Tally scratch files - one-off import tests, and real vouchers exported for
+# reference (customer names, addresses, GSTINs); the repo is public
+tally/sample-*.xml
+tally/test-*.xml
+tally/*-test.tdl
+
 # Logs
 *.log
 npm-debug.log*

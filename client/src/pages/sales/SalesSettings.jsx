@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { GST_BASIS_OPTIONS } from '@/lib/gst';
+import TallyOrdersSettings from '@/components/sales/TallyOrdersSettings';
 import { AlertTriangle, Loader2, Save, TriangleAlert, Send, Clock } from 'lucide-react';
 
 // The accounts list is stored as an array but edited as one comma-separated
@@ -25,6 +26,7 @@ const yesterdayInput = () => new Date(Date.now() - 86400000).toLocaleDateString(
 export default function SalesSettings() {
   const [salesOrder, setSalesOrder] = useState(null);
   const [dailyReport, setDailyReport] = useState(null);
+  const [tallyOrders, setTallyOrders] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savingReport, setSavingReport] = useState(false);
@@ -37,6 +39,7 @@ export default function SalesSettings() {
     try {
       const { data } = await api.get('/settings');
       setSalesOrder(data.data?.salesOrder || {});
+      setTallyOrders(data.data?.tallyOrders || {});
       const dr = data.data?.dailyReport || {};
       setDailyReport({ ...dr, time: timeText(dr) });
     } catch (err) {
@@ -289,6 +292,8 @@ export default function SalesSettings() {
           </Button>
         </CardContent>
       </Card>
+
+      {tallyOrders && <TallyOrdersSettings initial={tallyOrders} />}
 
       {dailyReport && (
         <Card className="mt-4">

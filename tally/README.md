@@ -2,7 +2,7 @@
 
 Files:
 
-- `../server/src/assets/mickys-stock.tdl` — the TDL **template** (the sync key appears as `{{TALLY_SYNC_KEY}}`). The backend serves it, key filled in, at
+- `../server/src/assets/mickys-stock.tdl` — the one TDL (stock push, invoices, and — v6 — CRM sales orders into Tally, section 6); the **template** (the sync key appears as `{{TALLY_SYNC_KEY}}`). The backend serves it, key filled in, at
   `https://api.mickys-crm.centrepointgroup.in/api/stock/tdl?key=<TALLY_SYNC_KEY>` — Tally loads it straight from that URL. Defines report `MickysStockReport` (opening / inward / outward / closing stock per item, plus the item's alias = **product code**, part no., group, category, unit, standard cost/price — and every vendor & customer, i.e. ledgers under Sundry Creditors / Sundry Debtors).
 - `sfg-product-codes.csv` — the code ↔ Tally item name mapping issued for the Semi Finished Goods items (`SFG-<item no>-<grams>`). The codes are entered in Tally as each stock item's **alias**; this file is the reference list, not something the CRM reads.
 - `sample-stock-request.xml` — the request envelope the CRM backend POSTs to Tally to pull that report.
@@ -176,9 +176,9 @@ Two ways, both hitting `POST /api/stock/sync` on the backend:
 > total and mark the row with `*`.
 >
 > **TDL version check.** The served file carries `<TDLVERSION>` (currently
-> v5) in every push. The reply Tally shows after Ctrl+F10 ends with
-> `[TDL v5]` when the loaded copy is current, or `[OLD TDL … loaded - download
-> v5 …]` when it is not; the Invoicing page's "Last Tally push" card says the
+> v6) in every push. The reply Tally shows after Ctrl+F10 ends with
+> `[TDL v6]` when the loaded copy is current, or `[OLD TDL … loaded - download
+> v6 …]` when it is not; the Invoicing page's "Last Tally push" card says the
 > same. Whenever the register shows billed totals with `*`, or the Stock page
 > shows no product codes after they were entered in Tally, check this first.
 >
@@ -283,3 +283,79 @@ reset. Fixes, best first:
    becomes that day's opening in the Day-wise register). On a multi-user
    host, each session with the TDL loaded runs its own timer — the extra
    pushes are harmless too.
+
+## 6. Sales orders into Tally (mickys-stock.tdl v6)
+
+Every **confirmed** CRM order is created in Tally as a **Sales Order** voucher,
+automatically — nobody keys it. It is part of the same TDL as the stock push
+and runs right after every push (company opened + every 10 minutes while
+CENTRE POINT FOODS is open), and on **Ctrl+F9** in its report:
+
+1. it reports the sales orders Tally holds (last 60 days) to the CRM, so the
+   CRM learns Tally's number for each of its orders, then
+2. it collects the confirmed orders due in Tally and creates each one.
+
+**How an order looks in Tally** (the shape proven by hand-imported test orders,
+and the TDL's way of building it by a one-off test add-on — SO/26-27/246):
+
+| Field | Value |
+|---|---|
+| Voucher no. | Tally's own automatic number (SO/26-27/…) |
+| Order no. | the CRM number, `SO-2026-0042` (`TEST/SO-2026-0042` in test mode) |
+| Party | test mode: the test ledger (`TEST`); live: the customer's own ledger |
+| Items | the linked Tally stock item, quantity in its own unit, rate/amount before GST, **Sales A/c** |
+| Godown / batch | **PRIMARY PACKAGING SFG** / **Any** — accounts pick the real batch when invoicing |
+| GST | `OUTPUT CGST @ 2.5%` + `OUTPUT SGST @ 2.5%` (or `OUTPUT IGST @ 5%` inter-state), per rate |
+| Round-off | `Round Off` to the rupee |
+| Narration | `CRM order SO-2026-0042 for <customer>, booked by <exec>` |
+
+Tally refuses an imported order line without an Order no. (import exception
+"Order No. is missing in Item Allocations") and only knows its own number once
+the order is saved — that is why the Order no. is the CRM number. When
+accounts raise the invoice against the order, its Order No(s) carries
+`SO-2026-0042` and the stock push moves the order to **Invoiced** as before.
+
+**Settings:** Sales Orders → Settings → *Orders into Tally* — switch on, test or
+live, and the Tally names above (voucher type, godown, ledgers). Switching on
+records the moment; orders confirmed before it are never sent. The same card
+shows what is due, what is held back and why (item not linked on the Rate
+Master, customer not linked to a Tally ledger…), what was sent but is not in
+Tally's report yet, and when the add-on last called in. Each order's detail
+shows its own Tally status ("In Tally as SO/26-27/245").
+
+**Test mode** books every order to the test ledger with a `TEST/` Order no.,
+so nobody invoices it. An invoice naming a `TEST/` number never moves a CRM
+order. Switching to **live** sends the confirmed orders again under their own
+customers — delete the TEST ones in Tally.
+
+**Load it:** nothing extra — download the current `mickys-stock.tdl` (v6+)
+from the usual URL (section 1), replace the file and restart Tally. "Mickys
+CRM Orders" appears in Gateway of Tally: Tally's sales orders of the last 60
+days, with **Ctrl+F9** to sync orders at once.
+
+**How the TDL builds an order** (each point cost a test round on this Tally):
+the view goes in both the `SVViewName` variable and the voucher's
+`PersistedView` ("Invoice Voucher View") or Tally saves the order without its
+item lines (TDL FAQ "No Entries in Voucher"); quantity and rate are numbers
+converted in the item line's context (`$$TGTObject:$$AsQty` / `$$AsRate`),
+never text like "1 Nos"; outward quantity is negative internally (else it
+shows "(-)1 Nos"); the due date is set with `$$DateRange`; batch "Any" is
+`$$SysName:Any`.
+
+**Troubleshooting**
+
+- *The settings card says the add-on has not called in* — the Tally machine
+  still runs a pre-v6 `mickys-stock.tdl` (the settings card and the Ctrl+F10
+  reply say which version is loaded), or the Mickys company was never the
+  active one since Tally started.
+- *An order says "Sent to Tally" but Tally does not have it* — the add-on
+  collected it but Tally did not save it (a name in Settings that does not
+  match Tally exactly is the usual cause). Fix the name, then **Send again**
+  on the order (admin). The CRM never re-sends by itself: a re-send of an
+  order that did arrive would put it in Tally twice.
+- *An order says "No longer in Tally"* — it was deleted there. **Send again**
+  if it should be there.
+- *Fallback without the add-on:* the settings card's **Download import file**
+  gives the due orders as a Tally import file (Import → Transactions). The
+  orders in it count as sent.
+

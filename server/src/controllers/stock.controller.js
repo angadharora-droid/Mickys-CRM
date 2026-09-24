@@ -23,6 +23,7 @@ const {
 const { matchInvoices } = require('../services/orderPipeline.service');
 const TallyInvoice = require('../models/TallyInvoice');
 const { relinkOpenOrders } = require('../services/tallyLink.service');
+const { getConfig: getTallyOrderConfig } = require('../services/tallyOrder.service');
 const {
   nameKeyOf,
   reservedByNameKey,
@@ -457,9 +458,13 @@ const serveTdl = asyncHandler(async (req, res) => {
     throw ApiError.badRequest('TALLY_SYNC_KEY is not configured on the server');
   }
   const template = await fs.promises.readFile(TDL_TEMPLATE_PATH, 'utf8');
+  // The order part reports Tally's sales orders of the voucher type set in
+  // Sales Order Settings > Orders into Tally.
+  const { voucherType } = await getTallyOrderConfig();
   const body = template
     .replace(/\{\{TALLY_SYNC_KEY\}\}/g, env.tallySyncKey)
-    .replace(/\{\{TDL_VERSION\}\}/g, TDL_VERSION);
+    .replace(/\{\{TDL_VERSION\}\}/g, TDL_VERSION)
+    .replace(/\{\{VOUCHER_TYPE\}\}/g, String(voucherType || 'Sales Order').replace(/"/g, ''));
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   res.setHeader('Content-Disposition', 'inline; filename="mickys-stock.tdl"');
   res.send(body);
@@ -502,18 +507,24 @@ const dailyStock = asyncHandler(async (req, res) => {
 });
 
 // GET /api/stock/vendors?search= and GET /api/stock/customers?search=
-const listLedgerMirror = (Model) =>
+const listLedgerMirror = (Model, { hideTestLedger = false } = {}) =>
   asyncHandler(async (req, res) => {
     const filter = {};
     if (req.query.search) {
       const rx = searchRegex(req.query.search);
       filter.$or = [{ name: rx }, { group: rx }];
     }
+    // The dummy ledger test orders go to in Tally is nobody's customer — it
+    // stays out of the order screen and the link dialogs.
+    if (hideTestLedger) {
+      const { testLedger } = await getTallyOrderConfig();
+      if (testLedger) filter.name = { $ne: testLedger };
+    }
     const ledgers = await Model.find(filter).sort({ name: 1 }).limit(1000);
     res.json({ success: true, data: ledgers });
   });
 const listVendors = listLedgerMirror(Vendor);
-const listCustomers = listLedgerMirror(Customer);
+const listCustomers = listLedgerMirror(Customer, { hideTestLedger: true });
 
 // GET /api/stock/groups
 const listGroups = asyncHandler(async (_req, res) => {

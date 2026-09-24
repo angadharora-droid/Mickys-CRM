@@ -7,6 +7,11 @@ const SalesOrder = require('../models/SalesOrder');
 const Setting = require('../models/Setting');
 const StockItem = require('../models/StockItem');
 const { resolveLines } = require('../services/tallyLink.service');
+const {
+  getConfig: getTallyOrderConfig,
+  statusOf: tallyStatusOf,
+  buildVouchers: buildTallyVouchers,
+} = require('../services/tallyOrder.service');
 const { GST_BASES, SUPPLY_TYPES, computeLine, computeTotals, deriveSupplyType } = require('../utils/gst');
 const { renderSalesOrderPdf } = require('../services/salesOrderPdf.service');
 const { sendOrderEmail } = require('../services/salesOrderEmail.service');
@@ -286,12 +291,33 @@ const listSalesOrders = asyncHandler(async (req, res) => {
   res.json({ success: true, data: orders, meta: buildMeta(total, page, limit) });
 });
 
+/**
+ * Where the order stands with Tally (services/tallyOrder.service.js). For an
+ * order still due, whether it can go is worked out now rather than read off
+ * the add-on's last visit, so a link fixed a minute ago shows at once.
+ */
+async function tallyStatusFor(order) {
+  const cfg = await getTallyOrderConfig();
+  const status = tallyStatusOf(order, cfg);
+  if (status.state === 'queued' || status.state === 'held') {
+    const [built] = await buildTallyVouchers([order.toObject ? order.toObject() : order], cfg);
+    status.state = built.reason ? 'held' : 'queued';
+    status.holdReason = built.reason || '';
+  }
+  return { ...status, enabled: Boolean(cfg.enabled), currentMode: cfg.mode };
+}
+
 // GET /api/sales-orders/:id
 const getSalesOrder = asyncHandler(async (req, res) => {
   const order = await withDocumentRefs(SalesOrder.findById(req.params.id));
   if (!order) throw ApiError.notFound('Sales order not found');
   await populatePipeline(order);
-  res.json({ success: true, data: order });
+  const data = order.toObject();
+  data.tallyStatus = await tallyStatusFor(order).catch((err) => {
+    console.error(`[sales-order] tally status for ${order.number} failed: ${err.message}`);
+    return null;
+  });
+  res.json({ success: true, data });
 });
 
 // PUT /api/sales-orders/:id — full re-edit, only while the order is open

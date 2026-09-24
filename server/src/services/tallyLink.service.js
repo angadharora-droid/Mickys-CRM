@@ -26,6 +26,7 @@ const StockItem = require('../models/StockItem');
 const AppointedCustomer = require('../models/AppointedCustomer');
 const SalesOrder = require('../models/SalesOrder');
 const Customer = require('../models/Customer');
+const Setting = require('../models/Setting');
 const { nameKeyOf } = require('./stockAvailability.service');
 
 const cleanSku = (s) => String(s || '').trim().toUpperCase();
@@ -274,10 +275,14 @@ function partyScore(a, b) {
  * Nothing is linked without a person saving it.
  */
 async function suggestCustomerLinks() {
-  const [customers, ledgers] = await Promise.all([
+  const [customers, allLedgers, settings] = await Promise.all([
     AppointedCustomer.find({}).select('companyName gstin tallyLedger').sort({ companyName: 1 }).lean(),
     Customer.find({}).select('name group').lean(),
+    Setting.getGlobal(),
   ]);
+  // The dummy ledger test orders go to in Tally is nobody's customer.
+  const testLedger = settings.tallyOrders?.testLedger || '';
+  const ledgers = allLedgers.filter((l) => !testLedger || l.name !== testLedger);
   const ledgerRows = ledgers.map((l) => ({ ...l, tokens: partyTokens(l.name) }));
   const names = new Set(ledgers.map((l) => l.name));
   // A ledger already linked to one customer is not suggested for another.
