@@ -284,7 +284,7 @@ reset. Fixes, best first:
    host, each session with the TDL loaded runs its own timer — the extra
    pushes are harmless too.
 
-## 6. Sales orders into Tally (mickys-stock.tdl v6)
+## 6. Sales orders into Tally (mickys-stock.tdl v6+)
 
 Every **confirmed** CRM order is created in Tally as a **Sales Order** voucher,
 automatically — nobody keys it. It is part of the same TDL as the stock push
@@ -341,6 +341,13 @@ converted in the item line's context (`$$TGTObject:$$AsQty` / `$$AsRate`),
 never text like "1 Nos"; outward quantity is negative internally (else it
 shows "(-)1 Nos"); the due date is set with `$$DateRange`; batch "Any" is
 `$$SysName:Any`.
+
+**Buttons in "Mickys CRM Orders"** (TDL v7): **Get CRM orders** (Ctrl+F9)
+runs the order sync now; **Sample order** creates the CRM's fixed TEST sample
+(Order no. `TEST/SAMPLE-hhmm`, party TEST) with the same code as real orders,
+without touching any CRM order; **Check feed** shows that sample exactly as
+Tally reads it. The CRM's *Orders into Tally* card lists every call Tally made
+("What Tally sent") and the last stock push — the first place to look.
 
 **Troubleshooting**
 

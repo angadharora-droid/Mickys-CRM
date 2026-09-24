@@ -499,108 +499,153 @@
 
 [System: Formula]
     MickysOrdersFeedURL   : "https://api.mickys-crm.centrepointgroup.in/api/stock/tally-orders?claim=1&key={{TALLY_SYNC_KEY}}"
+    MickysOrdersSampleURL : "https://api.mickys-crm.centrepointgroup.in/api/stock/tally-orders?sample=1&key={{TALLY_SYNC_KEY}}"
     MickysOrdersSeenURL   : "https://api.mickys-crm.centrepointgroup.in/api/stock/tally-orders/seen?key={{TALLY_SYNC_KEY}}"
     MickysOrdersFrom      : $$MachineDate - 60
     MickysIsCrmSalesOrder : ($VoucherTypeName = "{{VOUCHER_TYPE}}") AND (NOT $IsCancelled) AND (NOT $IsOptional) AND ($Date >= @@MickysOrdersFrom)
 
+;; Buttons on the "Mickys CRM Orders" report (also clickable in the
+;; right-hand button bar).
 [Button: MickysCrmPullBtn]
     Key    : Ctrl + F9
     Title  : "Get CRM orders"
     Action : Call : MickysCrmOrdersRun
 
+[Button: MickysCrmSampleBtn]
+    Key    : Ctrl + Alt + S
+    Title  : "Sample order"
+    Action : Call : MickysCrmSampleRun
+
+[Button: MickysCrmFeedCheckBtn]
+    Key    : Ctrl + Alt + F
+    Title  : "Check feed"
+    Action : Display : MickysCrmFeedCheck
+
 ;; Runs after every stock push (Load Company + the 10-minute timer) and on
-;; Ctrl+F9 in the "Mickys CRM Orders" report. Report first, then collect: the
-;; CRM hands out only orders Tally does not already hold, so what it learns
-;; from the report keeps it from handing out an order twice.
+;; "Get CRM orders" in the "Mickys CRM Orders" report. Report first, then
+;; collect: the CRM hands out only orders Tally does not already hold, so
+;; what it learns from the report keeps it from handing out an order twice.
 [Function: MickysCrmOrdersRun]
     00 : IF : NOT (($$StringPart:##SVCurrentCompany:0:12 = "CENTRE POINT") OR ($$StringPart:##SVCurrentCompany:1:12 = "CENTRE POINT"))
     01 :    RETURN
     02 : END IF
     10 : HTTP Post : @@MickysOrdersSeenURL : ASCII : MickysCrmSalesOrders
-    20 : CALL : MickysCrmCreateOrders
+    20 : CALL : MickysCrmCreateOrders : "MickysCrmOrderFeed"
+
+;; "Sample order": the CRM's fixed TEST sample (party TEST, Order no.
+;; TEST/SAMPLE-hhmm), built by the same function as real orders - for
+;; checking the Tally side without touching a real CRM order.
+[Function: MickysCrmSampleRun]
+    00 : IF : NOT (($$StringPart:##SVCurrentCompany:0:12 = "CENTRE POINT") OR ($$StringPart:##SVCurrentCompany:1:12 = "CENTRE POINT"))
+    01 :    RETURN
+    02 : END IF
+    10 : CALL : MickysCrmCreateOrders : "MickysCrmSampleFeed"
 
 ;; ---------------- Creating the orders the CRM hands out ----------------
 ;; The CRM sends one flat <ROW> per step: HEAD starts a voucher, ITEM adds an
-;; item line (godown, batch Any, Order no., due date, sales ledger), LEDGER
-;; adds a party / GST / round-off line (amount signed as Tally keeps it:
-;; debit negative), END saves the voucher. Row fields are read through
-;; $$LoopCollObj so they come from the row whatever the target object is.
-;; The collection is referenced once only - every reference fetches it again,
-;; and the CRM hands each order out once.
+;; item line (godown, batch Any, Order no., due date, sales ledger), PARTY /
+;; CREDIT / DEBIT add a ledger line, END saves the voucher. Every amount in
+;; the feed is positive; the sign and the Yes/No flags go with the row kind
+;; and are written here as literals. During the walk the row is the current
+;; object, so its fields are plain $ methods (Tally Help FAQ 6520: the source
+;; context stays the walked row while the voucher is the target).
+;; A feed collection is referenced once only - every reference fetches it
+;; again, and the CRM hands each order out once.
 [Collection: MickysCrmOrderFeed]
     Remote URL      : @@MickysOrdersFeedURL
     XML Object Path : ROW : 1 : MICKYSORDERS
 
-[Function: MickysCrmCreateOrders]
-    Variable : SVViewName : String
-    Variable : MCRQty     : Number
-    Variable : MCRRate    : Number
+[Collection: MickysCrmSampleFeed]
+    Remote URL      : @@MickysOrdersSampleURL
+    XML Object Path : ROW : 1 : MICKYSORDERS
 
-    ;; An item voucher built from TDL needs its view in BOTH the SVViewName
-    ;; variable and the voucher's PersistedView - with PersistedView alone
-    ;; Tally saves the order without its item lines (TDL FAQ "No Entries in
-    ;; Voucher"; proven on the company's Tally with the one-off test add-on).
+;; Every step below uses a form proven on the company's Tally with the one-off
+;; test add-on (SO/26-27/246):
+;;   - the view in BOTH the SVViewName variable and PersistedView ("Invoice
+;;     Voucher View"), else Tally saves the order without its item lines
+;;     (TDL FAQ "No Entries in Voucher");
+;;   - quantity and rate as numbers converted in the item line's context
+;;     ($$TGTObject:$$AsQty / $$AsRate), never text such as "1 Nos";
+;;   - outward quantity negative, else it shows "(-)1 Nos";
+;;   - the due date through $$DateRange; order and due date = today.
+[Function: MickysCrmCreateOrders]
+    Parameter : MCRFeed    : String
+    Variable  : SVViewName : String
+    Variable  : MCRQty     : Number
+    Variable  : MCRRate    : Number
+    Variable  : MCRAmt     : Number
+
     00 : SET : SVViewName : "Invoice Voucher View"
-    01 : WALK COLLECTION : MickysCrmOrderFeed
-    10 :    IF : $$LoopCollObj:$KIND = "HEAD"
+    01 : WALK COLLECTION : ##MCRFeed
+    10 :    IF : $KIND = "HEAD"
     11 :       NEW OBJECT : Voucher
     12 :       SET VALUE  : PersistedView      : ##SVViewName
-    13 :       SET VALUE  : Date               : $$Date:($$LoopCollObj:$DATE)
-    14 :       SET VALUE  : VoucherTypeName    : $$LoopCollObj:$VCHTYPE
-    15 :       SET VALUE  : PartyLedgerName    : $$LoopCollObj:$PARTY
-    16 :       SET VALUE  : PartyName          : $$LoopCollObj:$PARTY
-    17 :       SET VALUE  : BasicBuyerName     : $$LoopCollObj:$PARTY
-    18 :       SET VALUE  : BasicBasePartyName : $$LoopCollObj:$PARTY
-    19 :       SET VALUE  : Reference          : $$LoopCollObj:$ORDERNO
-    20 :       SET VALUE  : Narration          : $$LoopCollObj:$NARRATION
+    13 :       SET VALUE  : Date               : $$MachineDate
+    14 :       SET VALUE  : VoucherTypeName    : $VCHTYPE
+    15 :       SET VALUE  : PartyLedgerName    : $PARTY
+    16 :       SET VALUE  : PartyName          : $PARTY
+    17 :       SET VALUE  : BasicBuyerName     : $PARTY
+    18 :       SET VALUE  : BasicBasePartyName : $PARTY
+    19 :       SET VALUE  : Reference          : $ORDERNO
+    20 :       SET VALUE  : Narration          : $NARRATION
     21 :       SET VALUE  : IsInvoice          : No
     22 :    END IF
-    30 :    IF : $$LoopCollObj:$KIND = "ITEM"
-    31 :       INSERT COLLECTION OBJECT : AllInventoryEntries
-    32 :       SET VALUE  : StockItemName    : $$LoopCollObj:$ITEM
-    33 :       SET VALUE  : IsDeemedPositive : No
-    ;; Quantity and rate arrive as plain numbers and are converted in the
-    ;; item line's own context, which knows the item's unit - text such as
-    ;; "1 Nos" or a value read in the row's context fails (Tally Help FAQ
-    ;; 6520; the text form stopped the one-off test add-on at this point).
-    ;; Outward quantity is held negative inside Tally - a positive one shows
-    ;; on the order as "(-)1 Nos".
-    34 :       SET        : MCRQty           : 0 - $$Number:($$LoopCollObj:$QTY)
-    35 :       SET        : MCRRate          : $$Number:($$LoopCollObj:$RATE)
-    36 :       SET VALUE  : Rate             : $$TGTObject:$$AsRate:##MCRRate
-    37 :       SET VALUE  : ActualQty        : $$TGTObject:$$AsQty:##MCRQty
-    38 :       SET VALUE  : BilledQty        : $$TGTObject:$$AsQty:##MCRQty
-    39 :       SET VALUE  : Amount           : $$Number:($$LoopCollObj:$AMOUNT)
-    40 :       INSERT COLLECTION OBJECT : BatchAllocations
-    41 :       SET VALUE  : GodownName       : $$LoopCollObj:$GODOWN
-    42 :       SET VALUE  : BatchName        : $$SysName:Any
-    43 :       SET VALUE  : OrderNo          : $$LoopCollObj:$ORDERNO
-    ;; The due date is Tally's "due date" type: set through $$DateRange, the
-    ;; form proven by the one-off test add-on (a plain date stops the function).
-    44 :       SET VALUE  : OrderDueDate     : $$DateRange:($$LoopCollObj:$DUE):($$Date:($$LoopCollObj:$DATE)):True
-    45 :       SET VALUE  : Amount           : $$Number:($$LoopCollObj:$AMOUNT)
+    30 :    IF : $KIND = "ITEM"
+    31 :       SET        : MCRQty           : 0 - $$Number:$QTY
+    32 :       SET        : MCRRate          : $$Number:$RATE
+    33 :       SET        : MCRAmt           : $$Number:$AMOUNT
+    34 :       INSERT COLLECTION OBJECT : AllInventoryEntries
+    35 :       SET VALUE  : StockItemName    : $ITEM
+    36 :       SET VALUE  : IsDeemedPositive : No
+    37 :       SET VALUE  : Rate             : $$TGTObject:$$AsRate:##MCRRate
+    38 :       SET VALUE  : ActualQty        : $$TGTObject:$$AsQty:##MCRQty
+    39 :       SET VALUE  : BilledQty        : $$TGTObject:$$AsQty:##MCRQty
+    40 :       SET VALUE  : Amount           : ##MCRAmt
+    41 :       INSERT COLLECTION OBJECT : BatchAllocations
+    42 :       SET VALUE  : GodownName       : $GODOWN
+    43 :       SET VALUE  : BatchName        : $$SysName:Any
+    44 :       SET VALUE  : OrderNo          : $ORDERNO
+    45 :       SET VALUE  : Amount           : ##MCRAmt
     46 :       SET VALUE  : ActualQty        : $$TGTObject:$$AsQty:##MCRQty
     47 :       SET VALUE  : BilledQty        : $$TGTObject:$$AsQty:##MCRQty
-    48 :       SET TARGET : ..
-    49 :       INSERT COLLECTION OBJECT : AccountingAllocations
-    50 :       SET VALUE  : LedgerName       : $$LoopCollObj:$LEDGER
-    51 :       SET VALUE  : IsDeemedPositive : No
-    52 :       SET VALUE  : Amount           : $$Number:($$LoopCollObj:$AMOUNT)
-    53 :       SET TARGET : ..
+    48 :       SET VALUE  : OrderDueDate     : $$DateRange:($$String:$$MachineDate):$$MachineDate:True
+    49 :       SET TARGET : ..
+    50 :       INSERT COLLECTION OBJECT : AccountingAllocations
+    51 :       SET VALUE  : LedgerName       : $LEDGER
+    52 :       SET VALUE  : IsDeemedPositive : No
+    53 :       SET VALUE  : Amount           : ##MCRAmt
     54 :       SET TARGET : ..
-    55 :    END IF
-    60 :    IF : $$LoopCollObj:$KIND = "LEDGER"
-    61 :       INSERT COLLECTION OBJECT : LedgerEntries
-    62 :       SET VALUE  : LedgerName       : $$LoopCollObj:$LEDGER
-    63 :       SET VALUE  : IsDeemedPositive : ($$LoopCollObj:$DEEMED = "Yes")
-    64 :       SET VALUE  : IsPartyLedger    : ($$LoopCollObj:$ISPARTY = "Yes")
-    65 :       SET VALUE  : Amount           : $$Number:($$LoopCollObj:$AMOUNT)
-    66 :       SET TARGET : ..
-    67 :    END IF
-    70 :    IF : $$LoopCollObj:$KIND = "END"
-    71 :       CREATE TARGET
-    72 :    END IF
-    80 : END WALK
+    55 :       SET TARGET : ..
+    56 :    END IF
+    60 :    IF : $KIND = "PARTY"
+    61 :       SET        : MCRAmt           : 0 - $$Number:$AMOUNT
+    62 :       INSERT COLLECTION OBJECT : LedgerEntries
+    63 :       SET VALUE  : LedgerName       : $LEDGER
+    64 :       SET VALUE  : IsDeemedPositive : Yes
+    65 :       SET VALUE  : IsPartyLedger    : Yes
+    66 :       SET VALUE  : Amount           : ##MCRAmt
+    67 :       SET TARGET : ..
+    68 :    END IF
+    70 :    IF : $KIND = "CREDIT"
+    71 :       SET        : MCRAmt           : $$Number:$AMOUNT
+    72 :       INSERT COLLECTION OBJECT : LedgerEntries
+    73 :       SET VALUE  : LedgerName       : $LEDGER
+    74 :       SET VALUE  : IsDeemedPositive : No
+    75 :       SET VALUE  : Amount           : ##MCRAmt
+    76 :       SET TARGET : ..
+    77 :    END IF
+    80 :    IF : $KIND = "DEBIT"
+    81 :       SET        : MCRAmt           : 0 - $$Number:$AMOUNT
+    82 :       INSERT COLLECTION OBJECT : LedgerEntries
+    83 :       SET VALUE  : LedgerName       : $LEDGER
+    84 :       SET VALUE  : IsDeemedPositive : Yes
+    85 :       SET VALUE  : Amount           : ##MCRAmt
+    86 :       SET TARGET : ..
+    87 :    END IF
+    90 :    IF : $KIND = "END"
+    91 :       CREATE TARGET
+    92 :    END IF
+    99 : END WALK
 
 ;; ---------------- Tally's sales orders, reported to the CRM ------------
 ;; Shown on screen from Gateway of Tally, and posted to the CRM as XML by
@@ -611,7 +656,7 @@
 
 [Form: MickysCrmSOForm]
     Parts   : MickysCrmSOHead, MickysCrmSOList
-    Buttons : MickysCrmPullBtn
+    Buttons : MickysCrmPullBtn, MickysCrmSampleBtn, MickysCrmFeedCheckBtn
     XMLTag  : "MICKYSSALESORDERS"
 
 [Part: MickysCrmSOHead]
@@ -675,3 +720,94 @@
     Filter : MickysIsCrmSalesOrder
     Fetch  : Date, VoucherNumber, VoucherTypeName, PartyLedgerName
     Fetch  : Reference, Narration, GUID, IsCancelled, IsOptional
+
+;; ---------------- "Check feed": the sample order as Tally reads it --------
+;; Shows the rows of the CRM's sample feed exactly as this Tally parses them -
+;; if "Sample order" creates nothing, this says whether the feed arrives.
+[Report: MickysCrmFeedCheck]
+    Forms : MickysCrmFeedCheckForm
+    Title : "Mickys CRM - sample order as Tally reads it"
+
+[Form: MickysCrmFeedCheckForm]
+    Parts : MickysCrmFeedCheckPart
+
+[Part: MickysCrmFeedCheckPart]
+    Lines    : MickysCrmFeedCheckTitle, MickysCrmFeedCheckLine
+    Repeat   : MickysCrmFeedCheckLine : MickysCrmSampleFeed
+    Scrolled : Vertical
+
+[Line: MickysCrmFeedCheckTitle]
+    Fields : MFCKindT, MFCOrderT, MFCItemT, MFCQtyT, MFCRateT, MFCAmtT, MFCLedgerT
+
+[Line: MickysCrmFeedCheckLine]
+    Fields : MFCKind, MFCOrder, MFCItem, MFCQty, MFCRate, MFCAmt, MFCLedger
+
+[Field: MFCKindT]
+    Use    : Name Field
+    Set as : "Row"
+    Width  : 8
+
+[Field: MFCOrderT]
+    Use    : Name Field
+    Set as : "Order no."
+    Width  : 22
+
+[Field: MFCItemT]
+    Use    : Name Field
+    Set as : "Item / party"
+    Width  : 32
+
+[Field: MFCQtyT]
+    Use    : Name Field
+    Set as : "Qty"
+    Width  : 6
+
+[Field: MFCRateT]
+    Use    : Name Field
+    Set as : "Rate"
+    Width  : 10
+
+[Field: MFCAmtT]
+    Use    : Name Field
+    Set as : "Amount"
+    Width  : 10
+
+[Field: MFCLedgerT]
+    Use    : Name Field
+    Set as : "Ledger / godown"
+    Width  : 30
+
+[Field: MFCKind]
+    Use    : Name Field
+    Set as : $KIND
+    Width  : 8
+
+[Field: MFCOrder]
+    Use    : Name Field
+    Set as : $ORDERNO
+    Width  : 22
+
+[Field: MFCItem]
+    Use    : Name Field
+    Set as : if $KIND = "ITEM" then $ITEM else $PARTY
+    Width  : 32
+
+[Field: MFCQty]
+    Use    : Name Field
+    Set as : $QTY
+    Width  : 6
+
+[Field: MFCRate]
+    Use    : Name Field
+    Set as : $RATE
+    Width  : 10
+
+[Field: MFCAmt]
+    Use    : Name Field
+    Set as : $AMOUNT
+    Width  : 10
+
+[Field: MFCLedger]
+    Use    : Name Field
+    Set as : if $KIND = "ITEM" then $GODOWN + " / " + $LEDGER else $LEDGER
+    Width  : 30
