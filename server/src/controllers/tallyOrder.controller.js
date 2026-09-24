@@ -1,11 +1,13 @@
 const asyncHandler = require('../utils/asyncHandler');
 const ApiError = require('../utils/ApiError');
 const SalesOrder = require('../models/SalesOrder');
+const TallyOrderCall = require('../models/TallyOrderCall');
 const { logActivity } = require('../services/activity.service');
 const { istDateKey } = require('../utils/istDate');
 const { TDL_VERSION } = require('../services/tallyStock.service');
 const {
   takeOrders,
+  sampleVouchers,
   rowsXml,
   importXml,
   recordSeen,
@@ -16,6 +18,16 @@ const {
 /** Same guard as the stock sync: only Mickys (CENTRE POINT FOODS…) talks to the CRM. */
 const SYNC_COMPANY = /^CENTRE POINT/i;
 
+/**
+ * Keeps a record of each call from the Tally side (models/TallyOrderCall.js)
+ * for the settings screen — the only place anyone can see what Tally sent.
+ * Never allowed to fail the call itself.
+ */
+const recordCall = (req, fields) =>
+  TallyOrderCall.create({ userAgent: String(req.headers['user-agent'] || '').slice(0, 200), ...fields }).catch((err) =>
+    console.error(`[tally-orders] could not record the call: ${err.message}`)
+  );
+
 const tallyReply = (res, ok, message) =>
   res.type('text/xml').send(`<RESPONSE><STATUS>${ok ? 1 : 0}</STATUS><MESSAGE>${message}</MESSAGE></RESPONSE>`);
 
@@ -23,8 +35,23 @@ const tallyReply = (res, ok, message) =>
 // create the due orders. Only the add-on's own request (key + claim=1) hands
 // orders out; opening the URL without claim=1 just shows what is due.
 const orderFeed = asyncHandler(async (req, res) => {
+  // ?sample=1 — a fixed TEST sample for the add-on's "Sample order" / "Check
+  // feed" buttons; no CRM order is touched.
+  if (req.query.sample === '1') {
+    const { cfg, vouchers } = await sampleVouchers();
+    if (req.tallyPush) await recordCall(req, { kind: 'feed', note: 'sample order', handedOut: vouchers.map((v) => v.orderNo) });
+    return res.type('text/xml').send(rowsXml(vouchers, cfg));
+  }
   const claim = Boolean(req.tallyPush) && req.query.claim === '1';
   const { cfg, vouchers } = await takeOrders({ claim });
+  if (req.tallyPush) {
+    await recordCall(req, {
+      kind: 'feed',
+      claim,
+      handedOut: vouchers.map((v) => v.number),
+      note: cfg.enabled ? '' : 'Orders into Tally is switched off',
+    });
+  }
   if (claim && vouchers.length) {
     await logActivity({
       action: 'TALLY_ORDERS_SENT',
@@ -42,12 +69,27 @@ const orderFeed = asyncHandler(async (req, res) => {
 // sales orders Tally holds (XML).
 const ordersSeen = asyncHandler(async (req, res) => {
   const xml = typeof req.body === 'string' ? req.body : req.body?.xml;
-  if (!xml || typeof xml !== 'string') throw ApiError.badRequest('No Tally XML provided');
+  if (!xml || typeof xml !== 'string') {
+    await recordCall(req, {
+      kind: 'seen',
+      note: `No XML body (content-type "${req.headers['content-type'] || ''}")`,
+    });
+    throw ApiError.badRequest('No Tally XML provided');
+  }
   const company = (xml.match(/<COMPANY>([\s\S]*?)<\/COMPANY>/) || [])[1] || '';
+  const call = {
+    kind: 'seen',
+    company: company.trim(),
+    bytes: xml.length,
+    blocks: (xml.match(/<SALESORDER>/g) || []).length,
+    sample: xml.slice(0, 800),
+  };
   if (company && !SYNC_COMPANY.test(company.trim())) {
+    await recordCall(req, { ...call, note: 'Refused: not CENTRE POINT FOODS' });
     return tallyReply(res, false, `Ignored: sales orders from "${company.trim()}" - only CENTRE POINT FOODS talks to the CRM`);
   }
   const result = await recordSeen(xml);
+  await recordCall(req, { ...call, tdlVersion: result.tdlVersion, matched: result.matched });
   const outdated = result.tdlVersion !== TDL_VERSION;
   return tallyReply(
     res,

@@ -28,6 +28,56 @@ const NAME_FIELDS = [
 
 const EDITABLE = ['enabled', 'mode', 'testLedger', ...NAME_FIELDS.map((f) => f.key)];
 
+/** One call from the Tally side, in words. */
+function callText(c) {
+  if (c.kind === 'feed') {
+    const what = c.handedOut?.length ? c.handedOut.join(', ') : 'nothing due';
+    return `Collected orders${c.note ? ` (${c.note})` : ''}: ${what}${!c.claim && !c.note ? ' — look only' : ''}`;
+  }
+  return (
+    `Reported Tally's sales orders: ${c.blocks} in the report, ${c.matched} from the CRM, ${c.bytes} bytes` +
+    `${c.tdlVersion ? `, TDL v${c.tdlVersion}` : ''}${c.note ? ` — ${c.note}` : ''}`
+  );
+}
+
+/**
+ * What the Tally side actually sent, newest first, beside the last stock push
+ * (which shows whether Tally's timer is running at all). Nothing on the Tally
+ * screen shows this, so it is the first place to look when an order does not
+ * arrive.
+ */
+function TallyCalls({ calls, lastStockPush }) {
+  const latestReport = (calls || []).find((c) => c.kind === 'seen' && c.sample);
+  return (
+    <details open className="rounded-md border bg-background p-3 text-xs">
+      <summary className="cursor-pointer font-medium">What Tally sent{calls?.length ? ` (latest ${calls.length})` : ''}</summary>
+      <p className="mt-2 text-muted-foreground">
+        Last stock push from Tally:{' '}
+        {lastStockPush ? `${formatDateTime(lastStockPush.at)}${lastStockPush.tdlVersion ? ` [TDL v${lastStockPush.tdlVersion}]` : ''}` : '—'}
+      </p>
+      {calls?.length ? (
+        <ul className="mt-2 space-y-1">
+          {calls.map((c) => (
+            <li key={c._id}>
+              <span className="font-medium">{formatDateTime(c.at)}</span> — {callText(c)}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-2 text-muted-foreground">Nothing from Tally's order sync yet.</p>
+      )}
+      {latestReport && (
+        <>
+          <p className="mt-2 text-muted-foreground">Start of the latest report from Tally:</p>
+          <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-muted p-2 text-[11px]">
+            {latestReport.sample}
+          </pre>
+        </>
+      )}
+    </details>
+  );
+}
+
 export default function TallyOrdersSettings({ initial }) {
   const [cfg, setCfg] = useState(initial || {});
   const [overview, setOverview] = useState(null);
@@ -261,6 +311,8 @@ export default function TallyOrdersSettings({ initial }) {
                 ))}
               </div>
             )}
+
+            <TallyCalls calls={ov.calls} lastStockPush={ov.lastStockPush} />
 
             <div className="flex flex-wrap items-center gap-3 pt-1">
               <Button size="sm" variant="outline" onClick={downloadImportFile} disabled={downloading || !ov.queued.length}>

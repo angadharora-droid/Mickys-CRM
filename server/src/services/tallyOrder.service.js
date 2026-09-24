@@ -32,6 +32,8 @@ const Setting = require('../models/Setting');
 const StockItem = require('../models/StockItem');
 const Customer = require('../models/Customer');
 const AppointedCustomer = require('../models/AppointedCustomer');
+const TallyOrderCall = require('../models/TallyOrderCall');
+const StockSyncLog = require('../models/StockSyncLog');
 const { resolveLines } = require('./tallyLink.service');
 const { tagValue, cleanName, parseTallyDate, TDL_VERSION } = require('./tallyStock.service');
 const { round2 } = require('../utils/gst');
@@ -271,21 +273,28 @@ const esc = (s) =>
 const money = (n) => (Number(n) || 0).toFixed(2);
 
 /**
- * The feed the add-on walks: one flat <ROW> per step of building a voucher —
- * HEAD (new voucher), ITEM (item line with its godown/batch and sales-ledger
- * allocation), LEDGER (party, GST, round-off), END (save it). Flat rather
- * than nested so the TDL is a single pass with no sub-collections; every row
- * carries every tag, empty where it does not apply.
+ * The feed the add-on walks: one flat <ROW> per step of building a voucher.
+ *   HEAD    new voucher (party, Order no., narration, voucher type)
+ *   ITEM    item line with its godown / batch Any / Order no. and its
+ *           sales-ledger allocation; QTY, RATE, AMOUNT plain positive numbers
+ *   PARTY   the party ledger line (debit)
+ *   CREDIT  a GST or upward round-off line (credit)
+ *   DEBIT   a downward round-off line (debit)
+ *   END     save the voucher
+ * Every amount is positive: the TDL applies the sign that goes with the row
+ * kind, as literals, so it never has to read a sign or a Yes/No off the feed.
+ * Flat rather than nested so the TDL is a single pass with no
+ * sub-collections; every row carries every tag, empty where it does not
+ * apply. The order and due dates are the day Tally creates the voucher.
  */
-const ROW_TAGS = ['KIND', 'ORDER', 'VCHTYPE', 'DATE', 'PARTY', 'ORDERNO', 'NARRATION', 'ITEM', 'QTY', 'RATE', 'AMOUNT', 'GODOWN', 'LEDGER', 'DUE', 'DEEMED', 'ISPARTY'];
+const ROW_TAGS = ['KIND', 'ORDER', 'VCHTYPE', 'DATE', 'PARTY', 'ORDERNO', 'NARRATION', 'ITEM', 'QTY', 'RATE', 'AMOUNT', 'GODOWN', 'LEDGER'];
 
 function rowsXml(vouchers, cfg) {
   const row = (fields) => `<ROW>${ROW_TAGS.map((t) => `<${t}>${esc(fields[t])}</${t}>`).join('')}</ROW>`;
   const out = [];
   for (const v of vouchers) {
-    const date = tallyDateText(v.date);
     const common = { ORDER: v.number, ORDERNO: v.orderNo };
-    out.push(row({ ...common, KIND: 'HEAD', VCHTYPE: cfg.voucherType, DATE: date, PARTY: v.party, NARRATION: v.narration }));
+    out.push(row({ ...common, KIND: 'HEAD', VCHTYPE: cfg.voucherType, DATE: tallyDateText(v.date), PARTY: v.party, NARRATION: v.narration }));
     for (const l of v.lines) {
       out.push(
         row({
@@ -299,25 +308,59 @@ function rowsXml(vouchers, cfg) {
           AMOUNT: money(l.amount),
           GODOWN: cfg.godown,
           LEDGER: cfg.salesLedger,
-          DUE: date,
         })
       );
     }
     for (const e of v.ledgers) {
-      out.push(
-        row({
-          ...common,
-          KIND: 'LEDGER',
-          LEDGER: e.name,
-          AMOUNT: money(e.amount),
-          DEEMED: e.deemedPositive ? 'Yes' : 'No',
-          ISPARTY: e.isParty ? 'Yes' : 'No',
-        })
-      );
+      const kind = e.isParty ? 'PARTY' : e.deemedPositive ? 'DEBIT' : 'CREDIT';
+      out.push(row({ ...common, KIND: kind, LEDGER: e.name, AMOUNT: money(Math.abs(e.amount)) }));
     }
     out.push(row({ ...common, KIND: 'END' }));
   }
   return `<MICKYSORDERS>\n${out.join('\n')}\n</MICKYSORDERS>\n`;
+}
+
+/**
+ * A fixed sample order for checking the Tally side without touching a real
+ * CRM order: one item at 190 + 5% GST, party = the test ledger, Order no.
+ * TEST/SAMPLE-HHMM. The "Sample order" button in Tally's Mickys CRM Orders
+ * report creates it from this feed; it is never recorded as sent anywhere.
+ */
+async function sampleVouchers() {
+  const cfg = await getConfig();
+  const stock =
+    (await StockItem.findOne({ name: 'MAKHANI GRAVY 1KG -SFG' }).select('name baseUnits').lean()) ||
+    (await StockItem.findOne({ baseUnits: { $nin: ['', null] }, closingQty: { $gt: 0 } }).sort({ name: 1 }).select('name baseUnits').lean());
+  if (!stock) return { cfg, vouchers: [] };
+  const hhmm = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' })
+    .format(new Date())
+    .replace(':', '');
+  const taxable = 190;
+  const half = round2((taxable * 5) / 200);
+  const gross = round2(taxable + 2 * half);
+  const total = cfg.roundOffLedger ? Math.round(gross) : gross;
+  const ledgers = [
+    { name: cfg.testLedger || 'TEST', amount: -total, deemedPositive: true, isParty: true },
+    { name: ledgerName(cfg.cgstLedger, 2.5), amount: half, deemedPositive: false, isParty: false },
+    { name: ledgerName(cfg.sgstLedger, 2.5), amount: half, deemedPositive: false, isParty: false },
+  ];
+  const diff = round2(total - gross);
+  if (diff) ledgers.push({ name: cfg.roundOffLedger, amount: diff, deemedPositive: diff < 0, isParty: false });
+  return {
+    cfg,
+    vouchers: [
+      {
+        number: `SAMPLE-${hhmm}`,
+        orderNo: `TEST/SAMPLE-${hhmm}`,
+        date: new Date(),
+        party: cfg.testLedger || 'TEST',
+        narration: 'CRM SAMPLE ORDER - Tally add-on check. Delete after checking.',
+        lines: [{ item: stock.name, qty: '1', unit: stock.baseUnits, rate: taxable, amount: taxable }],
+        ledgers,
+        total,
+      },
+    ],
+  };
 }
 
 /**
@@ -551,7 +594,7 @@ async function resetSend(orderId) {
  */
 async function overview() {
   const cfg = await getConfig();
-  const [{ vouchers, held }, sentWaiting, inTally, testLedgerInTally] = await Promise.all([
+  const [{ vouchers, held }, sentWaiting, inTally, testLedgerInTally, calls, lastStockSync] = await Promise.all([
     takeOrders({ claim: false, limit: 200 }),
     cfg.enabled
       ? SalesOrder.find({ 'tally.mode': cfg.mode, 'tally.sentAt': { $ne: null }, 'tally.seenAt': null })
@@ -562,6 +605,8 @@ async function overview() {
       : [],
     cfg.enabled ? SalesOrder.countDocuments({ 'tally.mode': cfg.mode, 'tally.seenAt': { $ne: null } }) : 0,
     cfg.testLedger ? Customer.exists({ name: cfg.testLedger }) : null,
+    TallyOrderCall.find({}).sort({ at: -1 }).limit(20).lean(),
+    StockSyncLog.findOne({ source: 'push' }).sort({ createdAt: -1 }).select('syncedAt createdAt tdlVersion').lean(),
   ]);
   return {
     config: cfg,
@@ -572,6 +617,12 @@ async function overview() {
     held,
     sentWaiting: sentWaiting.map((o) => ({ id: String(o._id), number: o.number, customerName: o.customerName, sentAt: o.tally.sentAt })),
     inTally,
+    // What the Tally side actually sent, newest first — the stock push beside
+    // it shows whether Tally's timer is running at all.
+    calls,
+    lastStockPush: lastStockSync
+      ? { at: lastStockSync.syncedAt || lastStockSync.createdAt, tdlVersion: lastStockSync.tdlVersion || '' }
+      : null,
   };
 }
 
@@ -580,6 +631,7 @@ module.exports = {
   orderNoFor,
   buildVouchers,
   takeOrders,
+  sampleVouchers,
   rowsXml,
   importXml,
   parseSeenXml,
