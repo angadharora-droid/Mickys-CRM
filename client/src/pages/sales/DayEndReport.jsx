@@ -1045,13 +1045,10 @@ export default function DayEndReport() {
         </Card>
       ) : (
         <div className={cn('transition-opacity', loading && 'opacity-60')}>
-          <Card className="mb-4 flex flex-col gap-1 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+          <Card className="mb-4 px-4 py-3 text-sm">
             <p>
               <span className="text-muted-foreground">Date:</span> <b>{prettyDay(r.date)}</b>
               {r.date === r.today && <span className="text-xs text-muted-foreground"> · figures as of the latest Tally push</span>}
-            </p>
-            <p>
-              <span className="text-muted-foreground">Prepared by:</span> <b>{r.preparedBy || '—'}</b>
             </p>
           </Card>
 

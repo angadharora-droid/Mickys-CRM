@@ -239,7 +239,7 @@ const getDayEndReport = asyncHandler(async (req, res) => {
   }
   if (date > today) throw ApiError.badRequest('The day-end report cannot be run for a future date');
   const data = await buildDayEndReport(date);
-  res.json({ success: true, data: { ...data, preparedBy: req.user?.name || '' } });
+  res.json({ success: true, data });
 });
 
 // PUT /api/day-end/plan — body: { date, items: [{ item, qty }] }. Replaces the
