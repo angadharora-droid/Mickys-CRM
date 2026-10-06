@@ -594,7 +594,7 @@ async function resetSend(orderId) {
  */
 async function overview() {
   const cfg = await getConfig();
-  const [{ vouchers, held }, sentWaiting, inTally, testLedgerInTally, calls, lastStockSync] = await Promise.all([
+  const [{ vouchers, held }, sentWaiting, inTally, testLedgerInTally, calls, lastStockSync, lastTick, lastTimerPush] = await Promise.all([
     takeOrders({ claim: false, limit: 200 }),
     cfg.enabled
       ? SalesOrder.find({ 'tally.mode': cfg.mode, 'tally.sentAt': { $ne: null }, 'tally.seenAt': null })
@@ -606,7 +606,9 @@ async function overview() {
     cfg.enabled ? SalesOrder.countDocuments({ 'tally.mode': cfg.mode, 'tally.seenAt': { $ne: null } }) : 0,
     cfg.testLedger ? Customer.exists({ name: cfg.testLedger }) : null,
     TallyOrderCall.find({}).sort({ at: -1 }).limit(20).lean(),
-    StockSyncLog.findOne({ source: 'push' }).sort({ createdAt: -1 }).select('syncedAt createdAt tdlVersion').lean(),
+    StockSyncLog.findOne({ source: 'push' }).sort({ createdAt: -1 }).select('syncedAt createdAt tdlVersion trigger').lean(),
+    TallyOrderCall.findOne({ kind: 'tick' }).sort({ at: -1 }).select('at company').lean(),
+    StockSyncLog.findOne({ source: 'push', trigger: 'timer' }).sort({ createdAt: -1 }).select('syncedAt createdAt').lean(),
   ]);
   return {
     config: cfg,
@@ -621,8 +623,20 @@ async function overview() {
     // it shows whether Tally's timer is running at all.
     calls,
     lastStockPush: lastStockSync
-      ? { at: lastStockSync.syncedAt || lastStockSync.createdAt, tdlVersion: lastStockSync.tdlVersion || '' }
+      ? {
+          at: lastStockSync.syncedAt || lastStockSync.createdAt,
+          tdlVersion: lastStockSync.tdlVersion || '',
+          trigger: lastStockSync.trigger || '',
+        }
       : null,
+    // The 10-minute timer (TDL v8+): its last beat, whatever company was
+    // open, and its last actual push. No tick for a while = the timer is not
+    // running on the Tally machine.
+    timer: {
+      lastTickAt: lastTick?.at || null,
+      lastTickCompany: lastTick?.company || '',
+      lastPushAt: lastTimerPush ? lastTimerPush.syncedAt || lastTimerPush.createdAt : null,
+    },
   };
 }
 

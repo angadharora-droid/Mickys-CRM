@@ -34,6 +34,9 @@ const stockSyncLogSchema = new mongoose.Schema(
     tdlVersion: { type: String, default: '' },
     // 'upload' = XML file uploaded in the CRM; 'push' = sent by Tally itself.
     source: { type: String, enum: ['upload', 'push'], required: true },
+    // What made Tally push (TDL v8+): 'timer' = the 10-minute timer, 'load' =
+    // the company being opened, 'button' = Ctrl+F10. '' on older copies.
+    trigger: { type: String, enum: ['timer', 'load', 'button', ''], default: '' },
     syncedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   },
   { timestamps: true }

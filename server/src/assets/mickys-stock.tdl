@@ -66,7 +66,16 @@
 ;; position to the CRM over HTTPS. (Alt+Z is reserved by TallyPrime for the
 ;; Exchange menu, so the shortcut is Ctrl+F10.)
 [System: Formula]
-    MickysSyncURL : "https://api.mickys-crm.centrepointgroup.in/api/stock/sync?key={{TALLY_SYNC_KEY}}"
+    MickysSyncURL : "https://api.mickys-crm.centrepointgroup.in/api/stock/sync?src=button&key={{TALLY_SYNC_KEY}}"
+
+;; The same push from the two automatic triggers - the CRM records which one
+;; sent it, so "is the timer running?" is answered on the CRM's Tally orders
+;; card. The tick is a few bytes sent on every timer beat, whatever company
+;; is open.
+[System: Formula]
+    MickysSyncURLLoad  : "https://api.mickys-crm.centrepointgroup.in/api/stock/sync?src=load&key={{TALLY_SYNC_KEY}}"
+    MickysSyncURLTimer : "https://api.mickys-crm.centrepointgroup.in/api/stock/sync?src=timer&key={{TALLY_SYNC_KEY}}"
+    MickysTickURL      : "https://api.mickys-crm.centrepointgroup.in/api/stock/tick?key={{TALLY_SYNC_KEY}}"
 
 [Button: MickysSyncBtn]
     Key    : Ctrl + F10
@@ -93,8 +102,18 @@
 ;; payloads whose <COMPANY> is not CENTRE POINT*, so even a push fired
 ;; with the wrong company active can never overwrite Mickys stock.
 [Function: MickysPushToCrm]
-    00 : HTTP Post : @@MickysSyncURL : ASCII : MickysStockReport
+    00 : HTTP Post : @@MickysSyncURLLoad : ASCII : MickysStockReport
     10 : CALL : MickysCrmOrdersRun
+
+;; A timer beat: the tick first (so the CRM sees the timer is alive even
+;; when another company is open), then - only for CENTRE POINT - the push.
+[Function: MickysPushOnTimer]
+    00 : HTTP Post : @@MickysTickURL : ASCII : MickysTickReport
+    10 : IF : NOT (($$StringPart:##SVCurrentCompany:0:12 = "CENTRE POINT") OR ($$StringPart:##SVCurrentCompany:1:12 = "CENTRE POINT"))
+    11 :    RETURN
+    12 : END IF
+    20 : HTTP Post : @@MickysSyncURLTimer : ASCII : MickysStockReport
+    30 : CALL : MickysCrmOrdersRun
 
 ;; Both 0- and 1-based positions are checked because $$StringPart's start
 ;; index differs across releases - either match passes the guard.
@@ -102,12 +121,42 @@
 ;; TallyPrime has no [Timer: ...] definition type (loading one fails with
 ;; T0006 "definition type is misspelt or incorrect"). A timer exists only
 ;; through events: the label of a TIMER event names it, and the action
-;; "Start Timer : <name> : <seconds>" creates and starts it - done here on
-;; System Start, so the clock begins the moment Tally launches.
+;; "Start Timer : <name> : <seconds>" creates and starts it. It is started on
+;; System Start AND again on every Load Company: System Start only fires when
+;; TallyPrime itself launches, so a TDL loaded or replaced while Tally was
+;; already running never started the timer - the company-open push worked,
+;; the 10-minute one did not (invoices then waited for the next re-open).
 [System: Events]
-    MickysAutoSync   : Load Company : ($$StringPart:##SVCurrentCompany:0:12 = "CENTRE POINT") OR ($$StringPart:##SVCurrentCompany:1:12 = "CENTRE POINT") : CALL : MickysPushToCrm
-    MickysSyncTimer  : TIMER        : ($$StringPart:##SVCurrentCompany:0:12 = "CENTRE POINT") OR ($$StringPart:##SVCurrentCompany:1:12 = "CENTRE POINT") : CALL : MickysPushToCrm
-    MickysStartTimer : System Start : TRUE : Start Timer : MickysSyncTimer : 600
+    MickysAutoSync    : Load Company : ($$StringPart:##SVCurrentCompany:0:12 = "CENTRE POINT") OR ($$StringPart:##SVCurrentCompany:1:12 = "CENTRE POINT") : CALL : MickysPushToCrm
+    MickysSyncTimer   : TIMER        : TRUE : CALL : MickysPushOnTimer
+    MickysStartTimer  : System Start : TRUE : Start Timer : MickysSyncTimer : 600
+    MickysRestartTimer: Load Company : TRUE : Start Timer : MickysSyncTimer : 600
+
+;; ------------------------- Timer tick (tiny) -------------------------
+;; The company open in Tally at the beat and the TDL copy - nothing else.
+[Report: MickysTickReport]
+    Forms : MickysTickForm
+    Title : "Mickys Timer Tick"
+
+[Form: MickysTickForm]
+    Parts  : MickysTickPart
+    XMLTag : "MICKYSTICK"
+
+[Part: MickysTickPart]
+    Lines : MickysTickLine
+
+[Line: MickysTickLine]
+    Fields : MickysTickCompany, MickysTickVersion
+
+[Field: MickysTickCompany]
+    Type   : String
+    Set as : ##SVCurrentCompany
+    XMLTag : "COMPANY"
+
+[Field: MickysTickVersion]
+    Type   : String
+    Set as : "{{TDL_VERSION}}"
+    XMLTag : "TDLVERSION"
 
 ;; --------------------------- Report shell ----------------------------
 [Report: MickysStockReport]

@@ -82,6 +82,9 @@ const SYNCED_GROUPS = /finished/i;
  */
 const SYNC_COMPANY = /^CENTRE POINT/i;
 
+/** What made Tally push (?src= on the TDL's URLs, v8+) — see StockSyncLog.trigger. */
+const PUSH_TRIGGERS = ['timer', 'load', 'button'];
+
 /** "2026-08-14" -> "2026-08-15" */
 const nextDateKey = (key) => {
   const d = new Date(`${key}T00:00:00Z`);
@@ -267,6 +270,7 @@ const syncStock = asyncHandler(async (req, res) => {
     codedItems,
     tdlVersion,
     source: req.tallyPush ? 'push' : 'upload',
+    trigger: req.tallyPush && PUSH_TRIGGERS.includes(req.query.src) ? req.query.src : '',
     syncedBy: req.user?._id,
   });
 

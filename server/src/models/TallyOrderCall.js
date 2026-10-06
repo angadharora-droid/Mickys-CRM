@@ -9,7 +9,9 @@ const mongoose = require('mongoose');
 const tallyOrderCallSchema = new mongoose.Schema(
   {
     at: { type: Date, default: Date.now, index: { expires: 60 * 60 * 24 * 14 } },
-    kind: { type: String, enum: ['feed', 'seen'], required: true },
+    // 'tick' = a beat of the add-on's 10-minute timer (sent whatever company
+    // is open), so the settings screen can show the timer is alive.
+    kind: { type: String, enum: ['feed', 'seen', 'tick'], required: true },
     claim: { type: Boolean, default: false },
     tdlVersion: { type: String, default: '' },
     company: { type: String, default: '' },
