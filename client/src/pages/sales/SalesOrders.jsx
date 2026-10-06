@@ -13,7 +13,7 @@ import {
 } from '@/lib/gst';
 import OrderStatusBadge from '@/components/sales/OrderStatusBadge';
 import OrderDetailDialog from '@/components/sales/OrderDetailDialog';
-import { TallyStatusLine } from '@/components/sales/OrderTallyStatus';
+import { TallyStatusLine, hasTallyLine } from '@/components/sales/OrderTallyStatus';
 import { Label } from '@/components/ui/label';
 import PageHeader from '@/components/shared/PageHeader';
 import Pagination from '@/components/shared/Pagination';
@@ -1747,12 +1747,25 @@ export default function SalesOrders() {
                                     : undefined
                         }
                       />
-                      {o.status !== 'closed' && o.status !== 'cancelled' && (
-                        <p className="text-[11px] text-muted-foreground mt-1 whitespace-nowrap">
-                          {daysSince(orderStageSince(o))}d at this stage
-                        </p>
-                      )}
-                      <TallyStatusLine status={o.tallyStatus} />
+                      {/* Days at the stage and the Tally status share one line,
+                          so the row stays two lines tall. */}
+                      {(() => {
+                        const showDays = o.status !== 'closed' && o.status !== 'cancelled';
+                        const showTally = hasTallyLine(o.tallyStatus);
+                        if (!showDays && !showTally) return null;
+                        const days = daysSince(orderStageSince(o));
+                        return (
+                          <p className="mt-1 flex max-w-[260px] items-center gap-1.5 whitespace-nowrap text-[11px] text-muted-foreground">
+                            {showDays && (
+                              <span title={`${days} day${days === 1 ? '' : 's'} at this stage`}>
+                                {days}d{showTally ? '' : ' at this stage'}
+                              </span>
+                            )}
+                            {showDays && showTally && <span aria-hidden>·</span>}
+                            {showTally && <TallyStatusLine status={o.tallyStatus} />}
+                          </p>
+                        );
+                      })()}
                     </TableCell>
                     <TableCell className="hidden lg:table-cell text-sm text-muted-foreground">
                       {o.createdBy?.name || '—'}
