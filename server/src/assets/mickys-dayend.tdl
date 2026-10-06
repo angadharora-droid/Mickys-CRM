@@ -1,0 +1,488 @@
+;; =====================================================================
+;;  Mickys CRM  -  Tally Prime Day End Export TDL (add-on)
+;; ---------------------------------------------------------------------
+;;  What this does:
+;;    Feeds the admin Day End Report in the CRM with the figures the stock
+;;    export (mickys-stock.tdl) does not carry. It is a separate file on
+;;    purpose: nothing here can stop the stock / invoice / order sync if a
+;;    part of it misbehaves on this Tally release.
+;;      * <RECEIPT>     receipt vouchers of the last 40 days, with their
+;;                      ledger entries -> "Collection Received" today / MTD
+;;      * <DEBTOR>      every Sundry Debtors ledger with a balance, and its
+;;                      pending bills as <BILL> -> "Outstanding Receivables"
+;;                      and the "Due Customer List" (due since / days)
+;;      * <PRODUCTION>  stock / manufacturing journals of the last 10 days:
+;;                      items produced (<IN>) and consumed (<OUT>) with
+;;                      quantity and value -> "Production" and "Production
+;;                      Cost / Kg"
+;;      * <ITEMBATCHES> batch-wise closing stock of every item holding stock,
+;;                      with mfg and expiry dates -> "Expiry Status"
+;;
+;;  How to get the current file (always up to date, key filled in):
+;;      https://api.mickys-crm.centrepointgroup.in/api/stock/dayend/tdl?key={{TALLY_SYNC_KEY}}
+;;    Add &batches=0 to that URL for a copy without the batch section, should
+;;    batch-wise stock ever raise an error on this Tally release.
+;;
+;;  How to load in Tally Prime (NEXT TO mickys-stock.tdl - keep that one):
+;;    Save the file from the URL above to the same shared folder as
+;;    mickys-stock.tdl, then F1 (Help) > TDLs & AddOns > F4 (Manage Local
+;;    TDLs) > add this file's full path on a new line > Ctrl+A. Restart Tally.
+;;    "Mickys Day End Export" then appears in Gateway of Tally.
+;;
+;;  NOTE: the repo copy of this file is a template - the CRM backend fills
+;;  the sync-key placeholder when serving it.
+;; =====================================================================
+
+[#Menu: Gateway of Tally]
+    Add : Key Item : Mickys Day End Export : E : Display : MickysDayEndReport
+
+;; ---------------- Push to Mickys CRM ----------------------------------
+;; Same key as the stock push (the CRM's TALLY_SYNC_KEY). Ctrl+F10 with the
+;; report open sends it at once - handy after the day's last entry.
+[System: Formula]
+    MickysDayEndURL     : "https://api.mickys-crm.centrepointgroup.in/api/stock/dayend?key={{TALLY_SYNC_KEY}}"
+    MickysDEReceiptFrom : $$MachineDate - 40
+    MickysDEProdFrom    : $$MachineDate - 10
+
+[Button: MickysDayEndSyncBtn]
+    Key    : Ctrl + F10
+    Title  : "Send to CRM"
+    Action : HTTP Post : @@MickysDayEndURL : ASCII : MickysDayEndReport
+
+;; ---- Hands-free: on company open + every 15 minutes -------------------
+;; The same pattern as the stock push (see mickys-stock.tdl for why): events
+;; CALL a function rather than posting directly, the company guard matches
+;; the first 12 characters of the name at either start index, and the timer
+;; is created on System Start because TallyPrime has no [Timer:] definition.
+;; Its own timer name, so the two add-ons never share a clock.
+[Function: MickysDayEndPush]
+    00 : HTTP Post : @@MickysDayEndURL : ASCII : MickysDayEndReport
+
+[System: Events]
+    MickysDayEndOnLoad : Load Company : ($$StringPart:##SVCurrentCompany:0:12 = "CENTRE POINT") OR ($$StringPart:##SVCurrentCompany:1:12 = "CENTRE POINT") : CALL : MickysDayEndPush
+    MickysDayEndTimer  : TIMER        : ($$StringPart:##SVCurrentCompany:0:12 = "CENTRE POINT") OR ($$StringPart:##SVCurrentCompany:1:12 = "CENTRE POINT") : CALL : MickysDayEndPush
+    MickysDayEndStart  : System Start : TRUE : Start Timer : MickysDayEndTimer : 900
+
+;; --------------------------- Report shell ----------------------------
+[Report: MickysDayEndReport]
+    Forms : MickysDayEndForm
+    Title : "Mickys Day End Export"
+
+[Form: MickysDayEndForm]
+    Parts   : MDEHeadPart, MDEReceiptPart, MDEDebtorPart, MDEProdPart{{BATCH_PART}}
+    Buttons : MickysDayEndSyncBtn
+    XMLTag  : "MICKYSDAYEND"
+
+;; Which company and TDL copy produced the push, the Tally machine's date,
+;; the report period and the two look-back windows. The CRM refuses other
+;; companies, and uses the windows to drop vouchers deleted in Tally: a
+;; voucher inside a window that a push no longer carries is gone.
+[Part: MDEHeadPart]
+    Lines : MDEHeadLine
+
+[Line: MDEHeadLine]
+    Fields : MDECompany, MDEVersion, MDEToday, MDEPeriodFrom, MDEPeriodTo
+    Fields : MDEReceiptFrom, MDEProdFrom
+
+[Field: MDECompany]
+    Type   : String
+    Set as : ##SVCurrentCompany
+    XMLTag : "COMPANY"
+
+[Field: MDEVersion]
+    Type   : String
+    Set as : "{{TDL_VERSION}}"
+    XMLTag : "TDLVERSION"
+
+[Field: MDEToday]
+    Type   : String
+    Set as : $$String:$$MachineDate:UniversalDate
+    XMLTag : "TODAY"
+
+[Field: MDEPeriodFrom]
+    Type   : String
+    Set as : $$String:##SVFromDate:UniversalDate
+    XMLTag : "PERIODFROM"
+
+[Field: MDEPeriodTo]
+    Type   : String
+    Set as : $$String:##SVToDate:UniversalDate
+    XMLTag : "PERIODTO"
+
+[Field: MDEReceiptFrom]
+    Type   : String
+    Set as : $$String:@@MickysDEReceiptFrom:UniversalDate
+    XMLTag : "RECEIPTSFROM"
+
+[Field: MDEProdFrom]
+    Type   : String
+    Set as : $$String:@@MickysDEProdFrom:UniversalDate
+    XMLTag : "PRODUCTIONFROM"
+
+;; ------------------------ Receipts (collections) ----------------------
+;; Every voucher of a type under Receipt, last 40 days (month-to-date always
+;; fits), cancelled and optional ones skipped. Ledger entries ride along so
+;; the CRM counts only what was credited to Sundry Debtors ledgers - a loan
+;; or an interest receipt is not a collection.
+[Part: MDEReceiptPart]
+    Lines    : MDEReceiptLine
+    Repeat   : MDEReceiptLine : MDEReceipts
+    Scrolled : Vertical
+
+[Line: MDEReceiptLine]
+    Fields  : MDERGuid, MDERVchNo, MDERVchType, MDERDate, MDERParty
+    Fields  : MDERAmount, MDERNarration
+    XMLTag  : "RECEIPT"
+    Explode : MDERLedgerPart : Yes
+
+[Field: MDERGuid]
+    Type   : String
+    Set as : $GUID
+    XMLTag : "GUID"
+
+[Field: MDERVchNo]
+    Type   : String
+    Set as : $VoucherNumber
+    XMLTag : "VOUCHERNUMBER"
+
+[Field: MDERVchType]
+    Type   : String
+    Set as : $VoucherTypeName
+    XMLTag : "VOUCHERTYPE"
+
+[Field: MDERDate]
+    Type   : String
+    Set as : $$String:$Date:UniversalDate
+    XMLTag : "DATE"
+
+[Field: MDERParty]
+    Type   : String
+    Set as : $PartyLedgerName
+    XMLTag : "PARTY"
+
+[Field: MDERAmount]
+    Type   : Amount
+    Set as : $Amount
+    XMLTag : "AMOUNT"
+
+[Field: MDERNarration]
+    Type   : String
+    Set as : $Narration
+    XMLTag : "NARRATION"
+
+;; One <LEDGERENTRY> per ledger line: name, group, top-level group, amount
+;; with its sign, and ISDR (Yes = debit) so the side never rests on how a
+;; release prints the sign.
+[Part: MDERLedgerPart]
+    Lines    : MDERLedgerLine
+    Repeat   : MDERLedgerLine : AllLedgerEntries
+    Scrolled : Vertical
+
+[Line: MDERLedgerLine]
+    Fields : MDELName, MDELGroup, MDELPrimary, MDELAmount, MDELIsDr
+    XMLTag : "LEDGERENTRY"
+
+[Field: MDELName]
+    Type   : String
+    Set as : $LedgerName
+    XMLTag : "NAME"
+
+[Field: MDELGroup]
+    Type   : String
+    Set as : $Parent:Ledger:$LedgerName
+    XMLTag : "GROUP"
+
+[Field: MDELPrimary]
+    Type   : String
+    Set as : $_PrimaryGroup:Ledger:$LedgerName
+    XMLTag : "PRIMARYGROUP"
+
+[Field: MDELAmount]
+    Type   : Amount
+    Set as : $Amount
+    XMLTag : "AMOUNT"
+
+[Field: MDELIsDr]
+    Type   : Logical
+    Set as : $$IsDr:$Amount
+    XMLTag : "ISDR"
+
+[Collection: MDEReceipts]
+    Type   : Voucher
+    Filter : MDEIsReceipt
+    Fetch  : Date, VoucherNumber, VoucherTypeName, PartyLedgerName
+    Fetch  : Narration, Amount, GUID, IsCancelled, IsOptional
+    Fetch  : AllLedgerEntries.*
+
+[System: Formula]
+    MDEIsReceipt : ($$IsReceipt:$VoucherTypeName) AND (NOT $IsCancelled) AND (NOT $IsOptional) AND ($Date >= @@MickysDEReceiptFrom)
+
+;; ------------------ Debtors: balances and pending bills ----------------
+;; Every ledger under Sundry Debtors (sub-groups included) that carries a
+;; balance, with its closing balance, and - where the ledger is kept bill by
+;; bill - each pending bill: reference, bill date, due date / credit period
+;; and the amount still open.
+[Part: MDEDebtorPart]
+    Lines    : MDEDebtorLine
+    Repeat   : MDEDebtorLine : MDEDebtors
+    Scrolled : Vertical
+
+[Line: MDEDebtorLine]
+    Fields  : MDEDName, MDEDGroup, MDEDBalance, MDEDIsDr
+    XMLTag  : "DEBTOR"
+    Explode : MDEBillPart : Yes
+
+[Field: MDEDName]
+    Type   : String
+    Set as : $Name
+    XMLTag : "NAME"
+
+[Field: MDEDGroup]
+    Type   : String
+    Set as : $Parent
+    XMLTag : "GROUP"
+
+[Field: MDEDBalance]
+    Type   : Amount
+    Set as : $ClosingBalance
+    XMLTag : "BALANCE"
+
+[Field: MDEDIsDr]
+    Type   : Logical
+    Set as : $$IsDr:$ClosingBalance
+    XMLTag : "ISDR"
+
+[Collection: MDEDebtors]
+    Type       : Ledger
+    Child Of   : "Sundry Debtors"
+    Belongs To : Yes
+    Filter     : MDEHasBalance
+    Fetch      : Name, Parent, ClosingBalance
+
+[Part: MDEBillPart]
+    Lines    : MDEBillLine
+    Repeat   : MDEBillLine : MDEDebtorBills
+    Scrolled : Vertical
+
+[Line: MDEBillLine]
+    Fields : MDEBName, MDEBDate, MDEBDue, MDEBAmount, MDEBIsDr
+    XMLTag : "BILL"
+
+[Field: MDEBName]
+    Type   : String
+    Set as : $Name
+    XMLTag : "NAME"
+
+[Field: MDEBDate]
+    Type   : String
+    Set as : $$String:$BillDate:UniversalDate
+    XMLTag : "BILLDATE"
+
+;; The bill's credit period as Tally holds it - a due date or "30 Days" -
+;; sent as text; the CRM reads either form.
+[Field: MDEBDue]
+    Type   : String
+    Set as : $$String:$BillCreditPeriod
+    XMLTag : "DUE"
+
+[Field: MDEBAmount]
+    Type   : Amount
+    Set as : $ClosingBalance
+    XMLTag : "AMOUNT"
+
+[Field: MDEBIsDr]
+    Type   : Logical
+    Set as : $$IsDr:$ClosingBalance
+    XMLTag : "ISDR"
+
+;; The pending bills of the debtor on the line being exploded ($Name is
+;; that ledger's name while the bill part is gathered).
+[Collection: MDEDebtorBills]
+    Type     : Bills
+    Child Of : $Name
+    Filter   : MDEHasBalance
+    Fetch    : Name, BillDate, BillCreditPeriod, ClosingBalance
+
+[System: Formula]
+    MDEHasBalance : NOT $$IsEmpty:$ClosingBalance
+
+;; ------------------ Production (stock / manufacturing journals) --------
+;; Every voucher of the last 10 days that brings items IN through a stock
+;; journal - manufacturing journals included - with each item produced
+;; (<IN>, Tally's "Destination") and consumed (<OUT>, "Source"). Godown
+;; transfers carry the same item in and out; the CRM nets them to nothing.
+[Part: MDEProdPart]
+    Lines    : MDEProdLine
+    Repeat   : MDEProdLine : MDEProduction
+    Scrolled : Vertical
+
+[Line: MDEProdLine]
+    Fields  : MDEPGuid, MDEPVchNo, MDEPVchType, MDEPDate, MDEPNarration
+    XMLTag  : "PRODUCTION"
+    Explode : MDEProdInPart  : Yes
+    Explode : MDEProdOutPart : Yes
+
+[Field: MDEPGuid]
+    Type   : String
+    Set as : $GUID
+    XMLTag : "GUID"
+
+[Field: MDEPVchNo]
+    Type   : String
+    Set as : $VoucherNumber
+    XMLTag : "VOUCHERNUMBER"
+
+[Field: MDEPVchType]
+    Type   : String
+    Set as : $VoucherTypeName
+    XMLTag : "VOUCHERTYPE"
+
+[Field: MDEPDate]
+    Type   : String
+    Set as : $$String:$Date:UniversalDate
+    XMLTag : "DATE"
+
+[Field: MDEPNarration]
+    Type   : String
+    Set as : $Narration
+    XMLTag : "NARRATION"
+
+[Part: MDEProdInPart]
+    Lines    : MDEProdInLine
+    Repeat   : MDEProdInLine : InventoryEntriesIn
+    Scrolled : Vertical
+
+[Line: MDEProdInLine]
+    Fields : MDEIItem, MDEIActualQty, MDEIBilledQty, MDEIRate, MDEIAmount
+    XMLTag : "IN"
+
+[Part: MDEProdOutPart]
+    Lines    : MDEProdOutLine
+    Repeat   : MDEProdOutLine : InventoryEntriesOut
+    Scrolled : Vertical
+
+[Line: MDEProdOutLine]
+    Fields : MDEIItem, MDEIActualQty, MDEIBilledQty, MDEIRate, MDEIAmount
+    XMLTag : "OUT"
+
+[Field: MDEIItem]
+    Type   : String
+    Set as : $StockItemName
+    XMLTag : "ITEM"
+
+;; Stock journal lines keep their quantity in ActualQty; BilledQty is sent
+;; as the fallback should a release leave ActualQty empty.
+[Field: MDEIActualQty]
+    Type   : Quantity
+    Set as : $ActualQty
+    XMLTag : "QTY"
+
+[Field: MDEIBilledQty]
+    Type   : Quantity
+    Set as : $BilledQty
+    XMLTag : "BILLEDQTY"
+
+[Field: MDEIRate]
+    Type   : Rate
+    Set as : $Rate
+    XMLTag : "RATE"
+
+[Field: MDEIAmount]
+    Type   : Amount
+    Set as : $Amount
+    XMLTag : "AMOUNT"
+
+[Collection: MDEProduction]
+    Type   : Voucher
+    Filter : MDEIsProduction
+    Fetch  : Date, VoucherNumber, VoucherTypeName, Narration, GUID, IsCancelled, IsOptional
+    Fetch  : InventoryEntriesIn.*, InventoryEntriesOut.*
+
+[System: Formula]
+    MDEIsProduction : (NOT $IsCancelled) AND (NOT $IsOptional) AND ($Date >= @@MickysDEProdFrom) AND ($$NumItems:InventoryEntriesIn > 0)
+
+;; ------------------ Batch-wise closing stock (expiry) ------------------
+;; Every stock item holding stock, with its batches: batch name, godown,
+;; mfg date, expiry (date or period, as text), closing quantity and value.
+;; The CRM keeps the Semi Finished / Finished items and marks a SKU CRITICAL
+;; when stock in any batch is close to expiry. Items not kept batch-wise send
+;; no batches.
+[Part: MDEBatchItemPart]
+    Lines    : MDEBatchItemLine
+    Repeat   : MDEBatchItemLine : MDEStockHeld
+    Scrolled : Vertical
+
+[Line: MDEBatchItemLine]
+    Fields  : MDESName, MDESGroup
+    XMLTag  : "ITEMBATCHES"
+    Explode : MDEBatchPart : Yes
+
+[Field: MDESName]
+    Type   : String
+    Set as : $Name
+    XMLTag : "NAME"
+
+[Field: MDESGroup]
+    Type   : String
+    Set as : $Parent
+    XMLTag : "GROUP"
+
+[Collection: MDEStockHeld]
+    Type   : Stock Item
+    Filter : MDEHasStock
+    Fetch  : Name, Parent, ClosingBalance
+
+[System: Formula]
+    MDEHasStock : NOT $$IsEmpty:$ClosingBalance
+
+[Part: MDEBatchPart]
+    Lines    : MDEBatchLine
+    Repeat   : MDEBatchLine : MDEItemBatches
+    Scrolled : Vertical
+
+[Line: MDEBatchLine]
+    Fields : MDEBtName, MDEBtBatchName, MDEBtGodown, MDEBtMfg, MDEBtExpiry
+    Fields : MDEBtQty, MDEBtValue
+    XMLTag : "BATCH"
+
+[Field: MDEBtName]
+    Type   : String
+    Set as : $Name
+    XMLTag : "NAME"
+
+[Field: MDEBtBatchName]
+    Type   : String
+    Set as : $BatchName
+    XMLTag : "BATCHNAME"
+
+[Field: MDEBtGodown]
+    Type   : String
+    Set as : $GodownName
+    XMLTag : "GODOWN"
+
+[Field: MDEBtMfg]
+    Type   : String
+    Set as : $$String:$MfdOn:UniversalDate
+    XMLTag : "MFGDATE"
+
+[Field: MDEBtExpiry]
+    Type   : String
+    Set as : $$String:$ExpiryPeriod
+    XMLTag : "EXPIRY"
+
+[Field: MDEBtQty]
+    Type   : Quantity
+    Set as : $ClosingBalance
+    XMLTag : "QTY"
+
+[Field: MDEBtValue]
+    Type   : Amount
+    Set as : $ClosingValue
+    XMLTag : "VALUE"
+
+;; The batches of the item on the line being exploded.
+[Collection: MDEItemBatches]
+    Type     : Batch
+    Child Of : $Name
+    Filter   : MDEHasStock
+    Fetch    : Name, BatchName, GodownName, MfdOn, ExpiryPeriod, ClosingBalance, ClosingValue

@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const asyncHandler = require('../utils/asyncHandler');
 const ApiError = require('../utils/ApiError');
 const AppointedCustomer = require('../models/AppointedCustomer');
+const Customer = require('../models/Customer');
 const Counter = require('../models/Counter');
 const SalesOrder = require('../models/SalesOrder');
 const Setting = require('../models/Setting');
@@ -12,7 +13,7 @@ const {
   statusOf: tallyStatusOf,
   buildVouchers: buildTallyVouchers,
 } = require('../services/tallyOrder.service');
-const { GST_BASES, SUPPLY_TYPES, computeLine, computeTotals, deriveSupplyType } = require('../utils/gst');
+const { SUPPLY_TYPES, computeLine, computeTotals, deriveSupplyType } = require('../utils/gst');
 const { renderSalesOrderPdf } = require('../services/salesOrderPdf.service');
 const { sendOrderEmail } = require('../services/salesOrderEmail.service');
 const {
@@ -114,20 +115,41 @@ async function buildItems(items, { excludeOrder, basis = 'exclusive', supplyType
 }
 
 /**
- * Resolves an appointed (rate-frozen) customer when customerId is given and
+ * Resolves the appointed (rate-frozen) customer an order is booked for and
  * enforces the freeze: every line must be on the frozen list, and the frozen
  * rate always wins over whatever rate the client sent.
  *
- * A lapsed validity blocks the booking outright, on create and on edit alike.
- * Refusing an order is disruptive, but far less costly than invoicing a price
- * the company stopped honouring weeks ago — the way out is one edit of the
- * customer, which re-freezes the rates against a fresh date. Customers
- * appointed before validity existed carry no date and are let through.
+ * Orders are booked ONLY for appointed customers linked to a Tally ledger —
+ * a free-typed name or an unlinked customer has no party for the order to go
+ * to Tally under, so it is refused here on create and on edit alike. The link
+ * must still name a ledger in the Sundry Debtors mirror (one deleted or
+ * renamed in Tally since counts as unlinked).
+ *
+ * A lapsed validity blocks the booking outright too. Refusing an order is
+ * disruptive, but far less costly than invoicing a price the company stopped
+ * honouring weeks ago — the way out is one edit of the customer, which
+ * re-freezes the rates against a fresh date. Customers appointed before
+ * validity existed carry no date and are let through.
  */
 async function applyFrozenCustomer(customerId, items) {
-  if (!customerId) return null;
+  if (!customerId) {
+    throw ApiError.badRequest(
+      'Pick an appointed customer — sales orders are booked only for rate-frozen customers linked to a Tally ledger'
+    );
+  }
   const appointed = await AppointedCustomer.findById(customerId);
   if (!appointed) throw ApiError.badRequest('Appointed customer not found');
+  if (!appointed.tallyLedger) {
+    throw ApiError.badRequest(
+      `${appointed.companyName} is not linked to a Tally ledger — link it under Customers → Link to Tally before booking an order`
+    );
+  }
+  if (!(await Customer.exists({ name: appointed.tallyLedger }))) {
+    throw ApiError.badRequest(
+      `${appointed.companyName}'s Tally ledger "${appointed.tallyLedger}" is no longer in Tally's Sundry Debtors — ` +
+        're-link the customer under Customers → Link to Tally before booking an order'
+    );
+  }
   if (appointed.validUntil && istDayPassed(appointed.validUntil)) {
     throw ApiError.badRequest(
       `${appointed.companyName}'s frozen rates expired on ${istDateLabel(appointed.validUntil)} — ` +
@@ -156,26 +178,20 @@ async function applyFrozenCustomer(customerId, items) {
 
 /**
  * The GST treatment of an order (utils/gst.js) and the rate on every line.
- * An appointed customer's frozen list dictates the basis — the rates were
+ * The appointed customer's frozen list dictates the basis — the rates were
  * frozen exclusive or inclusive of GST, and reading them the other way would
- * re-price the order — and the supply type follows their GSTIN. A plain
- * Tally-ledger order takes the screen's choices, else Settings' defaults.
- * The supply type stays the exec's call either way (the goods may go to a
- * branch in another state); a line with no GST rate of its own gets the
- * default rate from Settings.
+ * re-price the order — and the supply type follows their GSTIN, though it
+ * stays the exec's call (the goods may go to a branch in another state). A
+ * line with no GST rate of its own gets the default rate from Settings.
  */
 async function resolveGst(body, appointed, items) {
   const settings = await Setting.getGlobal();
   const so = settings.salesOrder || {};
   const asked = body.gst || {};
-  const basis = appointed
-    ? appointed.gstBasis || 'exclusive'
-    : GST_BASES.includes(asked.basis)
-      ? asked.basis
-      : so.gstBasis || 'exclusive';
+  const basis = appointed.gstBasis || 'exclusive';
   const supplyType = SUPPLY_TYPES.includes(asked.supplyType)
     ? asked.supplyType
-    : deriveSupplyType(appointed?.gstin, settings.company?.gstNumber);
+    : deriveSupplyType(appointed.gstin, settings.company?.gstNumber);
   const defaultGst = so.defaultGst ?? 5;
   for (const it of items) {
     if (it.gst == null) it.gst = defaultGst;
@@ -211,7 +227,7 @@ const gstDefaults = asyncHandler(async (_req, res) => {
 
 // POST /api/sales-orders
 const createSalesOrder = asyncHandler(async (req, res) => {
-  const { customerName, customerId, items, notes } = req.body;
+  const { customerId, items, notes } = req.body;
   const appointed = await applyFrozenCustomer(customerId, items);
   const gst = await resolveGst(req.body, appointed, items);
   const { built, totals, total, warnings } = await buildItems(items, gst);
@@ -222,8 +238,8 @@ const createSalesOrder = asyncHandler(async (req, res) => {
 
   const order = await SalesOrder.create({
     number,
-    customerName: appointed ? appointed.companyName : customerName,
-    customer: appointed?._id,
+    customerName: appointed.companyName,
+    customer: appointed._id,
     items: built,
     gst,
     ...totals,
@@ -237,7 +253,7 @@ const createSalesOrder = asyncHandler(async (req, res) => {
     action: 'SALES_ORDER_CREATED',
     entity: 'SalesOrder',
     entityId: order._id,
-    details: `Created sales order ${number} for ${customerName} (${built.length} items, Rs. ${total.toLocaleString('en-IN')})`,
+    details: `Created sales order ${number} for ${appointed.companyName} (${built.length} items, Rs. ${total.toLocaleString('en-IN')})`,
     ip: req.ip,
   });
   // First order = "sample order bought", every later one a repeat order on the
@@ -337,12 +353,12 @@ const updateSalesOrder = asyncHandler(async (req, res) => {
 
   const { customerName, customerId, items, notes } = req.body;
   const previousCustomer = order.customer;
-  // An edit that leaves customerId out is not permission to drop the freeze:
-  // the dialog clears its frozen-customer selection the moment the typed name
-  // differs by a character, and taking that at face value would re-price an
-  // appointed customer's own order outside their frozen list and past their
-  // validity date. The order keeps the customer it was booked for unless a
-  // different name is actually typed over it.
+  // An edit that leaves customerId out keeps the customer the order was booked
+  // for when the name is unchanged: the dialog clears its frozen-customer
+  // selection the moment the typed name differs by a character. Anything else
+  // without a customerId is refused — an order booked before the
+  // appointed-and-linked rule (free-typed name) must be moved onto an
+  // appointed, Tally-linked customer before it can be saved again.
   const keepsBookedCustomer =
     !customerId &&
     order.customer &&
@@ -353,8 +369,8 @@ const updateSalesOrder = asyncHandler(async (req, res) => {
   );
   const gst = await resolveGst(req.body, appointed, items);
   const { built, totals, warnings } = await buildItems(items, { ...gst, excludeOrder: order._id });
-  order.customerName = appointed ? appointed.companyName : customerName;
-  order.customer = appointed?._id || undefined;
+  order.customerName = appointed.companyName;
+  order.customer = appointed._id;
   order.items = built;
   order.gst = gst;
   Object.assign(order, totals);

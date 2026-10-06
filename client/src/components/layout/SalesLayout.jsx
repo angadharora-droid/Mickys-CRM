@@ -27,12 +27,14 @@ export default function SalesLayout() {
   }, []);
 
   return (
-    <div className="flex h-[100dvh] overflow-hidden">
+    // print: the page flows on paper instead of scrolling inside the shell
+    // (the Day End Report prints from here); the chrome hides itself.
+    <div className="flex h-[100dvh] overflow-hidden print:block print:h-auto print:overflow-visible">
       <SalesSidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
-      <div className="flex flex-1 flex-col overflow-hidden">
+      <div className="flex flex-1 flex-col overflow-hidden print:block print:overflow-visible">
         <Header onMenuClick={() => setSidebarOpen(true)} />
-        <main className="flex-1 overflow-y-auto">
-          <div className="mx-auto w-full max-w-7xl p-4 sm:p-6 lg:p-8 mb-safe-nav lg:mb-0">
+        <main className="flex-1 overflow-y-auto print:overflow-visible">
+          <div className="mx-auto w-full max-w-7xl p-4 sm:p-6 lg:p-8 mb-safe-nav lg:mb-0 print:max-w-none print:p-0 print:mb-0">
             <Outlet />
           </div>
         </main>

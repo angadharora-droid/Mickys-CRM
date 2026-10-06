@@ -4,7 +4,7 @@ import { cn, getInitials } from '@/lib/utils';
 import { ROLES, ROLE_LABELS, MODULES, PIPELINE_MODULES, hasModule, canUseSalesPages } from '@/lib/constants';
 import {
   LayoutDashboard, Boxes, ReceiptText, UserCheck, BarChart3, ArrowLeftRight, Settings, X, Workflow, Banknote, Truck,
-  FileSpreadsheet,
+  FileSpreadsheet, ClipboardList,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -40,7 +40,10 @@ const NAV_SECTIONS = [
   },
   {
     label: 'Administration',
-    items: [{ to: '/sales/settings', label: 'Settings', icon: Settings, roles: [ROLES.ADMIN] }],
+    items: [
+      { to: '/sales/day-end', label: 'Day End Report', icon: ClipboardList, roles: [ROLES.ADMIN] },
+      { to: '/sales/settings', label: 'Settings', icon: Settings, roles: [ROLES.ADMIN] },
+    ],
   },
   {
     label: 'Switch',
@@ -73,7 +76,7 @@ export default function SalesSidebar({ open, onClose }) {
 
       <aside
         className={cn(
-          'fixed inset-y-0 left-0 z-50 w-[17rem] max-w-[82%] bg-sidebar text-sidebar-foreground brand-texture flex flex-col transition-transform duration-300 ease-out rounded-r-2xl lg:rounded-none lg:w-64 lg:max-w-none lg:translate-x-0 lg:static lg:z-auto',
+          'fixed inset-y-0 left-0 z-50 w-[17rem] max-w-[82%] bg-sidebar text-sidebar-foreground brand-texture flex flex-col transition-transform duration-300 ease-out rounded-r-2xl lg:rounded-none lg:w-64 lg:max-w-none lg:translate-x-0 lg:static lg:z-auto print:hidden',
           open ? 'translate-x-0 shadow-2xl' : '-translate-x-full'
         )}
       >

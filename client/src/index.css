@@ -157,3 +157,13 @@
     font-variant-numeric: tabular-nums;
   }
 }
+
+/* The shells lock document scrolling with inline styles (the page scrolls
+   inside <main>); paper needs the whole document, so printing unlocks it. */
+@media print {
+  html,
+  body {
+    overflow: visible !important;
+    height: auto !important;
+  }
+}

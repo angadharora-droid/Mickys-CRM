@@ -6,6 +6,7 @@ Files:
   `https://api.mickys-crm.centrepointgroup.in/api/stock/tdl?key=<TALLY_SYNC_KEY>` — Tally loads it straight from that URL. Defines report `MickysStockReport` (opening / inward / outward / closing stock per item, plus the item's alias = **product code**, part no., group, category, unit, standard cost/price — and every vendor & customer, i.e. ledgers under Sundry Creditors / Sundry Debtors).
 - `sfg-product-codes.csv` — the code ↔ Tally item name mapping issued for the Semi Finished Goods items (`SFG-<item no>-<grams>`). The codes are entered in Tally as each stock item's **alias**; this file is the reference list, not something the CRM reads.
 - `sample-stock-request.xml` — the request envelope the CRM backend POSTs to Tally to pull that report.
+- `../server/src/assets/mickys-dayend.tdl` — the **day-end add-on**, loaded next to the stock TDL: receipts, customer balances with pending bills, production journals and batch-wise stock for the admin Day End Report (section 7). Served the same way at `…/api/stock/dayend/tdl?key=<TALLY_SYNC_KEY>`.
 
 ## 1. One-time Tally setup (on the PC running Tally Prime)
 
@@ -366,3 +367,75 @@ Tally reads it. The CRM's *Orders into Tally* card lists every call Tally made
   gives the due orders as a Tally import file (Import → Transactions). The
   orders in it count as sent.
 
+
+## 7. Day End Report add-on (mickys-dayend.tdl)
+
+The admin **Day End Report** (Sales Orders → Administration → Day End Report)
+follows the "MICKY'S – DAY END REPORT" sheet. Part of it comes from the stock
+TDL already: total sales (sales invoices), closing stock value per SKU, and
+Tally's inward average cost. Orders received/dispatched and the executive KPI
+come from the CRM. The rest of the sheet needs figures the stock TDL does
+not send, so a **second, separate TDL** carries them:
+
+| Tag | What | Window | Feeds |
+|---|---|---|---|
+| `<RECEIPT>` | vouchers of every type under Receipt, with ledger entries | last 40 days | Collection Received (today / MTD) |
+| `<DEBTOR>` + `<BILL>` | Sundry Debtors ledgers with a balance, and their pending bills (ref, bill date, due date / credit period, amount) | as on now | Outstanding Receivables, Due Customer List |
+| `<PRODUCTION>` + `<IN>`/`<OUT>` | stock / manufacturing journals: items produced and consumed, qty and value | last 10 days | Production, Production Cost / kg |
+| `<ITEMBATCHES>` + `<BATCH>` | batch-wise closing stock of every item holding stock: batch, godown, mfg date, expiry, qty, value | as on now | Expiry Status (Normal / CRITICAL) |
+
+It is a separate file on purpose: if any part of it misbehaves on this
+TallyPrime release, the stock / invoice / sales-order sync in
+`mickys-stock.tdl` is untouched.
+
+**Load it (once):** open
+`https://api.mickys-crm.centrepointgroup.in/api/stock/dayend/tdl?key=<TALLY_SYNC_KEY>`,
+save it beside `mickys-stock.tdl` (e.g. `TALLYBACKUP\mickys-dayend.tdl`), then
+F1 → TDLs & AddOns → F4 → add its full path on a **new line** (keep the stock
+TDL's line) → Ctrl+A → restart Tally. Gateway of Tally then shows **Mickys
+Day End Export** (E): open it to see what Tally will send; **Ctrl+F10** there
+sends it at once. It also sends by itself when the company is opened and
+every 15 minutes, with the same CENTRE POINT company guard as the stock push,
+to `POST /api/stock/dayend`.
+
+**First load: check on the Tally screen** (Mickys Day End Export). These
+parts use TDL methods the stock TDL never needed, so confirm each one shows
+data:
+
+- *Receipts* — `$$IsReceipt` on the voucher type. Only entries credited to
+  Sundry Debtors ledgers count as a collection, so loans or interest received
+  are not counted.
+- *Debtors' bills* — `Type : Bills` per ledger. They only appear for ledgers
+  kept **bill-by-bill** (Maintain balances bill-by-bill = Yes). Without bills
+  the report still shows the balance, but "Due since / days" shows —.
+- *Production* — vouchers with items IN (Destination). That covers stock
+  journals and manufacturing journals. A godown transfer (same item in and
+  out) nets to nothing in the CRM. Only Semi Finished / Finished items count
+  as production.
+- *Batches* — `Type : Batch` per stock item, with `$MfdOn` / `$ExpiryPeriod`.
+  Expiry status needs **expiry dates on the batches** (stock item: Track date
+  of manufacture / Use expiry dates = Yes). If the batch part raises an error
+  on this release, download the copy **without** it,
+  `…/api/stock/dayend/tdl?key=<TALLY_SYNC_KEY>&batches=0`. Everything else
+  keeps flowing, and the report says expiry is not sent.
+
+The report's feed strip shows the last day-end push, its TDL version (current:
+`DAYEND_TDL_VERSION` in `server/src/services/tallyDayEnd.service.js`) and what
+it carried. The reply Tally gets after Ctrl+F10 says the same.
+
+**How the CRM keeps it:**
+
+- Receipts and production vouchers are mirrored inside their window. A voucher
+  dated in the window that a push no longer carries was deleted or cancelled
+  in Tally, so it is removed. The window is clipped to the Tally report period
+  (F2), so narrowing the period never deletes history outside it. Older
+  production stays, as the history for the 90-day average cost per kg.
+- Customer balances, bills and batches are saved as a **per-day snapshot**.
+  The last push of a day is that day's closing position, so the report for an
+  earlier date reads what Tally said that evening.
+- Typed in on the report itself: the **production plan** (planned qty per
+  item per day) and the **follow-up status** on each customer's dues.
+- Settings (gear on the report): exec targets (visits 2, calls 5, leads 3),
+  the expiry warning window (30 days), the cost tolerance (5%), and the SKU
+  families listed by name (Yellow / Makhani / Malabari Gravy; keywords match
+  the Tally item names, misspellings included).

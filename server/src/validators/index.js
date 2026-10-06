@@ -451,6 +451,30 @@ const settingsSchema = z.object({
       minuteIst: z.coerce.number().int().min(0).max(59).nullable().optional(),
     })
     .optional(),
+  // Admin Day End Report: exec targets, expiry warning window, cost tolerance
+  // and the SKU families named in the closing-stock table.
+  dayEnd: z
+    .object({
+      targets: z
+        .object({
+          visits: z.coerce.number().int().min(0).max(100).optional(),
+          calls: z.coerce.number().int().min(0).max(200).optional(),
+          leads: z.coerce.number().int().min(0).max(100).optional(),
+        })
+        .optional(),
+      expiryWarnDays: z.coerce.number().int().min(0).max(730).optional(),
+      costTolerancePct: z.coerce.number().min(0).max(100).optional(),
+      families: z
+        .array(
+          z.object({
+            label: z.string().trim().min(1).max(60),
+            keywords: z.array(z.string().trim().min(2).max(60)).min(1).max(10),
+          })
+        )
+        .max(12)
+        .optional(),
+    })
+    .optional(),
   export: z
     .object({
       containers: z
@@ -497,6 +521,29 @@ const dailyReportEmailSchema = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD')
     .optional(),
   to: z.string().email().optional().or(z.literal('')),
+});
+
+// ---------- Day End Report ----------
+const dayKeySchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD');
+
+// The whole plan for one day, replacing what was there: Tally item names and
+// the quantity planned in each item's own unit. A quantity of 0 drops the row.
+const dayEndPlanSchema = z.object({
+  date: dayKeySchema,
+  items: z
+    .array(
+      z.object({
+        item: z.string().trim().min(1).max(300),
+        qty: z.coerce.number().min(0).max(10000000),
+      })
+    )
+    .max(300),
+});
+
+// The follow-up note on one customer's dues (Tally ledger name); '' clears it.
+const dayEndFollowUpSchema = z.object({
+  ledger: z.string().trim().min(1).max(300),
+  status: z.string().trim().max(300),
 });
 
 // ---------- Web push ----------
@@ -593,7 +640,10 @@ const tallyLinksSchema = z.object({
 // Amounts are recomputed server-side; the client only sends qty and rate.
 const salesOrderSchema = z.object({
   customerName: z.string().trim().min(2).max(200),
-  customerId: objectId.optional(), // appointed customer → frozen list enforced
+  // The appointed, Tally-linked customer (frozen list enforced). Optional only
+  // so an edit can keep its booked customer by name; the controller refuses
+  // an order with no appointed customer behind it.
+  customerId: objectId.optional(),
   items: z
     .array(
       z.object({
@@ -724,6 +774,8 @@ module.exports = {
   settingsSchema,
   metaSheetSchema,
   dailyReportEmailSchema,
+  dayEndPlanSchema,
+  dayEndFollowUpSchema,
   exportCountrySchema,
   exchangeRatesSchema,
   exportRateCardSchema,

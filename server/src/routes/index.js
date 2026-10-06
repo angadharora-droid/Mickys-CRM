@@ -27,6 +27,7 @@ const salesReports = require('../controllers/salesReport.controller');
 const invoicing = require('../controllers/invoicing.controller');
 const dispatch = require('../controllers/dispatch.controller');
 const tallyOrders = require('../controllers/tallyOrder.controller');
+const dayEnd = require('../controllers/dayEnd.controller');
 
 const router = express.Router();
 
@@ -156,6 +157,10 @@ router.get('/stock/tdl', stock.tallyKeyOrAdmin, stock.serveTdl);
 // its own feed request (claim=1) hands orders out.
 router.get('/stock/tally-orders', stock.tallyKeyOrAdmin, tallyOrders.orderFeed);
 router.post('/stock/tally-orders/seen', stock.tallyKeyOrAdmin, tallyOrders.ordersSeen);
+// The day-end add-on TDL (receipts, debtors, production, batches) pushes to
+// its own endpoint and is served the same way, key-gated like the stock sync.
+router.post('/stock/dayend', stock.tallyKeyOrAdmin, dayEnd.syncDayEnd);
+router.get('/stock/dayend/tdl', stock.tallyKeyOrAdmin, dayEnd.serveDayEndTdl);
 router.get('/tally-orders/overview', authenticate, authorize(ADMIN), tallyOrders.tallyOrdersOverview);
 router.get('/tally-orders/import-file', authenticate, authorize(ADMIN), tallyOrders.tallyImportFile);
 router.get('/stock', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, stock.listStock);
@@ -231,6 +236,13 @@ router.delete('/sales-customers/:id', authenticate, authorize(ADMIN), salesCusto
 router.get('/sales-reports', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, salesReports.listReports);
 router.get('/sales-reports/export/all', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, salesReports.exportAll);
 router.get('/sales-reports/:type', authenticate, authorize(ADMIN, EXEC), SALES_MODULE, salesReports.getReport);
+
+// ---------- Day End Report (admin only) ----------
+// Sales, executive KPI, dues, production and closing stock for one IST day;
+// the plan and the dues follow-up notes are the two things typed in here.
+router.get('/day-end', authenticate, authorize(ADMIN), dayEnd.getDayEndReport);
+router.put('/day-end/plan', authenticate, authorize(ADMIN), validate(v.dayEndPlanSchema), dayEnd.saveProductionPlan);
+router.put('/day-end/follow-up', authenticate, authorize(ADMIN), validate(v.dayEndFollowUpSchema), dayEnd.saveFollowUp);
 
 // ---------- In-app notifications (the header bell) ----------
 router.get('/notifications', authenticate, notifications.listNotifications);
