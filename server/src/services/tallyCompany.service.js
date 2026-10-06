@@ -10,7 +10,8 @@
  * passes the basic guard, so an older or second company (last year's books, a
  * legacy company) open in some user's Tally pushes too.
  *
- * Settings.tallyOrders.company names the one company accepted ('' = any
+ * Settings.tallyOrders.company names the one company accepted (default
+ * CENTRE POINT FOODS PRIVATE LIMITED; '' = any
  * CENTRE POINT company, the old behaviour). Compared case-insensitively with
  * whitespace collapsed, since Tally prints the name as typed.
  */
