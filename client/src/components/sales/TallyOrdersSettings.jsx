@@ -28,8 +28,17 @@ const NAME_FIELDS = [
 
 const EDITABLE = ['enabled', 'mode', 'testLedger', ...NAME_FIELDS.map((f) => f.key)];
 
+const TRIGGER_LABELS = { timer: '10-minute timer', load: 'company opened', button: 'Ctrl+F10' };
+
+// The timer beats every 10 minutes; past this it is taken as not running.
+const TIMER_QUIET_MINUTES = 25;
+const minutesSince = (at) => (at ? (Date.now() - new Date(at).getTime()) / 60000 : Infinity);
+
 /** One call from the Tally side, in words. */
 function callText(c) {
+  if (c.kind === 'tick') {
+    return `Timer tick${c.note ? ` — ${c.note}` : ' — pushing'}${c.tdlVersion ? `, TDL v${c.tdlVersion}` : ''}`;
+  }
   if (c.kind === 'feed') {
     const what = c.handedOut?.length ? c.handedOut.join(', ') : 'nothing due';
     return `Collected orders${c.note ? ` (${c.note})` : ''}: ${what}${!c.claim && !c.note ? ' — look only' : ''}`;
@@ -46,15 +55,38 @@ function callText(c) {
  * screen shows this, so it is the first place to look when an order does not
  * arrive.
  */
-function TallyCalls({ calls, lastStockPush }) {
+function TallyCalls({ calls, lastStockPush, timer }) {
   const latestReport = (calls || []).find((c) => c.kind === 'seen' && c.sample);
+  // Invoices (and stock) reach the CRM on the timer's pushes; without them
+  // only re-opening the company in Tally brings them in.
+  const timerQuiet = minutesSince(timer?.lastTickAt) > TIMER_QUIET_MINUTES;
   return (
     <details open className="rounded-md border bg-background p-3 text-xs">
       <summary className="cursor-pointer font-medium">What Tally sent{calls?.length ? ` (latest ${calls.length})` : ''}</summary>
       <p className="mt-2 text-muted-foreground">
         Last stock push from Tally:{' '}
-        {lastStockPush ? `${formatDateTime(lastStockPush.at)}${lastStockPush.tdlVersion ? ` [TDL v${lastStockPush.tdlVersion}]` : ''}` : '—'}
+        {lastStockPush
+          ? `${formatDateTime(lastStockPush.at)}${lastStockPush.trigger ? ` (${TRIGGER_LABELS[lastStockPush.trigger] || lastStockPush.trigger})` : ''}` +
+            `${lastStockPush.tdlVersion ? ` [TDL v${lastStockPush.tdlVersion}]` : ''}`
+          : '—'}
       </p>
+      <p className="mt-1 text-muted-foreground">
+        10-minute timer: last tick {timer?.lastTickAt ? formatDateTime(timer.lastTickAt) : 'never'}
+        {timer?.lastTickAt && timer.lastTickCompany ? ` (${timer.lastTickCompany} open)` : ''} · last timer push{' '}
+        {timer?.lastPushAt ? formatDateTime(timer.lastPushAt) : 'never'}
+      </p>
+      {timerQuiet && (
+        <p className="mt-2 flex items-start gap-1.5 rounded bg-amber-50 p-2 text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>
+            {timer?.lastTickAt
+              ? `Tally's timer has not ticked since ${formatDateTime(timer.lastTickAt)}.`
+              : "No timer tick has arrived — Tally is running a TDL older than v8, or its timer is not running."}{' '}
+            Until it does, invoices and stock reach the CRM only when the company is opened or Ctrl+F10 is pressed.
+            Load the current TDL, then close TallyPrime completely and start it again.
+          </span>
+        </p>
+      )}
       {calls?.length ? (
         <ul className="mt-2 space-y-1">
           {calls.map((c) => (
@@ -312,8 +344,6 @@ export default function TallyOrdersSettings({ initial }) {
               </div>
             )}
 
-            <TallyCalls calls={ov.calls} lastStockPush={ov.lastStockPush} />
-
             <div className="flex flex-wrap items-center gap-3 pt-1">
               <Button size="sm" variant="outline" onClick={downloadImportFile} disabled={downloading || !ov.queued.length}>
                 {downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
@@ -325,6 +355,10 @@ export default function TallyOrdersSettings({ initial }) {
             </div>
           </div>
         )}
+
+        {/* Shown with orders switched off too: the timer is also what brings
+            invoices and stock in. */}
+        {ov && <TallyCalls calls={ov.calls} lastStockPush={ov.lastStockPush} timer={ov.timer} />}
       </CardContent>
     </Card>
   );

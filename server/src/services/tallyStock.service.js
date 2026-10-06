@@ -191,7 +191,7 @@ function parseTallyDate(raw) {
  * say whether the copy loaded on the Tally machine is the current one. Bump
  * it whenever the template changes.
  */
-const TDL_VERSION = '7';
+const TDL_VERSION = '8';
 
 const parseTallyTdlVersion = (xml) => (typeof xml === 'string' ? tagValue(xml, 'TDLVERSION') : '');
 

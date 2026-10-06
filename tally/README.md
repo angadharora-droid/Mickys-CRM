@@ -212,7 +212,18 @@ The TDL registers two automatic triggers, both guarded by company name
   to the Mickys company when Tally opened with a different company first —
   Tally fires no event on a switch between already-open companies, so the
   next timer tick (within 10 minutes) does the push. When no company (or a
-  different one) is active, the tick does nothing.
+  different one) is active, the tick pushes nothing.
+- **The timer is started twice over (v8+):** on System Start (TallyPrime
+  launching) and again on every Load Company. Before v8 it was started on
+  System Start only, so a TDL loaded or replaced while Tally was already
+  running never started it — the company-open push worked, the 10-minute one
+  did not, and invoices raised in Tally reached the CRM only when the company
+  was re-opened.
+- **Ticks and triggers (v8+):** every timer beat first sends a tiny tick
+  (`POST /api/stock/tick`, the open company's name only), and every push says
+  what sent it (`?src=timer|load|button`). The CRM shows both under Sales
+  Settings → Orders into Tally → "What Tally sent": last tick, last timer
+  push, and a warning when no tick has arrived for 25 minutes.
 
 The export also carries a `<COMPANY>` tag and the backend refuses any payload
 from a company other than CENTRE POINT\*, so even pressing the sync button
@@ -278,8 +289,12 @@ reset. Fixes, best first:
    re-pushes for as long as the Mickys company is the active one, so a
    switch is picked up within 10 minutes and a hosted session that keeps
    the company open 24×7 stays fresh all day. If the timed pushes aren't
-   arriving, the loaded TDL copy is probably an old (pre-timer) download —
-   re-download from the URL, overwrite the file and restart Tally. Repeat
+   arriving, look at "What Tally sent" in the CRM (Sales Settings → Orders
+   into Tally): **no ticks** = the timer is not running (old copy loaded, or
+   Tally not restarted since — re-download, overwrite the file, close
+   TallyPrime completely and start it again); **ticks naming another
+   company** = Mickys is not the active company; **ticks but no timer push**
+   = the push itself fails (press Ctrl+F10 to see Tally's message). Repeat
    pushes are harmless (the CRM just refreshes; the first push of the day
    becomes that day's opening in the Day-wise register). On a multi-user
    host, each session with the TDL loaded runs its own timer — the extra

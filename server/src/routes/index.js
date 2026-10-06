@@ -157,6 +157,8 @@ router.get('/stock/tdl', stock.tallyKeyOrAdmin, stock.serveTdl);
 // its own feed request (claim=1) hands orders out.
 router.get('/stock/tally-orders', stock.tallyKeyOrAdmin, tallyOrders.orderFeed);
 router.post('/stock/tally-orders/seen', stock.tallyKeyOrAdmin, tallyOrders.ordersSeen);
+// Each beat of the stock TDL's 10-minute timer (v8+), recorded only.
+router.post('/stock/tick', stock.tallyKeyOrAdmin, tallyOrders.timerTick);
 // The day-end add-on TDL (receipts, debtors, production, batches) pushes to
 // its own endpoint and is served the same way, key-gated like the stock sync.
 router.post('/stock/dayend', stock.tallyKeyOrAdmin, dayEnd.syncDayEnd);

@@ -148,4 +148,23 @@ const resendToTally = asyncHandler(async (req, res) => {
   res.json({ success: true, message: `${order.number} will go to Tally at the add-on's next run` });
 });
 
-module.exports = { orderFeed, ordersSeen, tallyOrdersOverview, tallyImportFile, resendToTally };
+// POST /api/stock/tick?key= — one beat of the add-on's 10-minute timer (TDL
+// v8+), sent before its company check: <COMPANY> is whatever Tally had open.
+// Recorded only, so the settings screen can tell "timer not running" from
+// "timer running with another company open".
+const timerTick = asyncHandler(async (req, res) => {
+  const xml = typeof req.body === 'string' ? req.body : req.body?.xml || '';
+  const company = ((xml.match(/<COMPANY>([\s\S]*?)<\/COMPANY>/) || [])[1] || '').trim();
+  const tdlVersion = ((xml.match(/<TDLVERSION>([\s\S]*?)<\/TDLVERSION>/) || [])[1] || '').trim();
+  const mickys = SYNC_COMPANY.test(company);
+  await recordCall(req, {
+    kind: 'tick',
+    company,
+    tdlVersion,
+    bytes: xml.length,
+    note: mickys ? '' : company ? `"${company}" open - no push` : 'no company open - no push',
+  });
+  return tallyReply(res, true, `Mickys CRM: timer tick${mickys ? '' : ' (no push - CENTRE POINT is not the open company)'}`);
+});
+
+module.exports = { orderFeed, ordersSeen, timerTick, tallyOrdersOverview, tallyImportFile, resendToTally };
