@@ -297,8 +297,20 @@ function parseTallyInvoices(xml) {
  * The <COMPANY> element names the company that produced the export. Older
  * TDL versions don't send it — '' then means "unknown", not "no company".
  */
-const parseTallyCompany = (xml) =>
-  typeof xml === 'string' ? tagValue(xml, 'COMPANY') : '';
+/**
+ * The company named in the export — the first <COMPANY> with a value, so an
+ * empty tag ahead of the report's own cannot hide it. '' when none has one:
+ * on the live Tally (2026-10-06) the field (##SVCurrentCompany) arrives
+ * blank in every push, so an unnamed push is normal, not an error.
+ */
+const parseTallyCompany = (xml) => {
+  if (typeof xml !== 'string') return '';
+  for (const m of xml.matchAll(/<COMPANY>([\s\S]*?)<\/COMPANY>/g)) {
+    const name = tagValue(m[0], 'COMPANY');
+    if (name) return name;
+  }
+  return '';
+};
 
 module.exports = {
   tagValue,

@@ -108,6 +108,11 @@ async function syncStockNow(req, res) {
     if (req.tallyPush) await recordRefusal(req, { what: 'Stock push', company, reason: allowed.reason });
     throw ApiError.badRequest(`Not synced: ${allowed.reason}`);
   }
+  // Tally sent no company name: keep the start of the export in the log so
+  // what its header really carries can be read (no key in it).
+  if (allowed.unnamed && req.tallyPush) {
+    console.warn(`[tally] stock push without a company name — export starts: ${xml.slice(0, 400).replace(/\s+/g, ' ')}`);
+  }
 
   const parsed = parseTallyStockXml(xml);
   if (!parsed.length) {

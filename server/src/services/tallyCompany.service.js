@@ -23,12 +23,16 @@ const CENTRE_POINT = /^CENTRE POINT/i;
 const companyKey = (name) => String(name || '').trim().replace(/\s+/g, ' ').toUpperCase();
 
 /**
- * { ok, locked, reason } for a push from `company` ('' when the export did
- * not say). Without a lock an unnamed push is let through, as before; with
- * one it is refused — there is no telling which company sent it.
+ * { ok, locked, reason, unnamed } for a push from `company` ('' when the
+ * export did not say). An unnamed push is always let through: the live
+ * Tally sends every push with the company name blank (2026-10-06 — refusing
+ * those stopped all data), and the add-on's own guard has already checked
+ * the company before pushing. The lock refuses only a push that names a
+ * different company.
  */
 async function checkCompany(company) {
   const name = String(company || '').trim();
+  if (!name) return { ok: true, locked: '', reason: '', unnamed: true };
   if (name && !CENTRE_POINT.test(name)) {
     return { ok: false, locked: '', reason: `"${name}" is not CENTRE POINT FOODS — only the Mickys company feeds the CRM` };
   }
@@ -39,7 +43,7 @@ async function checkCompany(company) {
       ok: false,
       locked,
       reason:
-        `this push came from "${name || 'an unnamed company'}" — the CRM takes Tally data only from "${locked}" ` +
+        `this push came from "${name}" — the CRM takes Tally data only from "${locked}" ` +
         '(Sales Settings → Orders into Tally → Tally company). Open that company in Tally.',
     };
   }
