@@ -177,8 +177,10 @@ const timerTick = asyncHandler(async (req, res) => {
   // The add-on itself pushes for any CENTRE POINT company; the CRM then
   // refuses one that is not the company set in Settings.
   const allowed = await checkCompany(company);
+  // A blank name is how the live Tally exports it — the add-on's own guard
+  // still decides whether to push.
   const note = !company
-    ? 'no company open - no push'
+    ? 'company name blank in the export'
     : !CENTRE_POINT.test(company)
       ? `"${company}" open - no push`
       : allowed.ok
