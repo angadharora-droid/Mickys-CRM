@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import api, { apiError } from '@/lib/api';
+import useAutoRefresh from '@/lib/useAutoRefresh';
 import { useAuth } from '@/context/AuthContext';
 import {
   ROLES, ORDER_STATUSES, ORDER_STATUS_LABELS, PAYMENT_MODE_OPTIONS, DISPATCH_MODE_LABELS, orderStageSince, daysSince,
@@ -1485,8 +1486,8 @@ export default function SalesOrders() {
       .finally(() => setSearchParams({}, { replace: true }));
   }, [searchParams, setSearchParams]);
 
-  const fetchOrders = useCallback(async () => {
-    setLoading(true);
+  const fetchOrders = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
     try {
       const params = { page, limit: 20 };
       if (search) params.search = search;
@@ -1496,9 +1497,9 @@ export default function SalesOrders() {
       setOrders(data.data);
       setMeta(data.meta);
     } catch (err) {
-      toast.error(apiError(err));
+      if (!silent) toast.error(apiError(err));
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [page, search, status]);
 
@@ -1506,6 +1507,8 @@ export default function SalesOrders() {
     const t = setTimeout(fetchOrders, search ? 350 : 0);
     return () => clearTimeout(t);
   }, [fetchOrders, search]);
+  // Invoiced / dispatched moves arrive from Tally and other desks.
+  useAutoRefresh(fetchOrders);
 
   const downloadPdf = async (o) => {
     try {

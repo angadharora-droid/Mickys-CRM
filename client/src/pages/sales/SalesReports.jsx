@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import api, { apiError } from '@/lib/api';
+import useAutoRefresh from '@/lib/useAutoRefresh';
 import { useAuth } from '@/context/AuthContext';
 import { ROLES } from '@/lib/constants';
 import { cn, formatCurrency, formatDate, formatDateTime } from '@/lib/utils';
@@ -147,22 +148,25 @@ export default function SalesReports() {
     [wholeBook, from, to, scopeParams]
   );
 
-  const load = useCallback(async () => {
+  const load = useCallback(async ({ silent = false } = {}) => {
     if (!from || !to) return;
-    setLoading(true);
+    if (!silent) setLoading(true);
     try {
       const { data } = await api.get(`/sales-reports/${type}`, { params: query });
       setReport(data.data);
     } catch (err) {
+      // A failed background refresh keeps the same report on screen.
+      if (silent) return;
       // Never leave the previous report's rows on screen under the new title.
       setReport(null);
       toast.error(apiError(err));
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [type, query, from, to]);
 
   useEffect(() => { load(); }, [load]);
+  useAutoRefresh(load);
 
   const applyPreset = (value) => {
     setPreset(value);

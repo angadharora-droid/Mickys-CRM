@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import api, { apiError } from '@/lib/api';
+import useAutoRefresh from '@/lib/useAutoRefresh';
 import { formatCurrency, formatDate, formatDateTime } from '@/lib/utils';
 import PageHeader from '@/components/shared/PageHeader';
 import Pagination from '@/components/shared/Pagination';
@@ -68,19 +69,21 @@ function DailyView() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
 
-  const fetchDaily = useCallback(async (date) => {
-    setLoading(true);
+  const fetchDaily = useCallback(async (date, { silent = false } = {}) => {
+    if (!silent) setLoading(true);
     try {
       const res = await api.get('/stock/daily', { params: date ? { date } : {} });
       setData(res.data.data);
     } catch (err) {
-      toast.error(apiError(err));
+      if (!silent) toast.error(apiError(err));
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
   useEffect(() => { fetchDaily(); }, [fetchDaily]);
+  // Re-reads the day on screen.
+  useAutoRefresh((opts) => fetchDaily(data?.date, opts));
 
   if (loading && !data) return <Card><TableSkeleton rows={10} /></Card>;
 
@@ -197,11 +200,20 @@ function LedgerView({ endpoint, icon, singular, plural, tallyGroup }) {
   const [ledgers, setLedgers] = useState(null);
   const [search, setSearch] = useState('');
 
-  useEffect(() => {
+  const fetchLedgers = useCallback(({ silent = false } = {}) => {
     api.get(endpoint)
       .then((res) => setLedgers(res.data.data))
-      .catch((err) => { toast.error(apiError(err)); setLedgers([]); });
+      .catch((err) => {
+        // A failed background refresh keeps the list on screen.
+        if (silent) return;
+        toast.error(apiError(err));
+        setLedgers([]);
+      });
   }, [endpoint]);
+
+  useEffect(() => { fetchLedgers(); }, [fetchLedgers]);
+  // New ledgers created in Tally arrive with its 10-minute push.
+  useAutoRefresh(fetchLedgers);
 
   if (ledgers === null) return <Card><TableSkeleton rows={10} /></Card>;
 
@@ -414,8 +426,8 @@ export default function StockList() {
     }
   }, []);
 
-  const fetchItems = useCallback(async () => {
-    setLoading(true);
+  const fetchItems = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
     try {
       const params = { page, limit: 20 };
       if (search) params.search = search;
@@ -429,9 +441,9 @@ export default function StockList() {
       setItems(data.data);
       setMeta(data.meta);
     } catch (err) {
-      toast.error(apiError(err));
+      if (!silent) toast.error(apiError(err));
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [page, search, group, stockFilter, codeFilter]);
 
@@ -443,6 +455,10 @@ export default function StockList() {
     const t = setTimeout(fetchItems, search ? 350 : 0);
     return () => clearTimeout(t);
   }, [fetchItems, search]);
+  useAutoRefresh((opts) => {
+    fetchItems(opts);
+    fetchMetaData();
+  });
 
   const handleUpload = async (e) => {
     const file = e.target.files?.[0];

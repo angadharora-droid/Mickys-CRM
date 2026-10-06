@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import api, { apiError } from '@/lib/api';
+import useAutoRefresh from '@/lib/useAutoRefresh';
 import { formatCurrency, formatDateTime } from '@/lib/utils';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -119,21 +120,23 @@ export default function TallyOrdersSettings({ initial }) {
   const [loadingOverview, setLoadingOverview] = useState(false);
   const [downloading, setDownloading] = useState(false);
 
-  const loadOverview = useCallback(async () => {
-    setLoadingOverview(true);
+  const loadOverview = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setLoadingOverview(true);
     try {
       const { data } = await api.get('/tally-orders/overview');
       setOverview(data.data);
     } catch (err) {
-      toast.error(apiError(err));
+      if (!silent) toast.error(apiError(err));
     } finally {
-      setLoadingOverview(false);
+      if (!silent) setLoadingOverview(false);
     }
   }, []);
 
   useEffect(() => {
     loadOverview();
   }, [loadOverview]);
+  // The timer and push status below should not need a reload to stay current.
+  useAutoRefresh(loadOverview);
 
   const set = (key, value) => setCfg((c) => ({ ...c, [key]: value }));
 

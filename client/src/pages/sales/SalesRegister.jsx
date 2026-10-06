@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import api, { apiError } from '@/lib/api';
+import useAutoRefresh from '@/lib/useAutoRefresh';
 import { useAuth } from '@/context/AuthContext';
 import { MODULES, hasModule } from '@/lib/constants';
 import { cn, formatCurrency, formatDate, formatDateTime } from '@/lib/utils';
@@ -69,16 +70,16 @@ export default function SalesRegister() {
     return p;
   }, [from, to, search, unmatched]);
 
-  const fetchRows = useCallback(async () => {
-    setLoading(true);
+  const fetchRows = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
     try {
       const { data } = await api.get('/invoicing/register', { params: { ...params(), page, limit: 50 } });
       setRows(data.data);
       setMeta(data.meta);
     } catch (err) {
-      toast.error(apiError(err));
+      if (!silent) toast.error(apiError(err));
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [params, page]);
 
@@ -86,6 +87,7 @@ export default function SalesRegister() {
     const t = setTimeout(fetchRows, search ? 350 : 0);
     return () => clearTimeout(t);
   }, [fetchRows, search]);
+  useAutoRefresh(fetchRows);
 
   const chooseMonth = (v) => {
     setMonth(v);
