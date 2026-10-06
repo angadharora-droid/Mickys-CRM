@@ -79,6 +79,14 @@ const SYNCED_GROUPS = /finished/i;
 // services/tallyCompany.service.js (any CENTRE POINT company, or the one set
 // in Settings).
 
+/**
+ * How long a customer / vendor ledger may be missing from Tally's pushes
+ * before the CRM drops it (see mirrorLedgers in syncStock). The timer pushes
+ * every 10 minutes, so a real ledger is seen many times over in this window;
+ * one deleted or renamed in Tally leaves the lists two hours later.
+ */
+const LEDGER_GRACE_MS = 2 * 60 * 60 * 1000;
+
 /** What made Tally push (?src= on the TDL's URLs, v8+) — see StockSyncLog.trigger. */
 const PUSH_TRIGGERS = ['timer', 'load', 'button'];
 
@@ -210,7 +218,8 @@ async function syncStockNow(req, res) {
   await StockSnapshot.deleteMany({ date: dateKey, lastSyncAt: { $lt: syncedAt } });
 
   // Vendors (Sundry Creditors) and customers (Sundry Debtors) ride along in
-  // the same XML (updated TDL only) — mirrored the same way as stock, but a
+  // the same XML (updated TDL only) — mirrored like stock, except that a
+  // ledger is dropped only after LEDGER_GRACE_MS without being seen, and a
   // list absent from the export (older TDL still loaded in Tally) leaves its
   // collection untouched.
   const mirrorLedgers = async (Model, ledgers) => {
@@ -225,8 +234,13 @@ async function syncStockNow(req, res) {
       })),
       { ordered: false }
     );
+    // A ledger goes only once it has been missing from Tally's pushes for
+    // LEDGER_GRACE_MS, not on the first push that leaves it out. A push that
+    // lacks it — a copy of the company opened from another folder, a session
+    // mid-change — would otherwise unlink a customer until the next push, and
+    // a customer's link to its ledger is what their orders go to Tally on.
     await Model.deleteMany({
-      $or: [{ syncedAt: { $lt: syncedAt } }, { syncedAt: null }],
+      $or: [{ syncedAt: { $lt: new Date(syncedAt.getTime() - LEDGER_GRACE_MS) } }, { syncedAt: null }],
     });
   };
   const vendors = parseTallyVendors(xml);
