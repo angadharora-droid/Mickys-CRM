@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import api, { apiError } from '@/lib/api';
+import useAutoRefresh from '@/lib/useAutoRefresh';
 import { PAYMENT_MODE_LABELS, daysSince } from '@/lib/constants';
 import { cn, formatCurrency, formatDate, formatDateTime } from '@/lib/utils';
 import PageHeader from '@/components/shared/PageHeader';
@@ -41,8 +42,8 @@ export default function Invoicing() {
   const [loading, setLoading] = useState(true);
   const [detail, setDetail] = useState(null);
 
-  const fetchQueue = useCallback(async () => {
-    setLoading(true);
+  const fetchQueue = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
     try {
       const params = { stage, page, limit: 20 };
       if (search) params.search = search;
@@ -50,9 +51,9 @@ export default function Invoicing() {
       setOrders(data.data);
       setMeta(data.meta);
     } catch (err) {
-      toast.error(apiError(err));
+      if (!silent) toast.error(apiError(err));
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [stage, page, search]);
 
@@ -60,6 +61,7 @@ export default function Invoicing() {
     const t = setTimeout(fetchQueue, search ? 350 : 0);
     return () => clearTimeout(t);
   }, [fetchQueue, search]);
+  useAutoRefresh(fetchQueue);
 
   // A notification ("SO-x confirmed — invoice it") lands here with ?order=.
   useEffect(() => {

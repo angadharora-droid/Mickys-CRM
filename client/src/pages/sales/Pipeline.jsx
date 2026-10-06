@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import api, { apiError } from '@/lib/api';
+import useAutoRefresh from '@/lib/useAutoRefresh';
 import { useAuth } from '@/context/AuthContext';
 import {
   ROLES, MODULES, PIPELINE_STAGES, ORDER_STATUS_LABELS, hasModule, canUseSalesPages, orderStageSince, daysSince,
@@ -92,20 +93,20 @@ export default function Pipeline() {
     return params;
   }, [from, to, isAdmin, execId, mine]);
 
-  const fetchFunnel = useCallback(async () => {
-    setFunnelLoading(true);
+  const fetchFunnel = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setFunnelLoading(true);
     try {
       const { data } = await api.get('/sales-orders/funnel', { params: scopeParams() });
       setFunnel(data.data);
     } catch (err) {
-      toast.error(apiError(err));
+      if (!silent) toast.error(apiError(err));
     } finally {
-      setFunnelLoading(false);
+      if (!silent) setFunnelLoading(false);
     }
   }, [scopeParams]);
 
-  const fetchList = useCallback(async () => {
-    setListLoading(true);
+  const fetchList = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setListLoading(true);
     try {
       const { data } = await api.get('/sales-orders', {
         params: { ...scopeParams(), status: stage, page, limit: 20, sort: 'oldest' },
@@ -113,14 +114,18 @@ export default function Pipeline() {
       setOrders(data.data);
       setMeta(data.meta);
     } catch (err) {
-      toast.error(apiError(err));
+      if (!silent) toast.error(apiError(err));
     } finally {
-      setListLoading(false);
+      if (!silent) setListLoading(false);
     }
   }, [scopeParams, stage, page]);
 
   useEffect(() => { fetchFunnel(); }, [fetchFunnel]);
   useEffect(() => { fetchList(); }, [fetchList]);
+  useAutoRefresh((opts) => {
+    fetchFunnel(opts);
+    fetchList(opts);
+  });
 
   const choosePreset = (p) => {
     setPreset(p);

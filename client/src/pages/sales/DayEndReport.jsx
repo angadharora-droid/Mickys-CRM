@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import api, { apiError } from '@/lib/api';
+import useAutoRefresh from '@/lib/useAutoRefresh';
 import { cn, formatCurrency, formatDate, formatDateTime, formatQty, todayInput } from '@/lib/utils';
 import PageHeader from '@/components/shared/PageHeader';
 import TableSkeleton from '@/components/shared/TableSkeleton';
@@ -993,21 +994,24 @@ export default function DayEndReport() {
   const [planOpen, setPlanOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
     try {
       const { data } = await api.get('/day-end', { params: { date } });
       setReport(data.data);
     } catch (err) {
-      toast.error(apiError(err));
+      if (!silent) toast.error(apiError(err));
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [date]);
 
   useEffect(() => {
     load();
   }, [load]);
+  // Held while the plan or settings dialog is open: both are filled from the
+  // loaded report, and fresh data would reset what is being typed.
+  useAutoRefresh(load, { paused: planOpen || settingsOpen });
 
   const onFollowUpSaved = (ledger, followUp) =>
     setReport((r) => ({

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import api, { apiError } from '@/lib/api';
+import useAutoRefresh from '@/lib/useAutoRefresh';
 import { useAuth } from '@/context/AuthContext';
 import { ROLES, MODULES, hasModule } from '@/lib/constants';
 import { formatCurrency, formatDateTime } from '@/lib/utils';
@@ -25,15 +26,15 @@ export default function SalesOverview() {
   const [loading, setLoading] = useState(true);
   const [funnel, setFunnel] = useState(null);
 
-  const fetchSummary = useCallback(async () => {
-    setLoading(true);
+  const fetchSummary = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
     try {
       const { data } = await api.get('/stock/summary');
       setSummary(data.data);
     } catch (err) {
-      toast.error(apiError(err));
+      if (!silent) toast.error(apiError(err));
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
@@ -42,6 +43,10 @@ export default function SalesOverview() {
     // The funnel is its own card; a failure there must not blank the stock view.
     api.get('/sales-orders/funnel').then((r) => setFunnel(r.data.data)).catch(() => {});
   }, [fetchSummary]);
+  useAutoRefresh((opts) => {
+    fetchSummary(opts);
+    api.get('/sales-orders/funnel').then((r) => setFunnel(r.data.data)).catch(() => {});
+  });
 
   const totals = summary?.totals;
   const lastSync = summary?.lastSync;

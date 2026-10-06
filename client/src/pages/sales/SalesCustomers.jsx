@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import api, { apiError } from '@/lib/api';
+import useAutoRefresh from '@/lib/useAutoRefresh';
 import { useAuth } from '@/context/AuthContext';
 import { ROLES, DEFAULT_KIT_TERMS } from '@/lib/constants';
 import { formatDateTime } from '@/lib/utils';
@@ -428,16 +429,23 @@ export default function SalesCustomers() {
   const [search, setSearch] = useState('');
   const [linksOpen, setLinksOpen] = useState(false);
 
-  const fetchCustomers = useCallback(() => {
+  const fetchCustomers = useCallback(({ silent = false } = {}) => {
     api.get('/sales-customers', { params: search ? { search } : {} })
       .then(({ data }) => setCustomers(data.data))
-      .catch((err) => { toast.error(apiError(err)); setCustomers([]); });
+      .catch((err) => {
+        // A failed background refresh keeps the list on screen.
+        if (silent) return;
+        toast.error(apiError(err));
+        setCustomers([]);
+      });
   }, [search]);
 
   useEffect(() => {
     const t = setTimeout(fetchCustomers, search ? 350 : 0);
     return () => clearTimeout(t);
   }, [fetchCustomers, search]);
+  // Tally links can go stale (ledger renamed / removed in Tally) between visits.
+  useAutoRefresh(fetchCustomers);
 
   const remove = async (c) => {
     if (!window.confirm(`Remove ${c.companyName}? Their frozen rate list will be deleted.`)) return;
