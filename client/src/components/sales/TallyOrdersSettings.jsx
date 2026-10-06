@@ -27,7 +27,13 @@ const NAME_FIELDS = [
   { key: 'igstLedger', label: 'IGST ledger', hint: '{rate} becomes the GST rate, e.g. 5 (inter-state orders).' },
 ];
 
-const EDITABLE = ['enabled', 'mode', 'testLedger', ...NAME_FIELDS.map((f) => f.key)];
+const EDITABLE = ['enabled', 'mode', 'testLedger', 'company', ...NAME_FIELDS.map((f) => f.key)];
+
+// Radix Select cannot hold '' as a value.
+const ANY_COMPANY = '__any__';
+
+/** Two companies pushing within this window means they are replacing each other's data. */
+const RIVAL_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 const TRIGGER_LABELS = { timer: '10-minute timer', load: 'company opened', button: 'Ctrl+F10' };
 
@@ -38,8 +44,9 @@ const minutesSince = (at) => (at ? (Date.now() - new Date(at).getTime()) / 60000
 /** One call from the Tally side, in words. */
 function callText(c) {
   if (c.kind === 'tick') {
-    return `Timer tick${c.note ? ` — ${c.note}` : ' — pushing'}${c.tdlVersion ? `, TDL v${c.tdlVersion}` : ''}`;
+    return `Timer tick${c.note ? ` — ${c.note}` : ` — pushing${c.company ? ` ${c.company}` : ''}`}${c.tdlVersion ? `, TDL v${c.tdlVersion}` : ''}`;
   }
+  if (c.kind === 'refused') return c.note || `Refused a push from ${c.company || 'an unnamed company'}`;
   if (c.kind === 'feed') {
     const what = c.handedOut?.length ? c.handedOut.join(', ') : 'nothing due';
     return `Collected orders${c.note ? ` (${c.note})` : ''}: ${what}${!c.claim && !c.note ? ' — look only' : ''}`;
@@ -56,7 +63,7 @@ function callText(c) {
  * screen shows this, so it is the first place to look when an order does not
  * arrive.
  */
-function TallyCalls({ calls, lastStockPush, timer }) {
+function TallyCalls({ calls, lastStockPush, timer, pushes }) {
   const latestReport = (calls || []).find((c) => c.kind === 'seen' && c.sample);
   // Invoices (and stock) reach the CRM on the timer's pushes; without them
   // only re-opening the company in Tally brings them in.
@@ -78,6 +85,20 @@ function TallyCalls({ calls, lastStockPush, timer }) {
         {timer?.lastTickAt && timer.lastTickCompany ? ` (${timer.lastTickCompany} open)` : ''} · last timer push{' '}
         {timer?.lastPushAt ? formatDateTime(timer.lastPushAt) : 'never'}
       </p>
+      {pushes?.length > 0 && (
+        <>
+          <p className="mt-2 text-muted-foreground">Recent stock pushes (each one replaces the CRM&rsquo;s stock and customer list):</p>
+          <ul className="mt-1 space-y-0.5">
+            {pushes.map((p) => (
+              <li key={`${p.at}`}>
+                <span className="font-medium">{formatDateTime(p.at)}</span>
+                {p.trigger ? ` (${TRIGGER_LABELS[p.trigger] || p.trigger})` : ''} — {p.company || 'company not named'} · {p.customers} customer
+                ledgers · {p.items} items · {p.invoices} invoices
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
       {timerQuiet && (
         <p className="mt-2 flex items-start gap-1.5 rounded bg-amber-50 p-2 text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
@@ -157,7 +178,8 @@ export default function TallyOrdersSettings({ initial }) {
       const { data } = await api.put('/settings', { tallyOrders: body });
       setCfg(data.data?.tallyOrders || cfg);
       toast.success(
-        body.enabled ? `Orders go to Tally — ${body.mode === 'live' ? 'LIVE' : 'test mode'}` : 'Sending orders to Tally is switched off'
+        (body.enabled ? `Orders go to Tally — ${body.mode === 'live' ? 'LIVE' : 'test mode'}` : 'Sending orders to Tally is switched off') +
+          ` · Tally data taken from ${body.company || 'any CENTRE POINT company'}`
       );
       loadOverview();
     } catch (err) {
@@ -209,6 +231,13 @@ export default function TallyOrdersSettings({ initial }) {
   const ov = overview;
   const saved = ov?.config || {};
   const neverCalled = saved.enabled && !saved.lastPullAt && !saved.lastSeenAt;
+  // Companies Tally sent from lately (and the one already chosen), for the picker.
+  const companyOptions = [
+    ...new Set([...(ov?.companies || []).map((c) => c.name).filter((n) => /^CENTRE POINT/i.test(n)), saved.company, cfg.company].filter(Boolean)),
+  ];
+  const rivals = (ov?.companies || []).filter(
+    (c) => /^CENTRE POINT/i.test(c.name) && c.lastAt && Date.now() - new Date(c.lastAt).getTime() < RIVAL_WINDOW_MS
+  );
 
   return (
     <Card className="mt-4">
@@ -275,6 +304,34 @@ export default function TallyOrdersSettings({ initial }) {
             ))}
           </div>
         </details>
+
+        <div className="space-y-2">
+          <Label>Tally company</Label>
+          <Select value={cfg.company || ANY_COMPANY} onValueChange={(v) => set('company', v === ANY_COMPANY ? '' : v)}>
+            <SelectTrigger className="sm:max-w-md"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ANY_COMPANY}>Any company whose name starts with CENTRE POINT</SelectItem>
+              {companyOptions.map((name) => (
+                <SelectItem key={name} value={name}>Only {name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            Stock, invoices, customer ledgers, day-end figures and orders are taken only from this company. Every push
+            replaces the CRM&rsquo;s lists, so a second company pushing makes its missing ledgers (and its stock) swap in and out.
+          </p>
+          {rivals.length > 1 && (
+            <p className="flex items-start gap-1.5 rounded bg-amber-50 p-2 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>
+                {rivals.length} Tally companies sent data in the last 24 hours: {rivals.map((r) => `${r.name} (last ${formatDateTime(r.lastAt)})`).join(', ')}.
+                {saved.company
+                  ? ` Only ${saved.company} is taken; the others are refused.`
+                  : ' Each one replaces the other’s stock and customer list — choose the live company above and save.'}
+              </span>
+            </p>
+          )}
+        </div>
 
         <Button onClick={save} disabled={saving}>
           {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
@@ -363,7 +420,7 @@ export default function TallyOrdersSettings({ initial }) {
 
         {/* Shown with orders switched off too: the timer is also what brings
             invoices and stock in. */}
-        {ov && <TallyCalls calls={ov.calls} lastStockPush={ov.lastStockPush} timer={ov.timer} />}
+        {ov && <TallyCalls calls={ov.calls} lastStockPush={ov.lastStockPush} timer={ov.timer} pushes={ov.pushes} />}
       </CardContent>
     </Card>
   );

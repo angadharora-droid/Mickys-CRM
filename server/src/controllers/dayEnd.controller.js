@@ -13,7 +13,6 @@ const ReceivableFollowUp = require('../models/ReceivableFollowUp');
 const {
   DAYEND_TDL_VERSION,
   HISTORY_DAYS,
-  DAYEND_COMPANY,
   parseDayEndHeader,
   parseReceipts,
   parseDebtors,
@@ -24,6 +23,7 @@ const {
 const { buildDayEndReport } = require('../services/dayEndReport.service');
 const { istDateKey } = require('../utils/istDate');
 const { runTallyPush } = require('../utils/tallyPushQueue');
+const { checkCompany, recordRefusal } = require('../services/tallyCompany.service');
 
 const DAY_MS = 86400000;
 const DAY_KEY = /^\d{4}-\d{2}-\d{2}$/;
@@ -117,10 +117,11 @@ async function syncDayEndNow(req, res) {
   if (!head.tdlVersion && !/<(RECEIPT|DEBTOR|PRODUCTION|ITEMBATCHES|STOCKDAYS)>/.test(xml)) {
     throw ApiError.badRequest('This is not the "Mickys Day End Export" — nothing the day-end report reads was found in it');
   }
-  if (head.company && !DAYEND_COMPANY.test(head.company)) {
-    throw ApiError.badRequest(
-      `This export is from "${head.company}" — the CRM only takes CENTRE POINT FOODS. Switch to the Mickys company in Tally and send again.`
-    );
+  // The same one company as the stock push (services/tallyCompany.service.js).
+  const allowed = await checkCompany(head.company);
+  if (!allowed.ok) {
+    if (req.tallyPush) await recordRefusal(req, { what: 'Day-end push', company: head.company, reason: allowed.reason });
+    throw ApiError.badRequest(`Not taken: ${allowed.reason}`);
   }
 
   const syncedAt = new Date();

@@ -594,7 +594,11 @@ async function resetSend(orderId) {
  */
 async function overview() {
   const cfg = await getConfig();
-  const [{ vouchers, held }, sentWaiting, inTally, testLedgerInTally, calls, lastStockSync, lastTick, lastTimerPush] = await Promise.all([
+  const since = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
+  const [
+    { vouchers, held }, sentWaiting, inTally, testLedgerInTally, calls, lastStockSync, lastTick, lastTimerPush,
+    recentPushes, pushCompanies, callCompanies,
+  ] = await Promise.all([
     takeOrders({ claim: false, limit: 200 }),
     cfg.enabled
       ? SalesOrder.find({ 'tally.mode': cfg.mode, 'tally.sentAt': { $ne: null }, 'tally.seenAt': null })
@@ -609,7 +613,31 @@ async function overview() {
     StockSyncLog.findOne({ source: 'push' }).sort({ createdAt: -1 }).select('syncedAt createdAt tdlVersion trigger company customerCount').lean(),
     TallyOrderCall.findOne({ kind: 'tick' }).sort({ at: -1 }).select('at company').lean(),
     StockSyncLog.findOne({ source: 'push', trigger: 'timer' }).sort({ createdAt: -1 }).select('syncedAt createdAt').lean(),
+    StockSyncLog.find({ source: 'push' })
+      .sort({ createdAt: -1 })
+      .limit(15)
+      .select('syncedAt createdAt trigger company customerCount itemCount invoiceCount tdlVersion')
+      .lean(),
+    StockSyncLog.aggregate([
+      { $match: { source: 'push', createdAt: { $gte: since }, company: { $nin: ['', null] } } },
+      { $group: { _id: '$company', pushes: { $sum: 1 }, lastAt: { $max: '$createdAt' } } },
+    ]),
+    TallyOrderCall.aggregate([
+      { $match: { at: { $gte: since }, company: { $nin: ['', null] } } },
+      { $group: { _id: '$company', calls: { $sum: 1 }, lastAt: { $max: '$at' } } },
+    ]),
   ]);
+  // Every company Tally pushed or called in from lately, to choose the one
+  // the CRM takes (services/tallyCompany.service.js) — two CENTRE POINT
+  // companies pushing in turn replace each other's stock and ledgers.
+  const companyRows = new Map();
+  for (const r of [...pushCompanies, ...callCompanies]) {
+    const row = companyRows.get(r._id) || { name: r._id, pushes: 0, calls: 0, lastAt: null };
+    row.pushes += r.pushes || 0;
+    row.calls += r.calls || 0;
+    if (!row.lastAt || r.lastAt > row.lastAt) row.lastAt = r.lastAt;
+    companyRows.set(r._id, row);
+  }
   return {
     config: cfg,
     tdlLatest: TDL_VERSION,
@@ -639,6 +667,15 @@ async function overview() {
       lastTickCompany: lastTick?.company || '',
       lastPushAt: lastTimerPush ? lastTimerPush.syncedAt || lastTimerPush.createdAt : null,
     },
+    pushes: recentPushes.map((p) => ({
+      at: p.syncedAt || p.createdAt,
+      trigger: p.trigger || '',
+      company: p.company || '',
+      customers: p.customerCount || 0,
+      items: p.itemCount || 0,
+      invoices: p.invoiceCount || 0,
+    })),
+    companies: [...companyRows.values()].sort((a, b) => new Date(b.lastAt) - new Date(a.lastAt)),
   };
 }
 
