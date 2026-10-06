@@ -13,6 +13,7 @@ import {
 } from '@/lib/gst';
 import OrderStatusBadge from '@/components/sales/OrderStatusBadge';
 import OrderDetailDialog from '@/components/sales/OrderDetailDialog';
+import { TallyStatusLine } from '@/components/sales/OrderTallyStatus';
 import { Label } from '@/components/ui/label';
 import PageHeader from '@/components/shared/PageHeader';
 import Pagination from '@/components/shared/Pagination';
@@ -1751,6 +1752,7 @@ export default function SalesOrders() {
                           {daysSince(orderStageSince(o))}d at this stage
                         </p>
                       )}
+                      <TallyStatusLine status={o.tallyStatus} />
                     </TableCell>
                     <TableCell className="hidden lg:table-cell text-sm text-muted-foreground">
                       {o.createdBy?.name || '—'}

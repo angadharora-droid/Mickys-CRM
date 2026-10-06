@@ -292,7 +292,7 @@ const listSalesOrders = asyncHandler(async (req, res) => {
   }
   const sort = req.query.sort === 'oldest' ? { createdAt: 1 } : { createdAt: -1 };
 
-  const [orders, total] = await Promise.all([
+  const [orders, total, tallyCfg] = await Promise.all([
     SalesOrder.find(filter)
       .sort(sort)
       .skip(skip)
@@ -301,10 +301,19 @@ const listSalesOrders = asyncHandler(async (req, res) => {
       // The customer's email and mobile ride along so the row's "email to
       // customer" and "send on WhatsApp" actions can prefill without fetching
       // the order first.
-      .populate('customer', 'companyName email mobile'),
+      .populate('customer', 'companyName email mobile')
+      .lean(),
     SalesOrder.countDocuments(filter),
+    getTallyOrderConfig(),
   ]);
-  res.json({ success: true, data: orders, meta: buildMeta(total, page, limit) });
+  // Each row says whether the order has reached Tally. Read off what the
+  // add-on last recorded (a held order's reason included) — the detail view
+  // re-checks a due order live, the list does not rebuild every voucher.
+  const data = orders.map((o) => ({
+    ...o,
+    tallyStatus: { ...tallyStatusOf(o, tallyCfg), enabled: Boolean(tallyCfg.enabled), currentMode: tallyCfg.mode },
+  }));
+  res.json({ success: true, data, meta: buildMeta(total, page, limit) });
 });
 
 /**
