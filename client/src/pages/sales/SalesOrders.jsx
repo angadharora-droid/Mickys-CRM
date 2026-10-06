@@ -35,7 +35,7 @@ import {
 import {
   Search, ReceiptText, Plus, Download, Pencil, Trash2, Loader2, X, Eye, ExternalLink, Snowflake,
   AlertTriangle, Mail, MoreVertical, Lock, History, PackageCheck, Ban, MessageCircle, CheckCircle2, Undo2, Star,
-  Archive,
+  Archive, Unlink,
 } from 'lucide-react';
 
 const ALL = '__all__';
@@ -129,11 +129,23 @@ const rankByPrefix = (list, query, getName, getCode = () => '') => {
   return [...list].sort((a, b) => hit(b) - hit(a));
 };
 
-/** The rate the order line would be prefilled with. */
-const prefillRate = (s) => s.standardPrice || s.lastSalePrice || s.closingRate || 0;
+/**
+ * Why an appointed customer cannot take an order right now, or '' if they
+ * can. The server refuses the same three cases on save; the picker stops
+ * them up front so an exec never types a whole voucher it will not accept.
+ * A link is only good while the ledger is still in Tally's Sundry Debtors.
+ */
+const bookingBlock = (c, validity) => {
+  if (!c.tallyLedger) return 'unlinked';
+  if (!c.tallyLedgerInTally) return 'ledger-missing';
+  if (validity.state === 'expired') return 'expired';
+  return '';
+};
 
 /**
- * Create/edit dialog — customer from Tally, items from live stock.
+ * Create/edit dialog — an appointed, Tally-linked customer and their frozen
+ * price list. Orders are booked only for those customers (the server enforces
+ * it), so the customer is picked first and the item search opens after.
  * Keyboard flow mimics Tally voucher entry: Enter advances customer → item →
  * qty → rate → next item, ↑/↓ move in suggestion lists, Esc backs out of a
  * list (not the screen), Ctrl+A accepts/saves.
@@ -144,18 +156,15 @@ const prefillRate = (s) => s.standardPrice || s.lastSalePrice || s.closingRate |
  * from its own reservation, so re-saving it unchanged never reads as short.
  */
 function OrderDialog({ open, onClose, order, onSaved }) {
-  const [customers, setCustomers] = useState([]);
   const [appointed, setAppointed] = useState([]); // rate-frozen customers
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const bookedFor = useRef(null); // the frozen customer this order was booked for
-  const [stock, setStock] = useState([]);
   const [customerName, setCustomerName] = useState('');
   const [customerFocus, setCustomerFocus] = useState(false);
   const [customerHl, setCustomerHl] = useState(0);
   const [itemSearch, setItemSearch] = useState('');
   const [itemFocus, setItemFocus] = useState(false);
   const [itemHl, setItemHl] = useState(0);
-  const [defaultStock, setDefaultStock] = useState([]); // in-stock list shown before typing
   const [avail, setAvail] = useState({}); // nameKey → availability, excluding this order
   const availDone = useRef(new Set()); // nameKeys the batch lookup has answered
   const itemNav = useRef(false); // true once ↑/↓ used on the current list
@@ -173,7 +182,8 @@ function OrderDialog({ open, onClose, order, onSaved }) {
   const notesRef = useRef(null);
   const fieldRefs = useRef({}); // "qty-0", "rate-0", …
 
-  // Customers load once per dialog open; items are searched server-side.
+  // Customers load once per dialog open; items come from the picked
+  // customer's frozen list.
   useEffect(() => {
     if (!open) return;
     setCustomerName(order?.customerName || '');
@@ -197,12 +207,10 @@ function OrderDialog({ open, onClose, order, onSaved }) {
       })
       .catch(() => {});
     setItemSearch('');
-    setStock([]);
     setSelectedCustomer(null);
     bookedFor.current = null;
     setAvail({});
     availDone.current = new Set();
-    api.get('/stock/customers').then((r) => setCustomers(r.data.data)).catch(() => {});
     api.get('/sales-customers')
       .then((r) => {
         setAppointed(r.data.data);
@@ -214,33 +222,13 @@ function OrderDialog({ open, onClose, order, onSaved }) {
         }
       })
       .catch(() => {});
-    // Tally shows the item list as soon as you land on the field — preload
-    // the top in-stock items for the before-you-type list.
-    api.get('/stock', { params: { inStock: 'true', limit: 20 } })
-      .then((r) => setDefaultStock(r.data.data))
-      .catch(() => {});
     // Land on the customer field, like opening a fresh voucher in Tally.
     setTimeout(() => customerRef.current?.focus(), 80);
   }, [open, order]);
 
-  // Debounced stock search against the Tally mirror (list is capped at 100
-  // rows per request, so we search instead of loading everything upfront).
-  // A frozen customer's items are matched locally instead.
-  useEffect(() => {
-    if (!open || selectedCustomer) return;
-    const q = itemSearch.trim();
-    if (!q) { setStock([]); return; }
-    const t = setTimeout(() => {
-      api.get('/stock', { params: { search: q, limit: 20 } })
-        .then((r) => setStock(r.data.data))
-        .catch(() => {});
-    }, 300);
-    return () => clearTimeout(t);
-  }, [open, itemSearch, selectedCustomer]);
-
   // Availability for every name the dialog can show a figure for: the lines on
-  // the voucher, plus a frozen customer's whole price list (their suggestions
-  // come from that list, not from a stock search, so they carry no stock data).
+  // the voucher, plus the customer's whole frozen price list (their
+  // suggestions come from that list, so they carry no stock data of their own).
   const wantedNames = useMemo(() => {
     const byKey = new Map();
     const want = (name) => {
@@ -280,57 +268,49 @@ function OrderDialog({ open, onClose, order, onSaved }) {
     return () => clearTimeout(t);
   }, [open, order, wantedNames, avail]);
 
-  /**
-   * Netted availability for a name. A stock row already carries its own
-   * reservation figures, so it stands in until the batch lookup — which is the
-   * only one that excludes this order — answers for that name.
-   */
-  const availOf = (name, fallback) => avail[nameKeyOf(name)] || fallback || null;
+  /** Netted availability for a name, excluding this order. */
+  const availOf = (name) => avail[nameKeyOf(name)] || null;
 
-  // Appointed (rate-frozen) customers list first, then the Tally ledgers.
+  // Appointed (rate-frozen) customers only — the ones who can take an order
+  // first; the unlinked and expired stay listed (greyed) so the exec sees why.
   const customerMatches = useMemo(() => {
     const q = customerName.trim();
-    const apps = (q ? appointed.filter((c) => matchesAllWords(c.companyName, q)) : appointed)
-      .map((c) => ({
-        kind: 'appointed',
-        key: `a-${c._id}`,
-        name: c.companyName,
-        sub: `${c.items?.length || 0} frozen rates`,
-        validity: rateValidity(c),
-        data: c,
-      }));
-    const linked = new Set(appointed.map((c) => c.tallyLedger).filter(Boolean));
-    const tally = (q ? customers.filter((c) => matchesAllWords(`${c.name} ${c.group || ''}`, q)) : customers)
-      .filter((c) => !linked.has(c.name))
-      .map((c) => ({ kind: 'tally', key: `t-${c._id}`, name: c.name, sub: c.group || '', data: c }));
-    return [
-      ...rankByPrefix(apps, q, (e) => e.name),
-      ...rankByPrefix(tally, q, (e) => e.name),
-    ].slice(0, 10);
-  }, [appointed, customers, customerName]);
+    const apps = (q ? appointed.filter((c) => matchesAllWords(`${c.companyName} ${c.tallyLedger || ''}`, q)) : appointed)
+      .map((c) => {
+        const validity = rateValidity(c);
+        return {
+          key: c._id,
+          name: c.companyName,
+          sub: c.tallyLedger && c.tallyLedger.toUpperCase() !== c.companyName ? c.tallyLedger : '',
+          validity,
+          block: bookingBlock(c, validity),
+          data: c,
+        };
+      });
+    return rankByPrefix(apps, q, (e) => e.name)
+      .sort((a, b) => Number(Boolean(a.block)) - Number(Boolean(b.block)))
+      .slice(0, 10);
+  }, [appointed, customerName]);
 
-  // Item source: a frozen customer's own list, matched locally — otherwise
-  // typed query → server results; empty query + focused field → the
-  // preloaded in-stock list (Tally shows the item list before you type).
+  // Items come from the picked customer's frozen list, matched locally; a
+  // focused, empty field lists the whole price list (Tally shows the item list
+  // before you type). No customer, no items.
   const itemMatches = useMemo(() => {
+    if (!selectedCustomer) return [];
     const q = itemSearch.trim();
-    if (selectedCustomer) {
-      const source = q
-        ? selectedCustomer.items.filter((f) => matchesAllWords(`${f.name} ${f.packSize || ''}`, q))
-        : itemFocus
-          ? selectedCustomer.items
-          : [];
-      return rankByPrefix(source, q, (f) => f.name)
-        .filter((f) => !lines.some((l) => l.name === f.name))
-        .slice(0, 20);
-    }
-    const base = q ? rankByPrefix(stock, q, (s) => s.name, (s) => s.code) : itemFocus ? defaultStock : [];
-    return base.filter((s) => !lines.some((l) => l.name === s.name)).slice(0, 20);
-  }, [selectedCustomer, stock, defaultStock, itemFocus, itemSearch, lines]);
+    const source = q
+      ? selectedCustomer.items.filter((f) => matchesAllWords(`${f.name} ${f.packSize || ''}`, q))
+      : itemFocus
+        ? selectedCustomer.items
+        : [];
+    return rankByPrefix(source, q, (f) => f.name)
+      .filter((f) => !lines.some((l) => l.name === f.name))
+      .slice(0, 20);
+  }, [selectedCustomer, itemFocus, itemSearch, lines]);
 
   // Keep list highlights in range as the matches change under them.
-  useEffect(() => { setCustomerHl(0); }, [customerName, customers]);
-  useEffect(() => { setItemHl(0); itemNav.current = false; }, [itemSearch, stock]);
+  useEffect(() => { setCustomerHl(0); }, [customerName, appointed]);
+  useEffect(() => { setItemHl(0); itemNav.current = false; }, [itemSearch, selectedCustomer]);
 
   const focusField = (key) => setTimeout(() => fieldRefs.current[key]?.focus(), 0);
 
@@ -345,64 +325,57 @@ function OrderDialog({ open, onClose, order, onSaved }) {
   const frozenGst = (f) => String(f.gst ?? gstDefaults.defaultGst ?? 0);
 
   const pickCustomer = (entry) => {
-    // Lapsed rates are refused by the server on save, so the voucher is stopped
+    // Every block is refused by the server on save, so the voucher is stopped
     // here rather than after a whole order has been typed into it.
-    if (entry.kind === 'appointed' && entry.validity.state === 'expired') {
+    if (entry.block === 'unlinked' || entry.block === 'ledger-missing') {
+      toast.error(
+        entry.block === 'unlinked'
+          ? `${entry.name} is not linked to a Tally ledger`
+          : `${entry.name}'s Tally ledger "${entry.data.tallyLedger}" is no longer in Tally`,
+        {
+          description: 'Sales orders are booked only for customers linked to Tally. Link it on the Customers page (Link to Tally), then book the order.',
+          duration: 8000,
+        }
+      );
+      return;
+    }
+    if (entry.block === 'expired') {
       toast.error(`${entry.name}'s frozen rates expired on ${istDateLabel(entry.validity.until)}`, {
         description: 'Edit the customer on the Customers page to re-freeze the rates with a new validity date before booking for them.',
         duration: 8000,
       });
       return;
     }
+    const c = entry.data;
     setCustomerName(entry.name);
     setCustomerFocus(false);
-    if (entry.kind === 'appointed') {
-      const c = entry.data;
-      setSelectedCustomer(c);
-      // The freeze covers the GST basis too; the supply type follows the
-      // customer's GSTIN (the exec can still change it below the lines).
-      setGstBasis(c.gstBasis || 'exclusive');
-      setSupplyType(deriveSupplyType(c.gstin, gstDefaults.companyGstin));
-      // Enforce the freeze on any lines already added: keep only items on the
-      // frozen list, at the frozen rate and GST.
-      const frozen = new Map(c.items.map((i) => [i.name, i]));
-      setLines((prev) => {
-        const kept = prev.filter((l) => frozen.has(String(l.name).toUpperCase()));
-        if (kept.length !== prev.length) {
-          toast.info(`Removed ${prev.length - kept.length} item(s) outside ${c.companyName}'s frozen list`);
-        }
-        return kept.map((l) => {
-          const f = frozen.get(String(l.name).toUpperCase());
-          return { ...l, name: f.name, rate: String(f.rate), packSize: f.packSize, gst: frozenGst(f) };
-        });
+    setSelectedCustomer(c);
+    // The freeze covers the GST basis too; the supply type follows the
+    // customer's GSTIN (the exec can still change it below the lines).
+    setGstBasis(c.gstBasis || 'exclusive');
+    setSupplyType(deriveSupplyType(c.gstin, gstDefaults.companyGstin));
+    // Enforce the freeze on any lines already added: keep only items on the
+    // frozen list, at the frozen rate and GST.
+    const frozen = new Map(c.items.map((i) => [i.name, i]));
+    setLines((prev) => {
+      const kept = prev.filter((l) => frozen.has(String(l.name).toUpperCase()));
+      if (kept.length !== prev.length) {
+        toast.info(`Removed ${prev.length - kept.length} item(s) outside ${c.companyName}'s frozen list`);
+      }
+      return kept.map((l) => {
+        const f = frozen.get(String(l.name).toUpperCase());
+        return { ...l, name: f.name, tallyItem: f.tallyItem || '', rate: String(f.rate), packSize: f.packSize, gst: frozenGst(f) };
       });
-    } else {
-      setSelectedCustomer(null);
-    }
-    itemRef.current?.focus();
+    });
+    // The item field is disabled until a customer is picked — focus it once
+    // React has enabled it.
+    setTimeout(() => itemRef.current?.focus(), 0);
   };
 
   const addLine = (s) => {
     const idx = lines.length;
-    const line = selectedCustomer
-      ? // Frozen list line: rate and GST are dictated by the customer's price list.
-        { name: s.name, tallyItem: s.tallyItem || '', baseUnits: '', qty: '', rate: String(s.rate), packSize: s.packSize, gst: frozenGst(s) }
-      : {
-          name: s.name,
-          baseUnits: s.baseUnits,
-          qty: '',
-          // Selling-rate prefill: maintained standard price, else the rate of
-          // the item's last sales voucher, else the stock valuation rate.
-          rate: String(prefillRate(s) || ''),
-          // GST starts at the default in Sales Order settings; editable per line.
-          gst: String(gstDefaults.defaultGst ?? 0),
-        };
-    // The stock row's figures stand in until the lookup answers, so the new
-    // line has something to show the moment it lands.
-    if (!selectedCustomer) {
-      const key = nameKeyOf(s.name);
-      setAvail((prev) => (prev[key] ? prev : { ...prev, [key]: { ...s, nameKey: key } }));
-    }
+    // Frozen list line: rate and GST are dictated by the customer's price list.
+    const line = { name: s.name, tallyItem: s.tallyItem || '', baseUnits: '', qty: '', rate: String(s.rate), packSize: s.packSize, gst: frozenGst(s) };
     setLines((prev) => [...prev, line]);
     setItemSearch('');
     itemNav.current = false;
@@ -421,6 +394,9 @@ function OrderDialog({ open, onClose, order, onSaved }) {
   // or a validity that ran out while the dialog was open) cannot be saved.
   const validity = rateValidity(selectedCustomer);
   const ratesExpired = validity.state === 'expired';
+  // Likewise an edit whose customer has lost their Tally link since booking.
+  const linkBlock = selectedCustomer ? bookingBlock(selectedCustomer, validity) : '';
+  const notLinked = linkBlock === 'unlinked' || linkBlock === 'ledger-missing';
 
   // Lines that ask for more than is left to sell. An item with no figure —
   // free-typed, or not in the Tally mirror — is never called short, because a
@@ -463,8 +439,15 @@ function OrderDialog({ open, onClose, order, onSaved }) {
     const items = lines
       .map((l) => ({ name: l.name, qty: Number(l.qty), rate: Number(l.rate) || 0, gst: l.gst === '' ? null : Number(l.gst) || 0 }))
       .filter((l) => l.qty > 0);
-    if (customerName.trim().length < 2) return toast.error('Pick or type a customer name');
+    if (!selectedCustomer) {
+      return toast.error('Pick an appointed customer from the list — orders are booked only for customers linked to Tally');
+    }
     if (!items.length) return toast.error('Add at least one item with a quantity');
+    if (notLinked) {
+      return toast.error(
+        `${selectedCustomer.companyName} is not linked to a Tally ledger — link it on the Customers page before saving this order`
+      );
+    }
     if (ratesExpired) {
       return toast.error(
         `${selectedCustomer.companyName}'s frozen rates expired on ${istDateLabel(validity.until)} — re-freeze them on the Customers page before booking this order`
@@ -474,8 +457,8 @@ function OrderDialog({ open, onClose, order, onSaved }) {
     setSaving(true);
     try {
       const body = {
-        customerName: customerName.trim(),
-        customerId: selectedCustomer?._id,
+        customerName: selectedCustomer.companyName,
+        customerId: selectedCustomer._id,
         items,
         gst: { basis: gstBasis, supplyType },
         notes: notes.trim(),
@@ -523,12 +506,12 @@ function OrderDialog({ open, onClose, order, onSaved }) {
         </DialogHeader>
 
         <div className="space-y-4">
-          {/* Customer picker: type-ahead over the Tally customer mirror */}
+          {/* Customer picker: type-ahead over the appointed, Tally-linked customers */}
           <div className="relative">
             <p className="text-sm font-medium mb-1.5">Customer</p>
             <Input
               ref={customerRef}
-              placeholder="Type to search customers…"
+              placeholder="Type to search appointed customers…"
               value={customerName}
               onChange={(e) => {
                 setCustomerName(e.target.value);
@@ -551,7 +534,7 @@ function OrderDialog({ open, onClose, order, onSaved }) {
                 if (e.key === 'Enter') {
                   e.preventDefault();
                   if (open) pickCustomer(customerMatches[customerHl]);
-                  else itemRef.current?.focus(); // free-typed name → next field
+                  else if (selectedCustomer) itemRef.current?.focus();
                 }
               }}
             />
@@ -566,34 +549,62 @@ function OrderDialog({ open, onClose, order, onSaved }) {
                     onMouseDown={() => pickCustomer(entry)}
                     onMouseEnter={() => setCustomerHl(i)}
                   >
-                    <span className={`truncate ${entry.validity?.state === 'expired' ? 'text-red-600 line-through' : ''}`}>
+                    <span
+                      className={`truncate ${
+                        entry.block === 'expired' ? 'text-red-600 line-through' : entry.block ? 'text-muted-foreground' : ''
+                      }`}
+                    >
                       {entry.name}
                       {entry.sub && <span className="text-xs text-muted-foreground ml-2">{entry.sub}</span>}
                     </span>
-                    {entry.kind === 'appointed' && (
-                      entry.validity.state === 'expired' ? (
-                        <Badge className="ml-2 shrink-0 border bg-red-100 text-red-700 border-red-200" variant="outline">
-                          <AlertTriangle className="h-3 w-3 mr-1" /> RATES EXPIRED
-                        </Badge>
-                      ) : (
-                        <Badge
-                          className={`ml-2 shrink-0 border ${entry.validity.state === 'soon' ? 'bg-amber-100 text-amber-800 border-amber-200' : 'bg-sky-100 text-sky-800 border-sky-200'}`}
-                          variant="outline"
-                        >
-                          <Snowflake className="h-3 w-3 mr-1" />
-                          {entry.validity.state === 'soon' ? `${entry.validity.days}D LEFT` : 'FROZEN'}
-                        </Badge>
-                      )
+                    {entry.block === 'unlinked' || entry.block === 'ledger-missing' ? (
+                      <Badge className="ml-2 shrink-0 border bg-amber-100 text-amber-800 border-amber-200" variant="outline">
+                        <Unlink className="h-3 w-3 mr-1" />
+                        {entry.block === 'unlinked' ? 'NOT LINKED TO TALLY' : 'LEDGER NOT IN TALLY'}
+                      </Badge>
+                    ) : entry.block === 'expired' ? (
+                      <Badge className="ml-2 shrink-0 border bg-red-100 text-red-700 border-red-200" variant="outline">
+                        <AlertTriangle className="h-3 w-3 mr-1" /> RATES EXPIRED
+                      </Badge>
+                    ) : (
+                      <Badge
+                        className={`ml-2 shrink-0 border ${entry.validity.state === 'soon' ? 'bg-amber-100 text-amber-800 border-amber-200' : 'bg-sky-100 text-sky-800 border-sky-200'}`}
+                        variant="outline"
+                      >
+                        <Snowflake className="h-3 w-3 mr-1" />
+                        {entry.validity.state === 'soon' ? `${entry.validity.days}D LEFT` : 'FROZEN'}
+                      </Badge>
                     )}
                   </button>
                 ))}
               </div>
             )}
+            {customerFocus && customerName.trim() && customerMatches.length === 0 && (
+              <div className="absolute z-50 mt-1 w-full rounded-md border bg-card shadow-lg px-3 py-2 text-xs text-muted-foreground">
+                No appointed customer matches. Orders are booked only for appointed customers linked to Tally —
+                appoint the lead and link its ledger on the Customers page first.
+              </div>
+            )}
             <p className="text-xs text-muted-foreground mt-1">
               {selectedCustomer
-                ? `Rate-frozen customer — this order can contain only their ${selectedCustomer.items?.length || 0} frozen items.`
-                : 'Appointed customers (frozen rates) and Tally ledgers. A new name can be typed as-is.'}
+                ? `Rate-frozen customer${selectedCustomer.tallyLedger ? ` · Tally ledger ${selectedCustomer.tallyLedger}` : ''} — this order can contain only their ${selectedCustomer.items?.length || 0} frozen items.`
+                : 'Only appointed (rate-frozen) customers linked to a Tally ledger can be booked.'}
             </p>
+            {/* No Tally party = an order that can never reach Tally, so the
+                save is barred, as the server would refuse it anyway. */}
+            {notLinked && (
+              <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                <p className="flex items-center gap-1.5 text-sm font-medium text-amber-800">
+                  <Unlink className="h-4 w-4" />
+                  {linkBlock === 'unlinked'
+                    ? `${selectedCustomer.companyName} is not linked to a Tally ledger`
+                    : `${selectedCustomer.companyName}'s Tally ledger "${selectedCustomer.tallyLedger}" is no longer in Tally`}
+                </p>
+                <p className="mt-1 text-xs text-amber-700">
+                  This order cannot be saved. Link the customer on the Customers page (Link to Tally), then come back.
+                </p>
+              </div>
+            )}
             {selectedCustomer && validity.state === 'soon' && (
               <p className="text-xs text-amber-700 mt-1">
                 These frozen rates expire in {validity.days} day{validity.days === 1 ? '' : 's'}, on {istDateLabel(validity.until)}.
@@ -625,7 +636,8 @@ function OrderDialog({ open, onClose, order, onSaved }) {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 ref={itemRef}
-                placeholder="Search stock items…"
+                placeholder={selectedCustomer ? 'Search their frozen items…' : 'Pick a customer first'}
+                disabled={!selectedCustomer}
                 className="pl-9"
                 value={itemSearch}
                 onChange={(e) => setItemSearch(e.target.value)}
@@ -652,9 +664,9 @@ function OrderDialog({ open, onClose, order, onSaved }) {
             {itemMatches.length > 0 && (
               <div className="absolute z-50 mt-1 w-full rounded-md border bg-card shadow-lg max-h-56 overflow-y-auto">
                 {itemMatches.map((s, i) => {
-                  // A frozen item has no stock figures of its own; a searched
-                  // stock row does, and stands in until the lookup answers.
-                  const a = selectedCustomer ? availOf(stockName(s)) : availOf(s.name, s);
+                  // A frozen item has no stock figures of its own — they come
+                  // from the batch lookup on its linked Tally item.
+                  const a = availOf(stockName(s));
                   return (
                     <button
                       key={s._id || s.name}
@@ -679,18 +691,8 @@ function OrderDialog({ open, onClose, order, onSaved }) {
                             {qty(a.closingQty, a.baseUnits || s.baseUnits)} in Tally · {qty(a.reservedQty)} on order
                           </span>
                         )}
-                        {selectedCustomer ? (
-                          <>
-                            {s.packSize && <span className="block text-[11px] text-muted-foreground">{s.packSize}</span>}
-                            <span className="block text-xs font-medium">{formatCurrency(s.rate)}</span>
-                          </>
-                        ) : (
-                          prefillRate(s) > 0 && (
-                            <span className="block text-[11px] text-muted-foreground">
-                              {formatCurrency(prefillRate(s))}{s.baseUnits ? `/${s.baseUnits}` : ''}
-                            </span>
-                          )
-                        )}
+                        {s.packSize && <span className="block text-[11px] text-muted-foreground">{s.packSize}</span>}
+                        <span className="block text-xs font-medium">{formatCurrency(s.rate)}</span>
                       </span>
                     </button>
                   );
@@ -861,7 +863,7 @@ function OrderDialog({ open, onClose, order, onSaved }) {
         </p>
         <DialogFooter className="mt-2">
           <Button variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>
-          <Button onClick={save} disabled={saving || ratesExpired}>
+          <Button onClick={save} disabled={saving || ratesExpired || notLinked}>
             {saving && <Loader2 className="h-4 w-4 animate-spin" />}
             {order?._id ? 'Save changes' : 'Create order'}
           </Button>

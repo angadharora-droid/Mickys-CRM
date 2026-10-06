@@ -41,7 +41,7 @@ export default function SalesMobileNav() {
   const count = tabs.length + (showCrmTab ? 1 : 0);
 
   return (
-    <nav className="lg:hidden fixed inset-x-0 bottom-0 z-40 border-t border-border bg-card/95 backdrop-blur-md shadow-nav pb-safe">
+    <nav className="lg:hidden fixed inset-x-0 bottom-0 z-40 border-t border-border bg-card/95 backdrop-blur-md shadow-nav pb-safe print:hidden">
       <div className={cn('grid h-16', COLS[Math.min(5, Math.max(1, count))])}>
         {tabs.map(({ to, end, label, icon: Icon }) => (
           <NavLink key={to} to={to} end={end} className={tabClass}>

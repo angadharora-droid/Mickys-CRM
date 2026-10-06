@@ -55,7 +55,7 @@ const getSettings = asyncHandler(async (_req, res) => {
 // PUT /api/settings
 const updateSettings = asyncHandler(async (req, res) => {
   const settings = await Setting.getGlobal();
-  const { email, company, kit, salesOrder, tallyOrders, dailyReport, leadScore, export: exportCfg } = req.body;
+  const { email, company, kit, salesOrder, tallyOrders, dailyReport, dayEnd, leadScore, export: exportCfg } = req.body;
 
   let scoresRecomputed = null;
   if (leadScore) {
@@ -89,6 +89,20 @@ const updateSettings = asyncHandler(async (req, res) => {
   // lastSentDay is the mailer's own bookkeeping and rides through the merge
   // untouched — the schema strips it if a client ever sends it.
   if (dailyReport) settings.dailyReport = { ...settings.dailyReport.toObject(), ...dailyReport };
+  if (dayEnd) {
+    // Targets merge per field; a families list, when sent, replaces the old
+    // one whole (it is edited as one list). Keywords match Tally names, which
+    // the report compares upper-cased.
+    const current = settings.dayEnd.toObject();
+    settings.dayEnd = {
+      ...current,
+      ...dayEnd,
+      targets: { ...current.targets, ...(dayEnd.targets || {}) },
+      families: dayEnd.families
+        ? dayEnd.families.map((f) => ({ label: f.label, keywords: f.keywords.map((k) => k.toUpperCase()) }))
+        : current.families,
+    };
+  }
   if (exportCfg) {
     // Containers merge per size so a partial edit doesn't wipe the other fields.
     const current = settings.export.toObject();

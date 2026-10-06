@@ -158,6 +158,35 @@ const settingSchema = new mongoose.Schema(
       hourIst: { type: Number, default: null, min: 0, max: 23 },
       minuteIst: { type: Number, default: null, min: 0, max: 59 },
     },
+    // Admin Day End Report (services/dayEndReport.service.js). Daily targets
+    // per sales executive; how many days before expiry a batch turns a SKU
+    // CRITICAL; how far today's production cost per kg may rise above the
+    // historical average before it is flagged; and the SKU families the
+    // closing-stock table lists by name — an item belongs to the first family
+    // whose keywords appear in its Tally name, everything else is "Other SKU".
+    dayEnd: {
+      targets: {
+        visits: { type: Number, default: 2, min: 0 },
+        calls: { type: Number, default: 5, min: 0 },
+        leads: { type: Number, default: 3, min: 0 },
+      },
+      expiryWarnDays: { type: Number, default: 30, min: 0, max: 730 },
+      costTolerancePct: { type: Number, default: 5, min: 0, max: 100 },
+      families: {
+        type: [
+          {
+            _id: false,
+            label: { type: String, trim: true, required: true },
+            keywords: { type: [String], default: [] },
+          },
+        ],
+        default: () => [
+          { label: 'Yellow Gravy', keywords: ['YELLOW GRAVY'] },
+          { label: 'Makhani Gravy', keywords: ['MAKHANI GRAVY', 'MAKHNI GRAVY'] },
+          { label: 'Malabari Gravy', keywords: ['MALABAR', 'MALABHAR'] },
+        ],
+      },
+    },
     // Meta (Facebook/Instagram) lead-form sheets the sync job pulls from (see
     // services/metaSync.service.js). Ad accounts land leads in whichever sheet
     // that form's Meta connector is wired to, so more than one may need

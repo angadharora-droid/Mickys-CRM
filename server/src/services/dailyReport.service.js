@@ -724,6 +724,7 @@ function stopDailyReport() {
 }
 
 module.exports = {
+  REVENUE_EXPR,
   buildDailyDigest,
   renderDigestHtml,
   sendDailyReport,

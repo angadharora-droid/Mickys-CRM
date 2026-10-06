@@ -35,6 +35,7 @@ import Pipeline from '@/pages/sales/Pipeline';
 import Invoicing from '@/pages/sales/Invoicing';
 import SalesRegister from '@/pages/sales/SalesRegister';
 import Dispatch from '@/pages/sales/Dispatch';
+import DayEndReport from '@/pages/sales/DayEndReport';
 import NotFound from '@/pages/NotFound';
 
 /** An account with no usable module assignment lands here instead of looping. */
@@ -213,6 +214,16 @@ export default function App() {
           element={
             <ProtectedRoute module={MODULES.DISPATCH}>
               <Dispatch />
+            </ProtectedRoute>
+          }
+        />
+        {/* Management's end-of-day sheet: sales, team KPI, dues, production
+            and closing stock — admins only. */}
+        <Route
+          path="/sales/day-end"
+          element={
+            <ProtectedRoute roles={[ROLES.ADMIN]}>
+              <DayEndReport />
             </ProtectedRoute>
           }
         />
