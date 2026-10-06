@@ -43,6 +43,50 @@ function describe(s) {
   }
 }
 
+const LINE_TONES = {
+  good: 'text-emerald-700 dark:text-emerald-400',
+  wait: 'text-sky-700 dark:text-sky-400',
+  warn: 'text-amber-700 dark:text-amber-400',
+};
+
+/**
+ * One line for the orders list: has this order reached Tally? Only the states
+ * that answer that question show — an open order, or one confirmed before
+ * orders started going to Tally, says nothing here.
+ */
+export function TallyStatusLine({ status: s }) {
+  if (!s) return null;
+  const test = s.mode === 'test' || (!s.mode && s.currentMode === 'test') ? ' (test)' : '';
+  let line = null;
+  switch (s.state) {
+    case 'in_tally':
+      line = { tone: 'good', icon: CheckCircle2, text: `In Tally${s.voucherNumber ? ` · ${s.voucherNumber}` : ''}${test}`, title: `Order no. ${s.orderNo} · last seen in Tally ${formatDateTime(s.seenAt)}` };
+      break;
+    case 'sent':
+      line = { tone: 'wait', icon: Send, text: `Sent to Tally${test}`, title: `Collected by the Tally add-on ${formatDateTime(s.sentAt)} — Tally's number shows after its next report` };
+      break;
+    case 'queued':
+      line = s.enabled ? { tone: 'wait', icon: Clock, text: `Going to Tally${test}`, title: "Created in Tally at the add-on's next run (every 10 minutes)" } : null;
+      break;
+    case 'held':
+      line = s.enabled ? { tone: 'warn', icon: AlertTriangle, text: 'Not sent to Tally', title: s.holdReason } : null;
+      break;
+    case 'missing':
+      line = { tone: 'warn', icon: AlertTriangle, text: 'No longer in Tally', title: `It was ${s.voucherNumber || 'there'} (Order no. ${s.orderNo}) — deleted in Tally?` };
+      break;
+    default:
+      line = null;
+  }
+  if (!line) return null;
+  const Icon = line.icon;
+  return (
+    <p className={`mt-1 flex max-w-[220px] items-center gap-1 text-[11px] font-medium ${LINE_TONES[line.tone]}`} title={line.title}>
+      <Icon className="h-3 w-3 shrink-0" />
+      <span className="truncate">{line.text}</span>
+    </p>
+  );
+}
+
 export default function OrderTallyStatus({ order, onChange }) {
   const { user } = useAuth();
   const [busy, setBusy] = useState(false);
