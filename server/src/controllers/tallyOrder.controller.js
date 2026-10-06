@@ -5,7 +5,9 @@ const TallyOrderCall = require('../models/TallyOrderCall');
 const { logActivity } = require('../services/activity.service');
 const { istDateKey } = require('../utils/istDate');
 const { TDL_VERSION } = require('../services/tallyStock.service');
+const { CENTRE_POINT, checkCompany } = require('../services/tallyCompany.service');
 const {
+  getConfig,
   takeOrders,
   sampleVouchers,
   rowsXml,
@@ -15,8 +17,6 @@ const {
   overview,
 } = require('../services/tallyOrder.service');
 
-/** Same guard as the stock sync: only Mickys (CENTRE POINT FOODS…) talks to the CRM. */
-const SYNC_COMPANY = /^CENTRE POINT/i;
 
 /**
  * Keeps a record of each call from the Tally side (models/TallyOrderCall.js)
@@ -43,6 +43,22 @@ const orderFeed = asyncHandler(async (req, res) => {
     return res.type('text/xml').send(rowsXml(vouchers, cfg));
   }
   const claim = Boolean(req.tallyPush) && req.query.claim === '1';
+  // The feed request names no company, but the add-on reports Tally's sales
+  // orders (POST …/seen, with <COMPANY>) right before it. With one company
+  // set in Settings, orders are handed out only when that report came from
+  // it a moment ago — never into another company's books.
+  if (claim) {
+    const cfgNow = await getConfig();
+    if (String(cfgNow.company || '').trim()) {
+      const lastSeen = await TallyOrderCall.findOne({ kind: 'seen' }).sort({ at: -1 }).select('at company').lean();
+      const fresh = lastSeen && Date.now() - new Date(lastSeen.at).getTime() < 5 * 60 * 1000;
+      const allowed = await checkCompany(fresh ? lastSeen.company : '');
+      if (!allowed.ok) {
+        await recordCall(req, { kind: 'feed', claim: false, note: `nothing handed out: ${allowed.reason}` });
+        return res.type('text/xml').send(rowsXml([], cfgNow));
+      }
+    }
+  }
   const { cfg, vouchers } = await takeOrders({ claim });
   if (req.tallyPush) {
     await recordCall(req, {
@@ -84,9 +100,11 @@ const ordersSeen = asyncHandler(async (req, res) => {
     blocks: (xml.match(/<SALESORDER>/g) || []).length,
     sample: xml.slice(0, 800),
   };
-  if (company && !SYNC_COMPANY.test(company.trim())) {
-    await recordCall(req, { ...call, note: 'Refused: not CENTRE POINT FOODS' });
-    return tallyReply(res, false, `Ignored: sales orders from "${company.trim()}" - only CENTRE POINT FOODS talks to the CRM`);
+  // Same company rule as the stock push (services/tallyCompany.service.js).
+  const allowed = await checkCompany(company);
+  if (!allowed.ok) {
+    await recordCall(req, { ...call, note: `Refused: ${allowed.reason}` });
+    return tallyReply(res, false, `Ignored: ${allowed.reason}`);
   }
   const result = await recordSeen(xml);
   await recordCall(req, { ...call, tdlVersion: result.tdlVersion, matched: result.matched });
@@ -156,15 +174,18 @@ const timerTick = asyncHandler(async (req, res) => {
   const xml = typeof req.body === 'string' ? req.body : req.body?.xml || '';
   const company = ((xml.match(/<COMPANY>([\s\S]*?)<\/COMPANY>/) || [])[1] || '').trim();
   const tdlVersion = ((xml.match(/<TDLVERSION>([\s\S]*?)<\/TDLVERSION>/) || [])[1] || '').trim();
-  const mickys = SYNC_COMPANY.test(company);
-  await recordCall(req, {
-    kind: 'tick',
-    company,
-    tdlVersion,
-    bytes: xml.length,
-    note: mickys ? '' : company ? `"${company}" open - no push` : 'no company open - no push',
-  });
-  return tallyReply(res, true, `Mickys CRM: timer tick${mickys ? '' : ' (no push - CENTRE POINT is not the open company)'}`);
+  // The add-on itself pushes for any CENTRE POINT company; the CRM then
+  // refuses one that is not the company set in Settings.
+  const allowed = await checkCompany(company);
+  const note = !company
+    ? 'no company open - no push'
+    : !CENTRE_POINT.test(company)
+      ? `"${company}" open - no push`
+      : allowed.ok
+        ? ''
+        : `"${company}" open - its push is refused (the CRM takes "${allowed.locked}")`;
+  await recordCall(req, { kind: 'tick', company, tdlVersion, bytes: xml.length, note });
+  return tallyReply(res, true, `Mickys CRM: timer tick${note ? ` (${note})` : ''}`);
 });
 
 module.exports = { orderFeed, ordersSeen, timerTick, tallyOrdersOverview, tallyImportFile, resendToTally };

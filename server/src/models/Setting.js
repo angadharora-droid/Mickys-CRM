@@ -126,6 +126,9 @@ const settingSchema = new mongoose.Schema(
       enabled: { type: Boolean, default: false },
       mode: { type: String, enum: ['test', 'live'], default: 'test' },
       testLedger: { type: String, trim: true, default: 'TEST' },
+      // The one Tally company whose pushes the CRM takes (exact name as Tally
+      // shows it); '' = any CENTRE POINT company. services/tallyCompany.service.js
+      company: { type: String, trim: true, default: '' },
       voucherType: { type: String, trim: true, default: 'Sales Order' },
       godown: { type: String, trim: true, default: 'PRIMARY PACKAGING SFG' },
       salesLedger: { type: String, trim: true, default: 'Sales A/c' },

@@ -425,6 +425,7 @@ const settingsSchema = z.object({
       enabled: z.boolean().optional(),
       mode: z.enum(['test', 'live']).optional(),
       testLedger: z.string().trim().max(200).optional(),
+      company: z.string().trim().max(200).optional(),
       voucherType: z.string().trim().min(1).max(100).optional(),
       godown: z.string().trim().min(1).max(200).optional(),
       salesLedger: z.string().trim().min(1).max(200).optional(),

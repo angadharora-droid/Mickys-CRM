@@ -25,6 +25,7 @@ const TallyInvoice = require('../models/TallyInvoice');
 const { relinkOpenOrders } = require('../services/tallyLink.service');
 const { getConfig: getTallyOrderConfig } = require('../services/tallyOrder.service');
 const { runTallyPush } = require('../utils/tallyPushQueue');
+const { checkCompany, recordRefusal } = require('../services/tallyCompany.service');
 const {
   nameKeyOf,
   reservedByNameKey,
@@ -73,15 +74,10 @@ const tallyKeyOrAdmin = (req, res, next) => {
  */
 const SYNCED_GROUPS = /finished/i;
 
-/**
- * The hosted Tally carries several companies; only Mickys (CENTRE POINT
- * FOODS…) may feed the CRM. The TDL guards its automatic pushes, but the
- * Ctrl+F10 button and manual exports have no company guard — this check is
- * what stops a sibling company's stock from replacing Mickys' mirror.
- * Prefix match so PVT LTD vs PRIVATE LIMITED wording never matters; exports
- * from an older TDL carry no <COMPANY> tag and are accepted as before.
- */
-const SYNC_COMPANY = /^CENTRE POINT/i;
+// Which Tally company may feed the CRM — the hosted Tally carries several,
+// and a push replaces the stock and ledger lists whole — is decided in
+// services/tallyCompany.service.js (any CENTRE POINT company, or the one set
+// in Settings).
 
 /** What made Tally push (?src= on the TDL's URLs, v8+) — see StockSyncLog.trigger. */
 const PUSH_TRIGGERS = ['timer', 'load', 'button'];
@@ -104,11 +100,13 @@ async function syncStockNow(req, res) {
     throw ApiError.badRequest('No Tally XML provided');
   }
 
+  // Only the one Tally company may replace the CRM's stock and ledger lists
+  // (services/tallyCompany.service.js).
   const company = parseTallyCompany(xml);
-  if (company && !SYNC_COMPANY.test(company)) {
-    throw ApiError.badRequest(
-      `This export is from "${company}" — the CRM only syncs CENTRE POINT FOODS. Switch to the Mickys company in Tally and sync again.`
-    );
+  const allowed = await checkCompany(company);
+  if (!allowed.ok) {
+    if (req.tallyPush) await recordRefusal(req, { what: 'Stock push', company, reason: allowed.reason });
+    throw ApiError.badRequest(`Not synced: ${allowed.reason}`);
   }
 
   const parsed = parseTallyStockXml(xml);
