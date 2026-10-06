@@ -606,7 +606,7 @@ async function overview() {
     cfg.enabled ? SalesOrder.countDocuments({ 'tally.mode': cfg.mode, 'tally.seenAt': { $ne: null } }) : 0,
     cfg.testLedger ? Customer.exists({ name: cfg.testLedger }) : null,
     TallyOrderCall.find({}).sort({ at: -1 }).limit(20).lean(),
-    StockSyncLog.findOne({ source: 'push' }).sort({ createdAt: -1 }).select('syncedAt createdAt tdlVersion trigger').lean(),
+    StockSyncLog.findOne({ source: 'push' }).sort({ createdAt: -1 }).select('syncedAt createdAt tdlVersion trigger company customerCount').lean(),
     TallyOrderCall.findOne({ kind: 'tick' }).sort({ at: -1 }).select('at company').lean(),
     StockSyncLog.findOne({ source: 'push', trigger: 'timer' }).sort({ createdAt: -1 }).select('syncedAt createdAt').lean(),
   ]);
@@ -627,6 +627,8 @@ async function overview() {
           at: lastStockSync.syncedAt || lastStockSync.createdAt,
           tdlVersion: lastStockSync.tdlVersion || '',
           trigger: lastStockSync.trigger || '',
+          company: lastStockSync.company || '',
+          customerCount: lastStockSync.customerCount || 0,
         }
       : null,
     // The 10-minute timer (TDL v8+): its last beat, whatever company was

@@ -67,6 +67,8 @@ function TallyCalls({ calls, lastStockPush, timer }) {
         Last stock push from Tally:{' '}
         {lastStockPush
           ? `${formatDateTime(lastStockPush.at)}${lastStockPush.trigger ? ` (${TRIGGER_LABELS[lastStockPush.trigger] || lastStockPush.trigger})` : ''}` +
+            `${lastStockPush.company ? ` from ${lastStockPush.company}` : ''}` +
+            `${lastStockPush.customerCount ? `, ${lastStockPush.customerCount} customer ledgers` : ''}` +
             `${lastStockPush.tdlVersion ? ` [TDL v${lastStockPush.tdlVersion}]` : ''}`
           : '—'}
       </p>

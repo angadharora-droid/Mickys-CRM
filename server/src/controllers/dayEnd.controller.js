@@ -23,6 +23,7 @@ const {
 } = require('../services/tallyDayEnd.service');
 const { buildDayEndReport } = require('../services/dayEndReport.service');
 const { istDateKey } = require('../utils/istDate');
+const { runTallyPush } = require('../utils/tallyPushQueue');
 
 const DAY_MS = 86400000;
 const DAY_KEY = /^\d{4}-\d{2}-\d{2}$/;
@@ -83,7 +84,9 @@ async function mirrorWindow(Model, vouchers, { from, periodFrom, periodTo, today
       vouchers.map((v) => ({
         updateOne: {
           filter: { key: v.key },
-          update: { $set: { ...v, lastSeenAt: syncedAt }, $setOnInsert: { firstSeenAt: syncedAt } },
+          // $max: an older, overlapping push must never lower the stamp the
+          // window delete reads (utils/tallyPushQueue.js).
+          update: { $set: v, $max: { lastSeenAt: syncedAt }, $setOnInsert: { firstSeenAt: syncedAt } },
           upsert: true,
         },
       })),
@@ -102,8 +105,11 @@ async function mirrorWindow(Model, vouchers, { from, periodFrom, periodTo, today
 }
 
 // POST /api/stock/dayend — body: the Mickys Day End Export XML (text/xml),
-// pushed by mickys-dayend.tdl with the Tally sync key.
-const syncDayEnd = asyncHandler(async (req, res) => {
+// pushed by mickys-dayend.tdl with the Tally sync key. Queued behind any
+// other Tally push (utils/tallyPushQueue.js).
+const syncDayEnd = asyncHandler((req, res) => runTallyPush(() => syncDayEndNow(req, res)));
+
+async function syncDayEndNow(req, res) {
   const xml = typeof req.body === 'string' ? req.body : req.body?.xml;
   if (!xml || typeof xml !== 'string') throw ApiError.badRequest('No Tally XML provided');
 
@@ -202,7 +208,7 @@ const syncDayEnd = asyncHandler(async (req, res) => {
       .send(`<RESPONSE><STATUS>1</STATUS><MESSAGE>Day end sent to Mickys CRM: ${summary}${tdlNote}</MESSAGE></RESPONSE>`);
   }
   res.json({ success: true, message: `Day end: ${summary}${tdlNote}`, data: { counts, batchesSent, tdlVersion: head.tdlVersion, tdlCurrent } });
-});
+}
 
 // GET /api/stock/dayend/tdl?key=[&batches=0][&history=0] — the current
 // day-end TDL with the sync key filled in. batches=0 leaves the batch-wise

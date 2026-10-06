@@ -37,6 +37,9 @@ const stockSyncLogSchema = new mongoose.Schema(
     // What made Tally push (TDL v8+): 'timer' = the 10-minute timer, 'load' =
     // the company being opened, 'button' = Ctrl+F10. '' on older copies.
     trigger: { type: String, enum: ['timer', 'load', 'button', ''], default: '' },
+    // The Tally company that sent it — every CENTRE POINT* company passes the
+    // guard, and each push replaces the stock and customer lists.
+    company: { type: String, default: '' },
     syncedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   },
   { timestamps: true }
