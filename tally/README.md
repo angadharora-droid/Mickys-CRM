@@ -383,6 +383,8 @@ not send, so a **second, separate TDL** carries them:
 | `<DEBTOR>` + `<BILL>` | Sundry Debtors ledgers with a balance, and their pending bills (ref, bill date, due date / credit period, amount) | as on now | Outstanding Receivables, Due Customer List |
 | `<PRODUCTION>` + `<IN>`/`<OUT>` | stock / manufacturing journals: items produced and consumed, qty and value | last 10 days | Production, Production Cost / kg |
 | `<ITEMBATCHES>` + `<BATCH>` | batch-wise closing stock of every item holding stock: batch, godown, mfg date, expiry, qty, value | as on now | Expiry Status (Normal / CRITICAL) |
+| `<DEBTOR>` `<BAL1>`..`<BAL7>` (v2) | each debtor's closing balance as on each of the previous 7 days (`$$ToValue`) | last 7 days | Outstanding Receivables / Due list of those days |
+| `<STOCKDAYS>` `<Q0>`..`<Q7>`, `<V0>`..`<V7>` (v2) | every item's closing qty and value as on today and each of the previous 7 days | today + last 7 days | Closing Stock of those days |
 
 It is a separate file on purpose: if any part of it misbehaves on this
 TallyPrime release, the stock / invoice / sales-order sync in
@@ -418,6 +420,12 @@ data:
   on this release, download the copy **without** it,
   `…/api/stock/dayend/tdl?key=<TALLY_SYNC_KEY>&batches=0`. Everything else
   keeps flowing, and the report says expiry is not sent.
+- *7-day re-read (v2)* — `$$ToValue:<date>:$ClosingBalance` / `$ClosingValue`
+  on ledgers and stock items. On the Tally screen each debtor row then shows
+  8 balances and the closing stock part lists 8 qty/value pairs per item. If
+  it raises an error, or makes the export too slow, download the copy
+  **without** it, `…&history=0` (combinable with `&batches=0`): past days
+  then keep what their own pushes said, as in v1.
 
 The report's feed strip shows the last day-end push, its TDL version (current:
 `DAYEND_TDL_VERSION` in `server/src/services/tallyDayEnd.service.js`) and what
@@ -433,6 +441,16 @@ it carried. The reply Tally gets after Ctrl+F10 says the same.
 - Customer balances, bills and batches are saved as a **per-day snapshot**.
   The last push of a day is that day's closing position, so the report for an
   earlier date reads what Tally said that evening.
+- **Every push re-reads the last 7 days (v2):** each day's customer balances
+  and closing stock are overwritten with what Tally now says as on that day,
+  so an entry posted late, edited or deleted for, say, yesterday shows in
+  yesterday's report after the next push. A day the TDL never ran on is
+  filled in the same way. Pending bills and batches can't be read as on a
+  past date, so a day keeps the bills its own pushes captured (none for a
+  filled-in day — the report says so) and expiry uses the nearest push that
+  sent batches. Sales, collections and production were already re-read
+  (60 / 40 / 10-day windows). The report prefers this Tally closing stock over
+  the stock register; days older than 7 keep their last re-read figures.
 - Typed in on the report itself: the **production plan** (planned qty per
   item per day) and the **follow-up status** on each customer's dues.
 - Settings (gear on the report): exec targets (visits 2, calls 5, leads 3),

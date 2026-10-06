@@ -17,7 +17,15 @@ const { tagValue, cleanName, parseTallyDate } = require('./tallyStock.service');
  * the report so "is the current copy loaded in Tally?" is never a guess. Bump
  * it whenever the template changes.
  */
-const DAYEND_TDL_VERSION = '1';
+const DAYEND_TDL_VERSION = '2';
+
+/**
+ * How many days before today the TDL re-reads closing positions for (debtor
+ * balances, closing stock). Served into the file as {{HISTORY_DAYS}} and sent
+ * back as <HISTORYDAYS>; the TDL carries one field per day, so changing this
+ * means changing the template too.
+ */
+const HISTORY_DAYS = 7;
 
 /** Same rule as the stock sync: only CENTRE POINT* may feed the CRM. */
 const DAYEND_COMPANY = /^CENTRE POINT/i;
@@ -97,9 +105,14 @@ function headOf(block, childTags) {
   return block.slice(0, cut);
 }
 
-/** Header: company, TDL copy, the Tally machine's date and the windows. */
+/**
+ * Header: company, TDL copy, the Tally machine's date and the windows.
+ * historyDays is how many earlier days the push re-reads positions for — 0
+ * from a v1 copy or one served with history=0.
+ */
 function parseDayEndHeader(xml) {
-  const head = headOf(xml, ['RECEIPT', 'DEBTOR', 'PRODUCTION', 'ITEMBATCHES']);
+  const head = headOf(xml, ['RECEIPT', 'DEBTOR', 'PRODUCTION', 'ITEMBATCHES', 'STOCKDAYS']);
+  const historyDays = Math.trunc(Number(tagValue(head, 'HISTORYDAYS')) || 0);
   return {
     company: tagValue(head, 'COMPANY'),
     tdlVersion: tagValue(head, 'TDLVERSION'),
@@ -108,6 +121,7 @@ function parseDayEndHeader(xml) {
     periodTo: parseTallyDate(tagValue(head, 'PERIODTO')),
     receiptsFrom: parseTallyDate(tagValue(head, 'RECEIPTSFROM')),
     productionFrom: parseTallyDate(tagValue(head, 'PRODUCTIONFROM')),
+    historyDays: Math.min(Math.max(historyDays, 0), HISTORY_DAYS),
   };
 }
 
@@ -169,21 +183,35 @@ function parseReceipts(xml, { customerNames = new Set() } = {}) {
   return [...byKey.values()];
 }
 
+/** A ledger figure as a receivable: Dr positive, Cr (advance) negative. */
+const receivable = (rawText, flagText) => {
+  const raw = toSigned(rawText);
+  return isDebit(raw, toFlag(flagText)) ? Math.abs(raw) : -Math.abs(raw);
+};
+
 /**
  * Sundry Debtors ledgers with a balance. `balance` is the receivable — a debit
  * balance positive, an advance (credit balance) negative — and each pending
  * bill carries the same sign rule. Due dates given as a period ("30 Days")
  * are counted from the bill date.
+ *
+ * With history (`historyDays` > 0), `history[k]` is the balance as on k days
+ * before today (k = 1..historyDays), from <BALk>/<ISDRk>; an empty tag is a
+ * nil balance, as everywhere in a Tally export. A ledger may then arrive with
+ * no balance today, having owed on one of those days.
  */
-function parseDebtors(xml) {
+function parseDebtors(xml, { historyDays = 0 } = {}) {
   if (typeof xml !== 'string' || !xml.includes('<DEBTOR>')) return [];
   const byName = new Map();
   for (const block of blocksOf(xml, 'DEBTOR')) {
     const head = headOf(block, ['BILL']);
     const name = cleanName(tagValue(head, 'NAME'));
     if (!name) continue;
-    const raw = toSigned(tagValue(head, 'BALANCE'));
-    const balance = isDebit(raw, toFlag(tagValue(head, 'ISDR'))) ? Math.abs(raw) : -Math.abs(raw);
+    const balance = receivable(tagValue(head, 'BALANCE'), tagValue(head, 'ISDR'));
+    const history = {};
+    for (let k = 1; k <= historyDays; k += 1) {
+      history[k] = round2(receivable(tagValue(head, `BAL${k}`), tagValue(head, `ISDR${k}`)));
+    }
 
     const bills = blocksOf(block, 'BILL')
       .map((b) => {
@@ -200,7 +228,7 @@ function parseDebtors(xml) {
       })
       .filter((b) => b.amount !== 0);
 
-    byName.set(name, { name, group: cleanName(tagValue(head, 'GROUP')), balance: round2(balance), bills });
+    byName.set(name, { name, group: cleanName(tagValue(head, 'GROUP')), balance: round2(balance), bills, history });
   }
   return [...byName.values()];
 }
@@ -278,6 +306,42 @@ function parseBatches(xml, { stockNames = new Set() } = {}) {
 }
 
 /**
+ * A closing quantity keeping its sign — stock can run negative in Tally —
+ * whether printed "-5 KG" or "(-)5 KG".
+ */
+function toSignedQty(raw) {
+  const s = String(raw || '').trim();
+  const negative = /^\(-\)/.test(s) || /^-/.test(s);
+  const { qty, unit } = toQty(s.replace(/^\(-\)\s*/, '').replace(/^-/, ''));
+  return { qty: negative ? -qty : qty, unit };
+}
+
+/**
+ * Closing stock as on today and each of the `historyDays` days before it
+ * (<STOCKDAYS> rows: <Qk>/<Vk>, k = 0 today), for the Semi Finished /
+ * Finished items — the same filter as the batches. Returns
+ * [{ item, unit, days: [{ qty, value }, …] }] with days[k] = k days back.
+ */
+function parseStockDays(xml, { stockNames = new Set(), historyDays = 0 } = {}) {
+  if (typeof xml !== 'string' || !xml.includes('<STOCKDAYS>')) return [];
+  const byItem = new Map();
+  for (const block of blocksOf(xml, 'STOCKDAYS')) {
+    const item = cleanName(tagValue(block, 'NAME'));
+    const group = cleanName(tagValue(block, 'GROUP'));
+    if (!item || !(FINISHED_GROUP.test(group) || stockNames.has(item))) continue;
+    let unit = tagValue(block, 'UNIT');
+    const days = [];
+    for (let k = 0; k <= historyDays; k += 1) {
+      const q = toSignedQty(tagValue(block, `Q${k}`));
+      if (!unit && q.unit) unit = q.unit;
+      days.push({ qty: round2(q.qty), value: round2(toSigned(tagValue(block, `V${k}`))) });
+    }
+    byItem.set(item, { item, unit, days });
+  }
+  return [...byItem.values()];
+}
+
+/**
  * Kilograms in one unit of an item, so production cost compares per kg
  * across pack sizes: 1 when the item is kept in KG, else the pack weight from
  * its product code (SFG-006-250 = 250 g) or its name ("1KG", "250GM",
@@ -298,6 +362,7 @@ function kgPerUnit({ name = '', code = '', baseUnits = '' } = {}) {
 
 module.exports = {
   DAYEND_TDL_VERSION,
+  HISTORY_DAYS,
   DAYEND_COMPANY,
   FINISHED_GROUP,
   parseDayEndHeader,
@@ -305,6 +370,7 @@ module.exports = {
   parseDebtors,
   parseProduction,
   parseBatches,
+  parseStockDays,
   parseDueText,
   kgPerUnit,
 };
