@@ -5,8 +5,10 @@ function notFoundHandler(req, _res, next) {
   next(ApiError.notFound(`Route not found: ${req.method} ${req.originalUrl}`));
 }
 
+const xmlText = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
 // eslint-disable-next-line no-unused-vars
-function errorHandler(err, _req, res, _next) {
+function errorHandler(err, req, res, _next) {
   let statusCode = err.statusCode || 500;
   let message = err.message || 'Internal server error';
   let details = err.details;
@@ -45,6 +47,23 @@ function errorHandler(err, _req, res, _next) {
   if (statusCode >= 500 && env.nodeEnv !== 'development') {
     message = 'Internal server error';
     details = undefined;
+  }
+
+  // The Tally add-on (key-authenticated push) can only show a reply in its
+  // own RESPONSE format, and only when it arrives as a success — a JSON error
+  // reads on the Tally screen as "nothing happened". So Tally gets the
+  // failure as STATUS 0 with the reason, which Ctrl+F10 then displays.
+  // (A ?key= request is the add-on too, even when the key itself was refused.)
+  if (req?.tallyPush || typeof req?.query?.key === 'string') {
+    // The reason lands in the server log too (Railway shows only the status
+    // code otherwise), with the sync key masked.
+    const url = String(req.originalUrl || '').replace(/([?&]key=)[^&]*/, '$1***');
+    const body = typeof req.body === 'string' ? `${req.body.length} chars` : `body ${req.headers?.['content-type'] || 'no content-type'}`;
+    console.warn(`[tally] ${req.method} ${url} -> ${statusCode}: ${message} (${body})`);
+    return res
+      .status(200)
+      .type('text/xml')
+      .send(`<RESPONSE><STATUS>0</STATUS><MESSAGE>Mickys CRM: ${xmlText(message)}</MESSAGE></RESPONSE>`);
   }
 
   res.status(statusCode).json({

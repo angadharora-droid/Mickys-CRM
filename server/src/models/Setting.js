@@ -128,9 +128,10 @@ const settingSchema = new mongoose.Schema(
       testLedger: { type: String, trim: true, default: 'TEST' },
       // The one Tally company whose pushes the CRM takes (exact name as Tally
       // shows it); '' = any CENTRE POINT company. services/tallyCompany.service.js
-      // Defaults to the Mickys company as named in Tally (confirmed by the
-      // user, 2026-10-06), so the lock holds from the first deploy.
-      company: { type: String, trim: true, default: 'CENTRE POINT FOODS PRIVATE LIMITED' },
+      // No default: locking to the name as shown on Tally's company list
+      // refused every push (2026-10-06) — the name Tally sends differs. Pick
+      // it on the Tally card from the names pushes actually carried.
+      company: { type: String, trim: true, default: '' },
       voucherType: { type: String, trim: true, default: 'Sales Order' },
       godown: { type: String, trim: true, default: 'PRIMARY PACKAGING SFG' },
       salesLedger: { type: String, trim: true, default: 'Sales A/c' },
