@@ -24,6 +24,7 @@ const { matchInvoices } = require('../services/orderPipeline.service');
 const TallyInvoice = require('../models/TallyInvoice');
 const { relinkOpenOrders } = require('../services/tallyLink.service');
 const { getConfig: getTallyOrderConfig } = require('../services/tallyOrder.service');
+const { runTallyPush } = require('../utils/tallyPushQueue');
 const {
   nameKeyOf,
   reservedByNameKey,
@@ -92,8 +93,12 @@ const nextDateKey = (key) => {
   return d.toISOString().slice(0, 10);
 };
 
-// POST /api/stock/sync — body: raw XML (text/xml) or JSON { xml }
-const syncStock = asyncHandler(async (req, res) => {
+// POST /api/stock/sync — body: raw XML (text/xml) or JSON { xml }. Queued
+// behind any other Tally push (utils/tallyPushQueue.js): overlapping mirrors
+// delete each other's rows.
+const syncStock = asyncHandler((req, res) => runTallyPush(() => syncStockNow(req, res)));
+
+async function syncStockNow(req, res) {
   const xml = typeof req.body === 'string' ? req.body : req.body?.xml;
   if (!xml || typeof xml !== 'string') {
     throw ApiError.badRequest('No Tally XML provided');
@@ -149,7 +154,9 @@ const syncStock = asyncHandler(async (req, res) => {
     items.map((item) => ({
       updateOne: {
         filter: { name: item.name },
-        update: { $set: { ...item, nameKey: nameKeyOf(item.name), syncedAt } },
+        // $max: an older, overlapping push must never lower the stamp the
+        // delete below reads (utils/tallyPushQueue.js).
+        update: { $set: { ...item, nameKey: nameKeyOf(item.name) }, $max: { syncedAt } },
         upsert: true,
       },
     })),
@@ -183,8 +190,8 @@ const syncStock = asyncHandler(async (req, res) => {
             qty: item.closingQty,
             rate: item.closingRate,
             value: item.closingValue,
-            lastSyncAt: syncedAt,
           },
+          $max: { lastSyncAt: syncedAt },
           $setOnInsert: {
             dayOpenQty: item.closingQty,
             dayOpenRate: item.closingRate,
@@ -209,7 +216,7 @@ const syncStock = asyncHandler(async (req, res) => {
       ledgers.map((l) => ({
         updateOne: {
           filter: { name: l.name },
-          update: { $set: { ...l, syncedAt } },
+          update: { $set: l, $max: { syncedAt } },
           upsert: true,
         },
       })),
@@ -271,6 +278,7 @@ const syncStock = asyncHandler(async (req, res) => {
     tdlVersion,
     source: req.tallyPush ? 'push' : 'upload',
     trigger: req.tallyPush && PUSH_TRIGGERS.includes(req.query.src) ? req.query.src : '',
+    company: company || '',
     syncedBy: req.user?._id,
   });
 
@@ -353,7 +361,7 @@ const syncStock = asyncHandler(async (req, res) => {
       syncedAt,
     },
   });
-});
+}
 
 /**
  * `inStock=true` and `availability=in` both mean "Tally holds some" and are
