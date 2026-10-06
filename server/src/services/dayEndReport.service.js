@@ -15,9 +15,14 @@
  *                    against the plan an admin enters for the day
  *   Production cost  today's cost per kg against the item's 90-day production
  *                    average (Tally's own inward average until that builds up)
- *   Closing stock    the day-wise stock register, by SKU family, with expiry
- *                    status from batch-wise stock; and the top 20% of SKUs by
- *                    value
+ *   Closing stock    Tally's closing stock as on the day (re-read for a week
+ *                    by the day-end TDL), else the day-wise stock register,
+ *                    by SKU family, with expiry status from batch-wise stock;
+ *                    and the top 20% of SKUs by value
+ *
+ * Receivables and closing stock are positions, not vouchers: the day-end TDL
+ * re-reads them as on each of the last 7 days on every push, so a day's
+ * report takes in entries posted for it later (see dayEnd.controller).
  *
  * Tally figures arrive through two TDLs: the stock export (stock, invoices —
  * see stock.controller) and the day-end export (receipts, debtors, production,
@@ -237,6 +242,11 @@ async function duesSection(snapshot, dayKey) {
     available: true,
     asOf: snapshot.date,
     lastSyncAt: snapshot.lastSyncAt,
+    // When the balances were last re-read from Tally (the 7-day re-read), so
+    // a past day says how fresh its figures are.
+    updatedAt: snapshot.positionsSyncAt || snapshot.lastSyncAt || null,
+    // false = a day the TDL never ran on: balances only, no bill-wise detail.
+    billsCaptured: snapshot.billsCaptured !== false,
     billWise: snapshot.debtors.some((d) => d.bills?.length),
     receivables: {
       total: round2(owing.reduce((s, d) => s + d.balance, 0)),
@@ -422,35 +432,64 @@ function expiryIndex(snapshot, dayKey, warnDays) {
   };
 }
 
-async function stockSection(dayKey, { families, warnDays, snapshot }) {
+/**
+ * Closing stock for the day. First choice is Tally's own closing as on that
+ * day, which the day-end TDL re-reads for a week (so late entries are in);
+ * otherwise the stock register, where closing = the next morning's opening
+ * once that exists, else the day's last sync — the same rule as the Stock
+ * page's day-wise register.
+ */
+async function closingStockFor(dayKey, { dayDoc, stockByName, isToday }) {
+  if (dayDoc?.stockSent) {
+    return {
+      source: 'tally',
+      asOf: dayKey,
+      settled: !isToday,
+      updatedAt: dayDoc.positionsSyncAt || null,
+      items: dayDoc.stock.map((s) => {
+        const known = stockByName.get(s.item);
+        return { name: s.item, code: known?.code || '', unit: s.unit || known?.baseUnits || '', qty: s.qty, value: round2(s.value) };
+      }),
+    };
+  }
   // The register day: the report day itself, or the last day synced before
   // it when Tally sent nothing that day.
   const regDay = (await StockSnapshot.findOne({ date: { $lte: dayKey } }).sort({ date: -1 }).select('date').lean())?.date;
-  const expiry = expiryIndex(snapshot, dayKey, warnDays);
-  const expiryInfo = { sent: expiry.sent, asOf: snapshot?.date || null, warnDays };
-  if (!regDay) {
-    return { available: false, expiry: expiryInfo, families: [], other: null, total: 0, top: null };
-  }
-
+  if (!regDay) return null;
   const [docs, nextDocs] = await Promise.all([
     StockSnapshot.find({ date: regDay }).lean(),
     StockSnapshot.find({ date: shiftKey(regDay, 1) }).lean(),
   ]);
-  // Closing = the next morning's opening once that exists, else the day's
-  // last sync — the same rule as the Stock page's day-wise register.
   const nextByName = new Map(nextDocs.map((d) => [d.name, d]));
-  const items = docs.map((d) => {
-    const next = nextByName.get(d.name);
-    const value = round2(next ? next.dayOpenValue : d.value);
-    return {
-      name: d.name,
-      code: d.code || '',
-      unit: d.baseUnits,
-      qty: next ? next.dayOpenQty : d.qty,
-      value,
-      expiry: value > 0 ? expiry.of(d.name) : { status: 'unknown' },
-    };
-  });
+  return {
+    source: 'register',
+    asOf: regDay,
+    settled: nextDocs.length > 0,
+    updatedAt: null,
+    items: docs.map((d) => {
+      const next = nextByName.get(d.name);
+      return {
+        name: d.name,
+        code: d.code || '',
+        unit: d.baseUnits,
+        qty: next ? next.dayOpenQty : d.qty,
+        value: round2(next ? next.dayOpenValue : d.value),
+      };
+    }),
+  };
+}
+
+async function stockSection(dayKey, { families, warnDays, batchSnapshot, dayDoc, stockByName, isToday }) {
+  const expiry = expiryIndex(batchSnapshot, dayKey, warnDays);
+  const expiryInfo = { sent: expiry.sent, asOf: batchSnapshot?.date || null, warnDays };
+  const closing = await closingStockFor(dayKey, { dayDoc, stockByName, isToday });
+  if (!closing) {
+    return { available: false, expiry: expiryInfo, families: [], other: null, total: 0, top: null };
+  }
+  const items = closing.items.map((i) => ({
+    ...i,
+    expiry: i.value > 0 ? expiry.of(i.name) : { status: 'unknown' },
+  }));
 
   const norm = (s) => String(s || '').toUpperCase().replace(/\s+/g, ' ').trim();
   const familyIndex = (name) => families.findIndex((f) => f.keywords.some((k) => norm(name).includes(norm(k))));
@@ -481,8 +520,10 @@ async function stockSection(dayKey, { families, warnDays, snapshot }) {
 
   return {
     available: true,
-    asOf: regDay,
-    settled: nextDocs.length > 0,
+    source: closing.source,
+    asOf: closing.asOf,
+    settled: closing.settled,
+    updatedAt: closing.updatedAt,
     expiry: expiryInfo,
     families: groups.map(summarise),
     other: summarise(other),
@@ -502,7 +543,7 @@ async function stockSection(dayKey, { families, warnDays, snapshot }) {
 async function feedStatus() {
   const [lastStock, lastDayEnd] = await Promise.all([
     StockSyncLog.findOne().sort({ createdAt: -1 }).lean(),
-    DayEndSnapshot.findOne().sort({ lastSyncAt: -1 }).select('-debtors -batches').lean(),
+    DayEndSnapshot.findOne().sort({ lastSyncAt: -1 }).select('-debtors -batches -stock').lean(),
   ]);
   return {
     stock: lastStock
@@ -536,21 +577,36 @@ async function buildDayEndReport(dayKey) {
   const tolerancePct = cfg.costTolerancePct ?? 5;
   const todayKey = istDateKey(new Date());
 
-  // The day's closing positions from Tally: that day's last day-end push, or
-  // the last one before it.
-  const [snapshot, stockItems] = await Promise.all([
+  // The day's closing positions from Tally: that day's own document (its
+  // last push, or the 7-day re-read of a later one), or the last one before
+  // it. Batches are only ever captured "as on now", so expiry reads the last
+  // push that sent them up to that day — or, for a day re-read before any
+  // push carried batches, the first one after it.
+  const [snapshot, batchBefore, stockItems] = await Promise.all([
     DayEndSnapshot.findOne({ date: { $lte: dayKey } }).sort({ date: -1 }).lean(),
+    DayEndSnapshot.findOne({ date: { $lte: dayKey }, batchesSent: true }).sort({ date: -1 }).select('date batches batchesSent').lean(),
     StockItem.find().select('name code baseUnits inwardQty inwardValue').lean(),
   ]);
+  const batchSnapshot =
+    batchBefore ||
+    (await DayEndSnapshot.findOne({ date: { $gt: dayKey }, batchesSent: true }).sort({ date: 1 }).select('date batches batchesSent').lean());
   const stockByName = new Map(stockItems.map((s) => [s.name, s]));
+  const isToday = dayKey === todayKey;
 
   const [feed, sales, execKpi, dues, production, stock] = await Promise.all([
     feedStatus(),
     salesSection(dayKey),
     execKpiSection(dayKey, targets),
     duesSection(snapshot, dayKey),
-    productionSection(dayKey, { stockByName, tolerancePct, isToday: dayKey === todayKey }),
-    stockSection(dayKey, { families, warnDays, snapshot }),
+    productionSection(dayKey, { stockByName, tolerancePct, isToday }),
+    stockSection(dayKey, {
+      families,
+      warnDays,
+      batchSnapshot,
+      dayDoc: snapshot?.date === dayKey ? snapshot : null,
+      stockByName,
+      isToday,
+    }),
   ]);
 
   return {

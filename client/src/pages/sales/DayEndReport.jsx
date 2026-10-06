@@ -147,6 +147,9 @@ function FeedStatus({ feed }) {
             · {plural(dayEnd.counts?.receipts || 0, 'receipt')}, {plural(dayEnd.counts?.debtors || 0, 'customer')} with balances (
             {plural(dayEnd.counts?.bills || 0, 'bill')}), {plural(dayEnd.counts?.production || 0, 'production voucher')}
             {dayEnd.batchesSent ? `, ${plural(dayEnd.counts?.batches || 0, 'batch', 'batches')}` : ', batches not sent'}
+            {dayEnd.counts?.historyDays
+              ? ` · balances and closing stock of the last ${dayEnd.counts.historyDays} days re-read on every push`
+              : ' · past days not re-read (needs TDL v2 with history)'}
           </>
         ) : (
           <>
@@ -658,7 +661,10 @@ function DuesTable({ dues, onFollowUpSaved }) {
       <div className="flex flex-wrap items-center justify-between gap-2 px-4 pt-3 text-xs text-muted-foreground print:hidden">
         <span>
           {plural(rows.length, 'customer')} · as on {formatDate(`${dues.asOf}T12:00:00`)}
-          {!dues.billWise && ' · ledgers are not kept bill-wise in Tally, so the due date is not known'}
+          {dues.updatedAt && ` · re-read from Tally ${formatDateTime(dues.updatedAt)}`}
+          {!dues.billsCaptured
+            ? ' · the day-end TDL did not run on this day, so these balances have no bill-wise detail (due dates unknown)'
+            : !dues.billWise && ' · ledgers are not kept bill-wise in Tally, so the due date is not known'}
         </span>
         <div className="flex items-center gap-1">
           Sort by
@@ -1092,9 +1098,12 @@ export default function DayEndReport() {
           <Section
             title="Closing Stock – SKU Wise"
             hint={
-              r.stock.available
-                ? `Tally stock register for ${formatDate(`${r.stock.asOf}T12:00:00`)}${r.stock.settled ? '' : ' (last sync — provisional until the next morning)'}`
-                : undefined
+              !r.stock.available
+                ? undefined
+                : r.stock.source === 'tally'
+                  ? `Tally closing stock as on ${formatDate(`${r.stock.asOf}T12:00:00`)}${r.stock.settled ? '' : ' (so far today)'}` +
+                    (r.stock.updatedAt ? ` · re-read ${formatDateTime(r.stock.updatedAt)}` : '')
+                  : `Tally stock register for ${formatDate(`${r.stock.asOf}T12:00:00`)}${r.stock.settled ? '' : ' (last sync — provisional until the next morning)'}`
             }
           >
             {r.stock.available ? (

@@ -17,11 +17,18 @@
 ;;                      Cost / Kg"
 ;;      * <ITEMBATCHES> batch-wise closing stock of every item holding stock,
 ;;                      with mfg and expiry dates -> "Expiry Status"
+;;      * the last 7 days re-read on every push: each debtor's closing
+;;        balance as on each of the previous 7 days (<BAL1>..<BAL7>), and each
+;;        item's closing stock as on today and the previous 7 days
+;;        (<STOCKDAYS>). An entry posted late, edited or deleted for one of
+;;        those days therefore corrects that day's report on the next push.
+;;        Receipts (40 days) and production (10 days) already cover the week.
 ;;
 ;;  How to get the current file (always up to date, key filled in):
 ;;      https://api.mickys-crm.centrepointgroup.in/api/stock/dayend/tdl?key={{TALLY_SYNC_KEY}}
 ;;    Add &batches=0 to that URL for a copy without the batch section, should
-;;    batch-wise stock ever raise an error on this Tally release.
+;;    batch-wise stock ever raise an error on this Tally release, and
+;;    &history=0 for a copy without the 7-day re-read.
 ;;
 ;;  How to load in Tally Prime (NEXT TO mickys-stock.tdl - keep that one):
 ;;    Save the file from the URL above to the same shared folder as
@@ -43,6 +50,18 @@
     MickysDayEndURL     : "https://api.mickys-crm.centrepointgroup.in/api/stock/dayend?key={{TALLY_SYNC_KEY}}"
     MickysDEReceiptFrom : $$MachineDate - 40
     MickysDEProdFrom    : $$MachineDate - 10
+
+;; The days whose closing positions are re-read on every push: today and the
+;; previous 7 days.
+[System: Formula]
+    MickysDEDay0        : $$MachineDate
+    MickysDEDay1        : $$MachineDate - 1
+    MickysDEDay2        : $$MachineDate - 2
+    MickysDEDay3        : $$MachineDate - 3
+    MickysDEDay4        : $$MachineDate - 4
+    MickysDEDay5        : $$MachineDate - 5
+    MickysDEDay6        : $$MachineDate - 6
+    MickysDEDay7        : $$MachineDate - 7
 
 [Button: MickysDayEndSyncBtn]
     Key    : Ctrl + F10
@@ -69,7 +88,7 @@
     Title : "Mickys Day End Export"
 
 [Form: MickysDayEndForm]
-    Parts   : MDEHeadPart, MDEReceiptPart, MDEDebtorPart, MDEProdPart{{BATCH_PART}}
+    Parts   : MDEHeadPart, MDEReceiptPart, MDEDebtorPart, MDEProdPart{{BATCH_PART}}{{HISTORY_PART}}
     Buttons : MickysDayEndSyncBtn
     XMLTag  : "MICKYSDAYEND"
 
@@ -82,7 +101,12 @@
 
 [Line: MDEHeadLine]
     Fields : MDECompany, MDEVersion, MDEToday, MDEPeriodFrom, MDEPeriodTo
-    Fields : MDEReceiptFrom, MDEProdFrom
+    Fields : MDEReceiptFrom, MDEProdFrom, MDEHistoryDays
+
+[Field: MDEHistoryDays]
+    Type   : String
+    Set as : "{{HISTORY_DAYS}}"
+    XMLTag : "HISTORYDAYS"
 
 [Field: MDECompany]
     Type   : String
@@ -228,7 +252,7 @@
     Scrolled : Vertical
 
 [Line: MDEDebtorLine]
-    Fields  : MDEDName, MDEDGroup, MDEDBalance, MDEDIsDr
+    Fields  : MDEDName, MDEDGroup, MDEDBalance, MDEDIsDr{{DEBTOR_HISTORY}}
     XMLTag  : "DEBTOR"
     Explode : MDEBillPart : Yes
 
@@ -252,12 +276,90 @@
     Set as : $$IsDr:$ClosingBalance
     XMLTag : "ISDR"
 
+;; The 7-day re-read: the ledger's closing balance as on each of the previous
+;; 7 days ($$ToValue = a method's closing value as on a date), each with its
+;; Dr/Cr flag like BALANCE. Only in the file when served with history.
+[Field: MDEDBal1]
+    Type   : Amount
+    Set as : $$ToValue:@@MickysDEDay1:$ClosingBalance
+    XMLTag : "BAL1"
+
+[Field: MDEDDr1]
+    Type   : Logical
+    Set as : $$IsDr:#MDEDBal1
+    XMLTag : "ISDR1"
+
+[Field: MDEDBal2]
+    Type   : Amount
+    Set as : $$ToValue:@@MickysDEDay2:$ClosingBalance
+    XMLTag : "BAL2"
+
+[Field: MDEDDr2]
+    Type   : Logical
+    Set as : $$IsDr:#MDEDBal2
+    XMLTag : "ISDR2"
+
+[Field: MDEDBal3]
+    Type   : Amount
+    Set as : $$ToValue:@@MickysDEDay3:$ClosingBalance
+    XMLTag : "BAL3"
+
+[Field: MDEDDr3]
+    Type   : Logical
+    Set as : $$IsDr:#MDEDBal3
+    XMLTag : "ISDR3"
+
+[Field: MDEDBal4]
+    Type   : Amount
+    Set as : $$ToValue:@@MickysDEDay4:$ClosingBalance
+    XMLTag : "BAL4"
+
+[Field: MDEDDr4]
+    Type   : Logical
+    Set as : $$IsDr:#MDEDBal4
+    XMLTag : "ISDR4"
+
+[Field: MDEDBal5]
+    Type   : Amount
+    Set as : $$ToValue:@@MickysDEDay5:$ClosingBalance
+    XMLTag : "BAL5"
+
+[Field: MDEDDr5]
+    Type   : Logical
+    Set as : $$IsDr:#MDEDBal5
+    XMLTag : "ISDR5"
+
+[Field: MDEDBal6]
+    Type   : Amount
+    Set as : $$ToValue:@@MickysDEDay6:$ClosingBalance
+    XMLTag : "BAL6"
+
+[Field: MDEDDr6]
+    Type   : Logical
+    Set as : $$IsDr:#MDEDBal6
+    XMLTag : "ISDR6"
+
+[Field: MDEDBal7]
+    Type   : Amount
+    Set as : $$ToValue:@@MickysDEDay7:$ClosingBalance
+    XMLTag : "BAL7"
+
+[Field: MDEDDr7]
+    Type   : Logical
+    Set as : $$IsDr:#MDEDBal7
+    XMLTag : "ISDR7"
+
+;; With history, a ledger that had a balance on any of the 7 days is sent
+;; too (settled today, but owing on one of them).
 [Collection: MDEDebtors]
     Type       : Ledger
     Child Of   : "Sundry Debtors"
     Belongs To : Yes
-    Filter     : MDEHasBalance
+    Filter     : {{DEBTOR_FILTER}}
     Fetch      : Name, Parent, ClosingBalance
+
+[System: Formula]
+    MDEHadBalance : NOT ($$IsEmpty:$ClosingBalance AND $$IsEmpty:($$ToValue:@@MickysDEDay1:$ClosingBalance) AND $$IsEmpty:($$ToValue:@@MickysDEDay2:$ClosingBalance) AND $$IsEmpty:($$ToValue:@@MickysDEDay3:$ClosingBalance) AND $$IsEmpty:($$ToValue:@@MickysDEDay4:$ClosingBalance) AND $$IsEmpty:($$ToValue:@@MickysDEDay5:$ClosingBalance) AND $$IsEmpty:($$ToValue:@@MickysDEDay6:$ClosingBalance) AND $$IsEmpty:($$ToValue:@@MickysDEDay7:$ClosingBalance))
 
 [Part: MDEBillPart]
     Lines    : MDEBillLine
@@ -486,3 +588,114 @@
     Child Of : $Name
     Filter   : MDEHasStock
     Fetch    : Name, BatchName, GodownName, MfdOn, ExpiryPeriod, ClosingBalance, ClosingValue
+
+;; ------------------ Closing stock, today and the previous 7 days -------
+;; Every stock item that held stock on any of the 8 days, with its closing
+;; quantity (<Q0>..<Q7>) and value (<V0>..<V7>) as on each - day 0 = today.
+;; Tally works these out from the vouchers, so a stock entry posted late for
+;; an earlier day changes that day's figure here on the next push. The CRM
+;; keeps the Semi Finished / Finished items, as for the batches. Only in the
+;; file when served with history.
+[Part: MDEStockDayPart]
+    Lines    : MDEStockDayLine
+    Repeat   : MDEStockDayLine : MDEStockDays
+    Scrolled : Vertical
+
+[Line: MDEStockDayLine]
+    Fields : MDESName, MDESGroup, MDESUnit
+    Fields : MDESQ0, MDESV0, MDESQ1, MDESV1, MDESQ2, MDESV2, MDESQ3, MDESV3
+    Fields : MDESQ4, MDESV4, MDESQ5, MDESV5, MDESQ6, MDESV6, MDESQ7, MDESV7
+    XMLTag : "STOCKDAYS"
+
+[Field: MDESUnit]
+    Type   : String
+    Set as : $BaseUnits
+    XMLTag : "UNIT"
+
+[Field: MDESQ0]
+    Type   : Quantity
+    Set as : $$ToValue:@@MickysDEDay0:$ClosingBalance
+    XMLTag : "Q0"
+
+[Field: MDESV0]
+    Type   : Amount
+    Set as : $$ToValue:@@MickysDEDay0:$ClosingValue
+    XMLTag : "V0"
+
+[Field: MDESQ1]
+    Type   : Quantity
+    Set as : $$ToValue:@@MickysDEDay1:$ClosingBalance
+    XMLTag : "Q1"
+
+[Field: MDESV1]
+    Type   : Amount
+    Set as : $$ToValue:@@MickysDEDay1:$ClosingValue
+    XMLTag : "V1"
+
+[Field: MDESQ2]
+    Type   : Quantity
+    Set as : $$ToValue:@@MickysDEDay2:$ClosingBalance
+    XMLTag : "Q2"
+
+[Field: MDESV2]
+    Type   : Amount
+    Set as : $$ToValue:@@MickysDEDay2:$ClosingValue
+    XMLTag : "V2"
+
+[Field: MDESQ3]
+    Type   : Quantity
+    Set as : $$ToValue:@@MickysDEDay3:$ClosingBalance
+    XMLTag : "Q3"
+
+[Field: MDESV3]
+    Type   : Amount
+    Set as : $$ToValue:@@MickysDEDay3:$ClosingValue
+    XMLTag : "V3"
+
+[Field: MDESQ4]
+    Type   : Quantity
+    Set as : $$ToValue:@@MickysDEDay4:$ClosingBalance
+    XMLTag : "Q4"
+
+[Field: MDESV4]
+    Type   : Amount
+    Set as : $$ToValue:@@MickysDEDay4:$ClosingValue
+    XMLTag : "V4"
+
+[Field: MDESQ5]
+    Type   : Quantity
+    Set as : $$ToValue:@@MickysDEDay5:$ClosingBalance
+    XMLTag : "Q5"
+
+[Field: MDESV5]
+    Type   : Amount
+    Set as : $$ToValue:@@MickysDEDay5:$ClosingValue
+    XMLTag : "V5"
+
+[Field: MDESQ6]
+    Type   : Quantity
+    Set as : $$ToValue:@@MickysDEDay6:$ClosingBalance
+    XMLTag : "Q6"
+
+[Field: MDESV6]
+    Type   : Amount
+    Set as : $$ToValue:@@MickysDEDay6:$ClosingValue
+    XMLTag : "V6"
+
+[Field: MDESQ7]
+    Type   : Quantity
+    Set as : $$ToValue:@@MickysDEDay7:$ClosingBalance
+    XMLTag : "Q7"
+
+[Field: MDESV7]
+    Type   : Amount
+    Set as : $$ToValue:@@MickysDEDay7:$ClosingValue
+    XMLTag : "V7"
+
+[Collection: MDEStockDays]
+    Type   : Stock Item
+    Filter : MDEHadStock
+    Fetch  : Name, Parent, BaseUnits, ClosingBalance, ClosingValue
+
+[System: Formula]
+    MDEHadStock : NOT ($$IsEmpty:($$ToValue:@@MickysDEDay0:$ClosingBalance) AND $$IsEmpty:($$ToValue:@@MickysDEDay1:$ClosingBalance) AND $$IsEmpty:($$ToValue:@@MickysDEDay2:$ClosingBalance) AND $$IsEmpty:($$ToValue:@@MickysDEDay3:$ClosingBalance) AND $$IsEmpty:($$ToValue:@@MickysDEDay4:$ClosingBalance) AND $$IsEmpty:($$ToValue:@@MickysDEDay5:$ClosingBalance) AND $$IsEmpty:($$ToValue:@@MickysDEDay6:$ClosingBalance) AND $$IsEmpty:($$ToValue:@@MickysDEDay7:$ClosingBalance))
