@@ -10,9 +10,9 @@
  * passes the basic guard, so an older or second company (last year's books, a
  * legacy company) open in some user's Tally pushes too.
  *
- * Settings.tallyOrders.company names the one company accepted (default
- * CENTRE POINT FOODS PRIVATE LIMITED; '' = any
- * CENTRE POINT company, the old behaviour). Compared case-insensitively with
+ * Settings.tallyOrders.company names the one company accepted ('' = any
+ * CENTRE POINT company, the default), picked on the Tally card from the
+ * names pushes actually carried. Compared case-insensitively with
  * whitespace collapsed, since Tally prints the name as typed.
  */
 const Setting = require('../models/Setting');
