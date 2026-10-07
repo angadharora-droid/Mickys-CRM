@@ -1,14 +1,16 @@
 /**
- * Daily activity digest emailed to management every morning.
+ * The morning email to management: yesterday's Day End Report.
  *
- * Covers the previous IST calendar day (on 12 Aug the mail reports 11 Aug):
- * the day's sales — invoices raised in Tally (the revenue figure), orders
- * confirmed and booked in the CRM, month-to-date against the monthly target —
- * then new leads and client visits user-wise, kits generated, kits delivered,
- * and lead counts for the focus cities (Nagpur, Pune, Mumbai, Delhi). Runs
- * in-process on the API's own schedule — same pattern as the Meta sheet
- * poller and FX refresher — and records the last-sent day in Settings so a
- * Railway redeploy can neither skip a day nor send it twice.
+ * Covers the previous IST calendar day (on 12 Aug the mail reports 11 Aug)
+ * with the same figures as the Day End Report page
+ * (services/dayEndReport.service.js) — sales, collections and receivables,
+ * the sales executives' KPI, the due customer list, production and its cost
+ * per kg, closing stock by SKU family with expiry status, and the top 20% of
+ * SKUs by stock value — plus the month-to-date invoicing verdict against the
+ * monthly target in Sales Order Settings. Runs in-process on the API's own
+ * schedule — same pattern as the Meta sheet poller and FX refresher — and
+ * records the last-sent day in Settings so a Railway redeploy can neither
+ * skip a day nor send it twice.
  *
  * The send time and recipients are set by an admin in the app
  * (Setting.dailyReport, edited under Sales Orders → Settings); the
@@ -18,38 +20,18 @@
  * /api/reports/daily-email (the "Send now" button).
  */
 const env = require('../config/env');
-const Lead = require('../models/Lead');
-const SalesOrder = require('../models/SalesOrder');
-const TallyInvoice = require('../models/TallyInvoice');
 const Setting = require('../models/Setting');
-const { SALES_VOUCHER_TYPE } = require('./tallyStock.service');
-require('../models/User'); // registers the ref model the populates below need
 const ApiError = require('../utils/ApiError');
 const { sendMail } = require('./email.service');
 const { istDayKey } = require('./report.service');
-const { escapeHtml, escapeRegex } = require('../utils/sanitize');
+const { buildDayEndReport } = require('./dayEndReport.service');
+const { escapeHtml } = require('../utils/sanitize');
 
 const IST_OFFSET_MS = 330 * 60 * 1000;
 const DAY_MS = 86400000;
 
-const FOCUS_CITIES = ['Nagpur', 'Pune', 'Mumbai', 'Delhi'];
-
-const KIT_TYPE_LABELS = {
-  distributor: 'Distributor Kit',
-  stockist: 'Stockist Kit',
-  institutional: 'Institutional Kit',
-  export: 'Export Kit',
-  b2c: 'B2C Kit',
-};
-
-const ORDER_STATUS_LABELS = {
-  open: 'Open', confirmed: 'Confirmed', invoiced: 'Invoiced', dispatched: 'Dispatched',
-  delivered: 'Delivered', closed: 'Completed', cancelled: 'Cancelled',
-};
-
-const PAYMENT_LABELS = {
-  upi: 'UPI', neft: 'NEFT', rtgs: 'RTGS', imps: 'IMPS', cheque: 'Cheque', cash: 'Cash', credit: 'Credit', other: 'Other',
-};
+/** The due list in the mail stops here; the rest is on the report page. */
+const MAX_DUE_ROWS = 30;
 
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
@@ -74,187 +56,16 @@ const shortDay = (dayKey) =>
     day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata',
   });
 
+/** A stored date (Tally's midnight-UTC calendar days included) as "06 Oct 2026". */
+const dateText = (d) =>
+  d
+    ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' })
+    : '—';
+
 const istTime = (d) =>
   new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' });
 
-// ------------------------------------------------------------ data digest ----
-
-/** Groups rows by a display name, largest group first. */
-function groupBy(rows, nameOf) {
-  const groups = new Map();
-  for (const r of rows) {
-    const name = nameOf(r) || '—';
-    if (!groups.has(name)) groups.set(name, []);
-    groups.get(name).push(r);
-  }
-  return [...groups.entries()]
-    .map(([name, items]) => ({ name, items }))
-    .sort((a, b) => b.items.length - a.items.length || a.name.localeCompare(b.name));
-}
-
-/** Everything the daily email reports for one IST day, as plain data. */
-async function buildDailyDigest(dayKey) {
-  const { from, to } = dayBounds(dayKey);
-  const inDay = (d) => {
-    if (!d) return false;
-    const t = new Date(d).getTime();
-    return t >= from.getTime() && t <= to.getTime();
-  };
-
-  const [newLeads, visitLeads, generatedLeads, deliveredLeads, cityTotals] = await Promise.all([
-    Lead.find({ leadDate: { $gte: from, $lte: to } })
-      .select('refNumber businessName city businessType leadSource assignedExecId createdBy leadDate')
-      .populate({ path: 'assignedExecId', select: 'name' })
-      .populate({ path: 'createdBy', select: 'name' })
-      .sort({ createdAt: 1 })
-      .lean(),
-    Lead.find({ visitReports: { $elemMatch: { visitDate: { $gte: from, $lte: to } } } })
-      .select('refNumber businessName city assignedExecId visitReports')
-      .populate({ path: 'assignedExecId', select: 'name' })
-      .populate({ path: 'visitReports.createdBy', select: 'name' })
-      .lean(),
-    Lead.find({ generatedAt: { $gte: from, $lte: to } })
-      .select('refNumber businessName city kitType assignedExecId generatedAt')
-      .populate({ path: 'assignedExecId', select: 'name' })
-      .sort({ generatedAt: 1 })
-      .lean(),
-    Lead.find({ 'delivery.sentAt': { $gte: from, $lte: to } })
-      .select('refNumber businessName city kitType assignedExecId delivery')
-      .populate({ path: 'assignedExecId', select: 'name' })
-      .sort({ 'delivery.sentAt': 1 })
-      .lean(),
-    Promise.all(
-      FOCUS_CITIES.map((c) => Lead.countDocuments({ city: new RegExp(`^\\s*${escapeRegex(c)}\\s*$`, 'i') }))
-    ),
-  ]);
-
-  // Flatten each lead's visit reports into one row per visit made that day.
-  const visits = [];
-  for (const l of visitLeads) {
-    for (const v of l.visitReports || []) {
-      if (!inDay(v.visitDate)) continue;
-      visits.push({
-        refNumber: l.refNumber,
-        businessName: l.businessName,
-        city: l.city,
-        visitType: v.visitType === 'call' ? 'Call' : 'Field visit',
-        note: v.note || '',
-        loggedBy: v.createdBy?.name || l.assignedExecId?.name || '—',
-      });
-    }
-  }
-
-  const cityCounts = FOCUS_CITIES.map((city, i) => ({
-    city,
-    newCount: newLeads.filter((l) => (l.city || '').trim().toLowerCase() === city.toLowerCase()).length,
-    totalCount: cityTotals[i],
-  }));
-
-  return { dayKey, newLeads, visits, generatedLeads, deliveredLeads, cityCounts, sales: await buildSalesDigest(dayKey) };
-}
-
-/**
- * The revenue an invoice counts for: its basic value before GST — the "Basic
- * Value" column of Tally's sales register, which is how the business reads
- * its sales — falling back to the billed total for vouchers sent by a TDL
- * that did not export it.
- */
-const revenueOf = (inv) => (Number(inv.basicValue) > 0 ? Number(inv.basicValue) : Number(inv.amount) || 0);
-const REVENUE_EXPR = { $cond: [{ $gt: ['$basicValue', 0] }, '$basicValue', '$amount'] };
-
-/**
- * The day's sales. Revenue is what Tally invoiced that day — every sales
- * voucher the push mirrored (models/TallyInvoice.js), dated that day, whether
- * or not it carries a CRM order number — because an invoice is a sale and an
- * order is a promise. Orders confirmed and booked in the CRM are reported
- * beside it, and everything is also totalled month-to-date so the target
- * verdict has something to stand on: month-to-date invoicing against the
- * monthly target pro-rated to the day of the month.
- */
-async function buildSalesDigest(dayKey) {
-  const { from, to } = dayBounds(dayKey);
-  const monthStart = new Date(`${dayKey.slice(0, 7)}-01T00:00:00.000+05:30`);
-  const total = (rows) => ({ count: rows[0]?.count || 0, value: round2(rows[0]?.value || 0) });
-  const sumStage = (match, field) =>
-    SalesOrder.aggregate([{ $match: match }, { $group: { _id: null, count: { $sum: 1 }, value: { $sum: field } } }]);
-  const execRef = { path: 'createdBy', select: 'name' };
-
-  // Sales vouchers only — the sync keeps other voucher types out of the
-  // mirror, and the report asks for the same so nothing else can ever be
-  // counted as a sale.
-  const salesOnly = { voucherType: SALES_VOUCHER_TYPE };
-  const [
-    invoices, mtdInvoiced, bookedOrders, confirmedOrders, mtdBooked, mtdConfirmed,
-    dispatchedCount, deliveredCount, waitingRows, invoiceFeed, settings,
-  ] = await Promise.all([
-    TallyInvoice.find({ ...salesOnly, date: { $gte: from, $lte: to } })
-      .populate({ path: 'orders', select: 'number customerName createdBy', populate: execRef })
-      .sort({ voucherNumber: 1 })
-      .lean(),
-    TallyInvoice.aggregate([
-      { $match: { ...salesOnly, date: { $gte: monthStart, $lte: to } } },
-      { $group: { _id: null, count: { $sum: 1 }, value: { $sum: REVENUE_EXPR }, billed: { $sum: '$amount' } } },
-    ]),
-    SalesOrder.find({ createdAt: { $gte: from, $lte: to } })
-      .select('number customerName total status createdBy createdAt')
-      .populate(execRef)
-      .sort({ createdAt: 1 })
-      .lean(),
-    SalesOrder.find({ confirmedAt: { $gte: from, $lte: to } })
-      .select('number customerName total payment createdBy confirmedAt')
-      .populate(execRef)
-      .sort({ confirmedAt: 1 })
-      .lean(),
-    sumStage({ createdAt: { $gte: monthStart, $lte: to }, status: { $ne: 'cancelled' } }, '$total'),
-    sumStage({ confirmedAt: { $gte: monthStart, $lte: to }, status: { $ne: 'cancelled' } }, '$total'),
-    SalesOrder.countDocuments({ dispatchedAt: { $gte: from, $lte: to } }),
-    SalesOrder.countDocuments({ deliveredAt: { $gte: from, $lte: to } }),
-    SalesOrder.aggregate([
-      { $match: { status: { $in: ['confirmed', 'invoiced', 'dispatched'] } } },
-      { $group: { _id: '$status', count: { $sum: 1 }, value: { $sum: '$total' } } },
-    ]),
-    TallyInvoice.estimatedDocumentCount(),
-    Setting.getGlobal(),
-  ]);
-
-  const invoicedValue = round2(invoices.reduce((s, i) => s + revenueOf(i), 0));
-  const billedValue = round2(invoices.reduce((s, i) => s + (Number(i.amount) || 0), 0));
-  const mtd = { ...total(mtdInvoiced), billed: round2(mtdInvoiced[0]?.billed || 0) };
-  // True when at least one of the day's vouchers carried a basic value — i.e.
-  // the figures are on the sales-register basis rather than the billed total.
-  const basicValueKnown = invoices.some((i) => Number(i.basicValue) > 0);
-  const target = Number(settings.salesOrder?.monthlyRevenueTarget) || 0;
-  const [year, month] = dayKey.split('-').map(Number);
-  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
-  const dayOfMonth = Number(dayKey.slice(8, 10));
-  const expected = target ? round2((target * dayOfMonth) / daysInMonth) : 0;
-
-  return {
-    invoices,
-    invoicedValue,
-    billedValue,
-    basicValueKnown,
-    mtd,
-    target,
-    expected,
-    dayOfMonth,
-    daysInMonth,
-    pctOfTarget: target ? Math.round((mtd.value / target) * 100) : null,
-    status: !target ? 'no-target' : mtd.value >= expected ? 'on-track' : 'behind',
-    bookedOrders,
-    bookedValue: round2(bookedOrders.filter((o) => o.status !== 'cancelled').reduce((s, o) => s + (o.total || 0), 0)),
-    confirmedOrders,
-    confirmedValue: round2(confirmedOrders.reduce((s, o) => s + (o.total || 0), 0)),
-    mtdBooked: total(mtdBooked),
-    mtdConfirmed: total(mtdConfirmed),
-    dispatchedCount,
-    deliveredCount,
-    waiting: Object.fromEntries(waitingRows.map((w) => [w._id, { count: w.count, value: round2(w.value) }])),
-    // False until the first push with the updated TDL lands — the report then
-    // says so instead of reporting a quiet day.
-    invoiceFeedLive: invoiceFeed > 0,
-  };
-}
+const istDateTime = (d) => `${dateText(d)}, ${istTime(d)}`;
 
 // ------------------------------------------------------------ html render ----
 
@@ -262,273 +73,294 @@ const BRAND = '#8C2424';
 const S = {
   table: 'border-collapse:collapse;width:100%;font-size:13px',
   th: `background:${BRAND};color:#ffffff;text-align:left;padding:6px 8px;font-size:12px;border:1px solid ${BRAND}`,
-  group: 'background:#f6ecec;color:#5a1717;font-weight:bold;padding:6px 8px;border:1px solid #e3d2d2;font-size:13px',
   td: 'padding:6px 8px;border:1px solid #e5e5e5;vertical-align:top;color:#222',
+  tdTotal: 'padding:6px 8px;border:1px solid #e5e5e5;vertical-align:top;color:#222;background:#faf7f7;font-weight:bold',
   h2: `font-size:15px;color:${BRAND};margin:26px 0 6px`,
+  caption: 'color:#666;font-size:12px;margin:0 0 6px',
   empty: 'color:#777;font-size:13px;margin:6px 0 0',
 };
 
-const clip = (s, n = 220) => (s && s.length > n ? `${s.slice(0, n - 1)}…` : s || '');
-
 const headerRow = (headers) => `<tr>${headers.map((h) => `<th style="${S.th}">${h}</th>`).join('')}</tr>`;
-const bodyRow = (values) => `<tr>${values.map((v) => `<td style="${S.td}">${v}</td>`).join('')}</tr>`;
+const bodyRow = (values, style = S.td) => `<tr>${values.map((v) => `<td style="${style}">${v}</td>`).join('')}</tr>`;
 
-function plainTable(headers, rows) {
+function plainTable(headers, rows, totalRow) {
   return `<table style="${S.table}" cellpadding="0" cellspacing="0">${headerRow(headers)}${rows
-    .map(bodyRow)
-    .join('')}</table>`;
+    .map((r) => bodyRow(r))
+    .join('')}${totalRow ? bodyRow(totalRow, S.tdTotal) : ''}</table>`;
 }
 
-/** A table whose rows are grouped under one shaded header row per user. */
-function groupedTable(headers, groups, rowCells, unit) {
-  const body = groups
-    .map(
-      (g) =>
-        `<tr><td colspan="${headers.length}" style="${S.group}">${escapeHtml(g.name)} — ${g.items.length} ${unit}${
-          g.items.length === 1 ? '' : 's'
-        }</td></tr>` + g.items.map((item) => bodyRow(rowCells(item))).join('')
-    )
-    .join('');
-  return `<table style="${S.table}" cellpadding="0" cellspacing="0">${headerRow(headers)}${body}</table>`;
-}
-
-const section = (title, inner) => `<h2 style="${S.h2}">${title}</h2>${inner}`;
+const section = (title, inner, caption = '') =>
+  `<h2 style="${S.h2}">${title}</h2>${caption ? `<p style="${S.caption}">${caption}</p>` : ''}${inner}`;
 const emptyNote = (text) => `<p style="${S.empty}">${text}</p>`;
+const awaiting = (text) => emptyNote(`Not available — ${text}`);
 
 function statCell(label, value) {
   return `<td style="width:25%;padding:12px 8px;border:1px solid #eee;text-align:center;background:#faf7f7">
-    <div style="font-size:22px;font-weight:bold;color:${BRAND}">${value}</div>
+    <div style="font-size:20px;font-weight:bold;color:${BRAND}">${value}</div>
     <div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.4px">${label}</div>
   </td>`;
 }
 
 const inr = (n) => `₹${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const inr0 = (n) => `₹${Math.round(Number(n || 0)).toLocaleString('en-IN')}`;
+const num = (n) => Number(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+const plural = (n, word, many = `${word}s`) => `${num(n)} ${Number(n) === 1 ? word : many}`;
 const right = (html) => `<div style="text-align:right;white-space:nowrap">${html}</div>`;
 const sub = (text) => `<div style="color:#777;font-size:11px;font-weight:normal">${text}</div>`;
+const coloured = (text, colour) => `<span style="color:${colour};font-weight:bold">${text}</span>`;
+const GREEN = '#137333';
+const AMBER = '#b06000';
+const RED = '#c5221f';
+const tick = (met) => (met ? coloured('✓', GREEN) : coloured('✗', RED));
 
 const chip = (text, bg, fg) =>
   `<span style="display:inline-block;padding:3px 9px;border-radius:12px;background:${bg};color:${fg};font-size:11px;font-weight:bold;letter-spacing:.3px;white-space:nowrap">● ${text}</span>`;
 
-/** The month's verdict: invoicing so far against the target pro-rated to the day. */
-function targetStatus(s) {
-  if (s.status === 'no-target') return chip('NO TARGET SET', '#f1f1f1', '#666');
-  const detail = sub(`${s.pctOfTarget}% of ${inr0(s.target)} · expected ${inr0(s.expected)} by day ${s.dayOfMonth} of ${s.daysInMonth}`);
-  return s.status === 'on-track'
-    ? chip('ON TRACK', '#e6f4ea', '#137333') + detail
-    : chip('BEHIND', '#fce8e6', '#c5221f') + detail;
-}
+/** "₹1,23,456.00" with the count of documents under it. */
+const countValue = (t, noun) => `<b>${inr(t.value)}</b>${sub(plural(t.count, noun))}`;
 
-function paymentText(p) {
-  if (!p?.mode) return '—';
-  return [PAYMENT_LABELS[p.mode] || p.mode, p.amount != null ? inr(p.amount) : '', p.reference].filter(Boolean).join(' · ');
-}
-
-function renderSalesHtml(d) {
-  const s = d.sales;
-  const day = shortDay(d.dayKey);
-
-  const kpiHtml = `<table style="${S.table}" cellpadding="0" cellspacing="0">
-    ${headerRow(['', `Yesterday (${day})`, 'Count', 'Month to date', 'Status'])}
-    ${bodyRow([
-      `<b>Invoiced revenue</b>${sub(
-        s.basicValueKnown || !s.invoices.length
-          ? 'basic value before GST, as in the Tally sales register'
-          : 'invoice totals as billed — the loaded TDL sends no basic value'
-      )}`,
-      `<b style="color:#137333;font-size:14px">${inr(s.invoicedValue)}</b>${
-        s.basicValueKnown ? sub(`${inr(s.billedValue)} billed with GST`) : ''
-      }`,
-      String(s.invoices.length),
-      `<b>${inr(s.mtd.value)}</b>${sub(`${s.mtd.count} invoice${s.mtd.count === 1 ? '' : 's'}`)}`,
-      targetStatus(s),
-    ])}
-    ${bodyRow([
-      `<b>Orders confirmed</b>${sub('payment in hand, sent to accounts')}`,
-      inr(s.confirmedValue),
-      String(s.confirmedOrders.length),
-      `${inr(s.mtdConfirmed.value)}${sub(`${s.mtdConfirmed.count} order${s.mtdConfirmed.count === 1 ? '' : 's'}`)}`,
-      '',
-    ])}
-    ${bodyRow([
-      `<b>Orders booked</b>${sub('new sales orders in the CRM')}`,
-      inr(s.bookedValue),
-      String(s.bookedOrders.length),
-      `${inr(s.mtdBooked.value)}${sub(`${s.mtdBooked.count} order${s.mtdBooked.count === 1 ? '' : 's'}`)}`,
-      '',
-    ])}
-  </table>`;
-
-  const orderCell = (i) => {
-    if (i.orders?.length) return i.orders.map((o) => escapeHtml(o.number)).join(', ');
-    if (i.orderNumbers?.length) {
-      return `<span style="color:#c5221f">${escapeHtml(i.orderNumbers.join(', '))}</span>${sub('no such order in the CRM')}`;
-    }
-    return '<span style="color:#999">no order no. on invoice</span>';
+/**
+ * The month's verdict: invoicing so far against the monthly target in Sales
+ * Order Settings, pro-rated to the report day of the month.
+ */
+async function revenueVerdict(dayKey, mtdValue) {
+  const settings = await Setting.getGlobal();
+  const target = Number(settings.salesOrder?.monthlyRevenueTarget) || 0;
+  if (!target) return { status: 'no-target' };
+  const [year, month] = dayKey.split('-').map(Number);
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const dayOfMonth = Number(dayKey.slice(8, 10));
+  const expected = round2((target * dayOfMonth) / daysInMonth);
+  return {
+    status: mtdValue >= expected ? 'on-track' : 'behind',
+    target,
+    expected,
+    dayOfMonth,
+    daysInMonth,
+    pctOfTarget: Math.round((mtdValue / target) * 100),
   };
-  const invoicesHtml = s.invoices.length
-    ? plainTable(
-        ['Invoice', 'Party', 'CRM Order', 'Booked By', 'Basic Value', 'Invoice Total'],
-        [
-          ...s.invoices.map((i) => [
-            escapeHtml(i.voucherNumber || '—'),
-            escapeHtml(i.party || '—'),
-            orderCell(i),
-            escapeHtml((i.orders || []).map((o) => o.createdBy?.name).filter(Boolean).join(', ') || '—'),
-            right(Number(i.basicValue) > 0 ? inr(i.basicValue) : '<span style="color:#999">—</span>'),
-            right(inr(i.amount)),
-          ]),
-          ['<b>Total</b>', '', '', '', right(`<b>${inr(s.invoicedValue)}</b>`), right(`<b>${inr(s.billedValue)}</b>`)],
-        ]
-      )
-    : emptyNote(
-        s.invoiceFeedLive
-          ? 'No sales invoices were raised in Tally.'
-          : 'Tally has not sent any invoices to the CRM yet — load the updated Mickys Stock Export TDL on the Tally machine.'
-      );
+}
 
-  const confirmedHtml = s.confirmedOrders.length
-    ? plainTable(
-        ['Time', 'Order', 'Customer', 'Value', 'Payment', 'Executive'],
-        s.confirmedOrders.map((o) => [
-          istTime(o.confirmedAt),
-          escapeHtml(o.number),
-          escapeHtml(o.customerName),
-          right(inr(o.total)),
-          escapeHtml(paymentText(o.payment)),
-          escapeHtml(o.createdBy?.name || '—'),
-        ])
-      )
-    : emptyNote('No orders were confirmed.');
+function targetStatus(v) {
+  if (v.status === 'no-target') return '';
+  const detail = sub(`${v.pctOfTarget}% of ${inr0(v.target)} · expected ${inr0(v.expected)} by day ${v.dayOfMonth} of ${v.daysInMonth}`);
+  return v.status === 'on-track' ? chip('ON TRACK', '#e6f4ea', GREEN) + detail : chip('BEHIND', '#fce8e6', RED) + detail;
+}
 
-  const bookedHtml = s.bookedOrders.length
-    ? plainTable(
-        ['Time', 'Order', 'Customer', 'Value', 'Executive', 'Status now'],
-        s.bookedOrders.map((o) => [
-          istTime(o.createdAt),
-          escapeHtml(o.number),
-          escapeHtml(o.customerName),
-          right(inr(o.total)),
-          escapeHtml(o.createdBy?.name || '—'),
-          escapeHtml(ORDER_STATUS_LABELS[o.status] || o.status),
-        ])
-      )
-    : emptyNote('No sales orders were booked.');
+/** Only CRITICAL is flagged — anything else needs no action, so it stays blank. */
+function expiryChip(status, criticalItems = 0) {
+  if (status !== 'critical') return '';
+  return chip(criticalItems > 1 ? `CRITICAL · ${criticalItems} SKUs` : 'CRITICAL', '#fce8e6', RED);
+}
 
-  const w = s.waiting;
-  const waitingHtml = `<p style="font-size:13px;margin:8px 0 0;color:#333">
-    <b>Waiting now:</b>
-    ${w.confirmed?.count || 0} confirmed awaiting Tally invoice (${inr0(w.confirmed?.value)}) ·
-    ${w.invoiced?.count || 0} invoiced awaiting dispatch (${inr0(w.invoiced?.value)}) ·
-    ${w.dispatched?.count || 0} dispatched awaiting delivery (${inr0(w.dispatched?.value)})
-    ${s.dispatchedCount || s.deliveredCount ? `· <b>${day}:</b> ${s.dispatchedCount} dispatched, ${s.deliveredCount} delivered` : ''}
-  </p>`;
+function salesHtml(r, verdict) {
+  const s = r.sales;
+  const rec = s.receivables;
+  const day = shortDay(r.date);
+  const rows = [
+    [
+      `<b>Total Sales</b>${sub('Tally sales invoices, basic value before GST')}`,
+      s.totalSales.live ? right(countValue(s.totalSales.today, 'invoice')) : 'awaiting Tally',
+      s.totalSales.live ? `${right(countValue(s.totalSales.mtd, 'invoice'))}${targetStatus(verdict)}` : '',
+    ],
+    [
+      `<b>Orders Received</b>${sub('CRM sales orders booked, incl. GST')}`,
+      right(countValue(s.ordersReceived.today, 'order')),
+      right(countValue(s.ordersReceived.mtd, 'order')),
+    ],
+    [
+      `<b>Orders Dispatched</b>${sub('incl. GST')}`,
+      right(countValue(s.ordersDispatched.today, 'order')),
+      right(countValue(s.ordersDispatched.mtd, 'order')),
+    ],
+    [
+      `<b>Collection Received</b>${sub('receipts credited to customer ledgers')}`,
+      s.collection.live ? right(countValue(s.collection.today, 'receipt')) : 'awaiting the day-end add-on',
+      s.collection.live ? right(countValue(s.collection.mtd, 'receipt')) : '',
+    ],
+    [
+      '<b>Outstanding Receivables</b>',
+      rec ? right(`<b>${inr(rec.total)}</b>${sub(plural(rec.customers, 'customer'))}`) : 'awaiting the day-end add-on',
+      rec
+        ? [
+            rec.overdue ? `${inr(rec.overdue)} past due date` : '',
+            rec.advances ? `advances ${inr(rec.advances)}` : '',
+            s.receivablesAsOf ? `as on ${shortDay(s.receivablesAsOf)}` : '',
+          ]
+            .filter(Boolean)
+            .join(' · ')
+        : '',
+    ],
+  ];
+  return plainTable(['Particular', `Yesterday (${day})`, 'Month to date / remarks'], rows);
+}
 
-  return (
-    section(`Sales — ${day}`, kpiHtml) +
-    section('Invoices Raised in Tally', invoicesHtml) +
-    section('Orders Confirmed (Payment Received)', confirmedHtml) +
-    section('Orders Booked', bookedHtml + waitingHtml)
+function execKpiHtml(k) {
+  const t = k.targets;
+  if (!k.rows.length) return emptyNote('No active sales executives.');
+  const rows = k.rows.map((r) => [
+    escapeHtml(r.name),
+    `${num(r.visits)} ${tick(r.met.visits)}`,
+    `${num(r.calls)} ${tick(r.met.calls)}`,
+    `${num(r.leadsMade)} / ${num(r.leadsAssigned)} ${tick(r.met.leads)}`,
+  ]);
+  return plainTable(
+    ['Executive', `Visits (target ${t.visits})`, `Calls (target ${t.calls})`, `New leads made / assigned (target ${t.leads})`],
+    rows,
+    ['Total', num(k.totals.visits), num(k.totals.calls), `${num(k.totals.leadsMade)} / ${num(k.totals.leadsAssigned)}`]
   );
 }
 
-function renderDigestHtml(d) {
-  const leadGroups = groupBy(d.newLeads, (l) => l.createdBy?.name || l.assignedExecId?.name);
-  const visitGroups = groupBy(d.visits, (v) => v.loggedBy);
-
-  const newLeadsHtml = d.newLeads.length
-    ? groupedTable(
-        ['Ref', 'Business', 'City', 'Type', 'Source', 'Assigned To'],
-        leadGroups,
-        (l) => [
-          escapeHtml(l.refNumber),
-          escapeHtml(l.businessName),
-          escapeHtml(l.city || '—'),
-          escapeHtml(l.businessType || '—'),
-          escapeHtml(l.leadSource || '—'),
-          escapeHtml(l.assignedExecId?.name || '—'),
-        ],
-        'lead'
-      )
-    : emptyNote('No new leads were created.');
-
-  const visitsHtml = d.visits.length
-    ? groupedTable(
-        ['Ref', 'Business', 'City', 'Type', 'Visit Note'],
-        visitGroups,
-        (v) => [
-          escapeHtml(v.refNumber),
-          escapeHtml(v.businessName),
-          escapeHtml(v.city || '—'),
-          escapeHtml(v.visitType),
-          escapeHtml(clip(v.note)),
-        ],
-        'visit'
-      )
-    : emptyNote('No client visits were logged.');
-
-  const generatedHtml = d.generatedLeads.length
-    ? plainTable(
-        ['Time', 'Ref', 'Business', 'City', 'Kit', 'Executive'],
-        d.generatedLeads.map((l) => [
-          istTime(l.generatedAt),
-          escapeHtml(l.refNumber),
-          escapeHtml(l.businessName),
-          escapeHtml(l.city || '—'),
-          escapeHtml(KIT_TYPE_LABELS[l.kitType] || '—'),
-          escapeHtml(l.assignedExecId?.name || '—'),
-        ])
-      )
-    : emptyNote('No kits were generated.');
-
-  const deliveredHtml = d.deliveredLeads.length
-    ? plainTable(
-        ['Time', 'Ref', 'Business', 'Kit', 'Method', 'Delivered To', 'Executive'],
-        d.deliveredLeads.map((l) => [
-          istTime(l.delivery.sentAt),
-          escapeHtml(l.refNumber),
-          escapeHtml(l.businessName),
-          escapeHtml(KIT_TYPE_LABELS[l.kitType] || '—'),
-          escapeHtml(l.delivery?.method || '—'),
-          escapeHtml(l.delivery?.sentTo || l.delivery?.note || '—'),
-          escapeHtml(l.assignedExecId?.name || '—'),
-        ])
-      )
-    : emptyNote('No kits were delivered.');
-
-  const cityHtml = plainTable(
-    ['City', `New Leads (${shortDay(d.dayKey)})`, 'Total Leads'],
-    d.cityCounts.map((c) => [escapeHtml(c.city), String(c.newCount), String(c.totalCount)])
+function duesHtml(d) {
+  if (!d.available) return awaiting('customer balances come from the day-end add-on, which has not sent data for this day.');
+  if (!d.rows.length) return emptyNote(`No customer owed anything as on ${shortDay(d.asOf)}.`);
+  const shown = d.rows.slice(0, MAX_DUE_ROWS);
+  const rows = shown.map((r) => [
+    escapeHtml(r.name),
+    right(`<b>${inr(r.amount)}</b>${r.overdue > 0 ? sub(`${inr(r.overdue)} past due`) : ''}`),
+    r.oldestBillDate
+      ? `${dateText(r.oldestBillDate)} · ${coloured(`${r.days} d`, r.days > 60 ? RED : r.days > 30 ? AMBER : '#444')}${sub(
+          `${plural(r.bills, 'bill')} open${r.overdueDays != null ? ` · ${r.overdueDays} d past due date` : ''}`
+        )}`
+      : '—',
+    escapeHtml(r.followUp?.status || '—'),
+  ]);
+  const more = d.rows.length - shown.length;
+  return (
+    plainTable(['Customer', 'Amount Due', 'Due Since / Days', 'Follow-up Status'], rows) +
+    (more > 0 ? emptyNote(`…and ${plural(more, 'more customer')} — see the full list on the report page.`) : '')
   );
+}
 
+function productionHtml(p) {
+  if (!p.live && !p.rows.length) return awaiting('production comes from the day-end add-on, which has not sent data yet.');
+  if (!p.rows.length) return emptyNote('Nothing was produced or planned.');
+  const rows = p.rows.map((r) => [
+    `${escapeHtml(r.item)}${r.bulk ? sub('bulk cooked batch (kit)') : ''}`,
+    right(r.planned != null ? `${num(r.planned)} ${escapeHtml(r.unit)}` : '—'),
+    right(`${num(r.actual)} ${escapeHtml(r.unit)}${r.kg != null ? sub(`${num(r.kg)} kg`) : ''}`),
+    right(
+      r.achievementPct == null
+        ? '—'
+        : coloured(`${r.achievementPct}%`, r.achievementPct >= 100 ? GREEN : r.achievementPct >= 80 ? AMBER : RED)
+    ),
+  ]);
+  return plainTable(['SKU', 'Planned', 'Actual', 'Achievement'], rows);
+}
+
+function costHtml(c) {
+  if (!c.rows.length) return emptyNote('No production to cost.');
+  const per = (r) => (r.per === 'kg' ? '/kg' : `/${escapeHtml(r.per)}`);
+  const rows = c.rows.map((r) => [
+    escapeHtml(r.item),
+    right(r.histCost != null ? `${inr(r.histCost)}${per(r)}${r.histSource ? sub(escapeHtml(r.histSource)) : ''}` : '—'),
+    right(r.todayCost != null ? `${inr(r.todayCost)}${per(r)}` : 'not valued'),
+    right(
+      r.variance != null
+        ? coloured(`${r.variance > 0 ? '+' : r.variance < 0 ? '−' : ''}${inr(Math.abs(r.variance))}`, r.variance > 0 ? RED : GREEN) +
+            sub(`${r.variancePct > 0 ? '+' : ''}${num(r.variancePct)}%`)
+        : '—'
+    ),
+    r.ok == null ? '—' : tick(r.ok),
+  ]);
+  return plainTable(['SKU', 'Avg. Historical Cost', 'Yesterday’s Cost', 'Variance', 'Status'], rows);
+}
+
+/**
+ * Closing stock: one line per SKU family (value and worst expiry status), then
+ * only the CRITICAL SKUs — the ones needing action — never the whole list.
+ */
+function stockHtml(st) {
+  if (!st.available) return awaiting('no closing stock has arrived from Tally for this day.');
+  const groups = [...st.families, st.other].filter((g) => g && g.itemCount > 0);
+  const rows = groups.map((g) => [
+    `${escapeHtml(g.label)}${sub(plural(g.itemCount, 'SKU'))}`,
+    right(`<b>${inr(g.value)}</b>`),
+    expiryChip(g.status, g.criticalItems),
+  ]);
+  const familyTable = plainTable(['SKU Family', 'Closing Stock Value', 'Expiry Status'], rows, ['Total', right(inr(st.total)), '']);
+  if (!st.expiry.sent) {
+    return familyTable + emptyNote('Expiry status needs batch-wise stock from the day-end add-on, which has not sent it.');
+  }
+
+  const critical = groups
+    .flatMap((g) => g.items.filter((i) => i.expiry?.status === 'critical').map((i) => ({ ...i, family: g.label })))
+    .sort((a, b) => new Date(a.expiry.expiryDate) - new Date(b.expiry.expiryDate));
+  const heading = `<p style="font-size:13px;font-weight:bold;color:#5a1717;margin:16px 0 6px">Critical SKUs — a batch expiring within ${st.expiry.warnDays} days or already expired</p>`;
+  if (!critical.length) return familyTable + heading + emptyNote('No SKU is close to expiry.');
+  const criticalRows = critical.map((i) => [
+    `${escapeHtml(i.name)}${sub(escapeHtml([i.code, i.family].filter(Boolean).join(' · ')))}`,
+    right(inr(i.value)),
+    escapeHtml(i.expiry.batch || '—'),
+    `${dateText(i.expiry.expiryDate)}${sub(
+      i.expiry.daysLeft < 0 ? coloured(`expired ${-i.expiry.daysLeft} d ago`, RED) : coloured(`${i.expiry.daysLeft} d left`, AMBER)
+    )}`,
+  ]);
+  return familyTable + heading + plainTable(['SKU', 'Closing Stock Value', 'Batch', 'Expiry'], criticalRows);
+}
+
+function topStockHtml(top) {
+  if (!top?.rows?.length) return emptyNote('No SKU holds stock.');
+  const rows = top.rows.map((i) => [
+    `${escapeHtml(i.name)}${i.code ? sub(escapeHtml(i.code)) : ''}`,
+    right(inr(i.value)),
+    expiryChip(i.expiry?.status),
+  ]);
+  return (
+    plainTable(['SKU', 'Closing Stock Value', 'Expiry Status'], rows, ['Total', right(inr(top.value)), '']) +
+    emptyNote(`${top.count} of ${plural(top.of, 'SKU')} holding stock · ${num(top.pctOfTotal)}% of total closing stock`)
+  );
+}
+
+/** Where the Tally figures stand — a stale feed is said, not hidden. */
+function feedHtml(feed) {
+  const parts = [
+    feed.stock?.at ? `stock push ${istDateTime(feed.stock.at)}` : 'no stock push yet',
+    feed.dayEnd?.at ? `day-end push ${istDateTime(feed.dayEnd.at)}` : 'day-end add-on not sending yet',
+  ];
+  return `<p style="color:#777;font-size:11px;margin:10px 0 0">Tally data: ${parts.join(' · ')}</p>`;
+}
+
+/** The whole mail for one day's report (services/dayEndReport.service.js buildDayEndReport). */
+function renderDayEndHtml(r, verdict) {
+  const s = r.sales;
+  const reportUrl = `${String(env.clientUrl || '').replace(/\/$/, '')}/sales/day-end?date=${r.date}`;
+  const stockCaption = r.stock.available
+    ? r.stock.source === 'tally'
+      ? `Tally closing stock as on ${shortDay(r.stock.asOf)}`
+      : `Tally stock register for ${shortDay(r.stock.asOf)}${r.stock.settled ? '' : ' (last sync of the day)'}`
+    : '';
   return `
-  <div style="font-family:Arial,Helvetica,sans-serif;max-width:680px;margin:0 auto;color:#222">
+  <div style="font-family:Arial,Helvetica,sans-serif;max-width:720px;margin:0 auto;color:#222">
     <div style="background:${BRAND};color:#fff;padding:16px 20px;border-radius:6px 6px 0 0">
-      <div style="font-size:17px;font-weight:bold">Micky's CRM — Daily Report</div>
-      <div style="font-size:13px;opacity:.9;margin-top:2px">${prettyDay(d.dayKey)}</div>
+      <div style="font-size:17px;font-weight:bold">Micky’s — Day End Report</div>
+      <div style="font-size:13px;opacity:.9;margin-top:2px">${prettyDay(r.date)}</div>
     </div>
     <div style="border:1px solid #eee;border-top:0;padding:16px 20px 24px;border-radius:0 0 6px 6px">
-      <table style="border-collapse:collapse;width:100%;margin-top:4px" cellpadding="0" cellspacing="0">
-      <tr>
-        ${statCell('Invoiced (Tally)', inr0(d.sales.invoicedValue))}
-        ${statCell('Invoices', d.sales.invoices.length)}
-        ${statCell('Orders Booked', d.sales.bookedOrders.length)}
-        ${statCell('Invoiced MTD', inr0(d.sales.mtd.value))}
-      </tr>
-      <tr>
-        ${statCell('New Leads', d.newLeads.length)}
-        ${statCell('Visits', d.visits.length)}
-        ${statCell('Kits Generated', d.generatedLeads.length)}
-        ${statCell('Kits Delivered', d.deliveredLeads.length)}
+      <table style="border-collapse:collapse;width:100%;margin-top:4px" cellpadding="0" cellspacing="0"><tr>
+        ${statCell('Sales (Tally)', s.totalSales.live ? inr0(s.totalSales.today.value) : '—')}
+        ${statCell('Collection', s.collection.live ? inr0(s.collection.today.value) : '—')}
+        ${statCell('Receivables', s.receivables ? inr0(s.receivables.total) : '—')}
+        ${statCell('Closing Stock', r.stock.available ? inr0(r.stock.total) : '—')}
       </tr></table>
-      ${renderSalesHtml(d)}
-      ${section('New Leads — User wise', newLeadsHtml)}
-      ${section('Visits — User wise', visitsHtml)}
-      ${section('Kits Generated', generatedHtml)}
-      ${section('Kits Delivered', deliveredHtml)}
-      ${section('City-wise Leads', cityHtml)}
-      <p style="color:#999;font-size:11px;margin:28px 0 0">
-        Automated daily report from Micky's CRM · covers ${shortDay(d.dayKey)} (IST) · sent ${istTime(new Date())} IST
+      ${feedHtml(r.feed)}
+      ${section('Sales', salesHtml(r, verdict))}
+      ${section('Sales Executive KPI', execKpiHtml(r.execKpi), 'Visits and calls from the visit reports logged that day; new leads dated that day.')}
+      ${section(
+        'Due Customer List',
+        duesHtml(r.dues),
+        r.dues.available
+          ? `${plural(r.dues.rows.length, 'customer')} with a balance · as on ${shortDay(r.dues.asOf)}` +
+              (r.dues.billsCaptured ? '' : ' · no bill-wise detail captured for this day')
+          : ''
+      )}
+      ${section('Production', productionHtml(r.production))}
+      ${section('Production Cost / Kg', costHtml(r.production.cost), `✗ when yesterday’s cost is more than ${num(r.production.cost.tolerancePct)}% above the average.`)}
+      ${section('Closing Stock – SKU Wise', stockHtml(r.stock), stockCaption)}
+      ${section('Top 20% High-Value Closing Stock', topStockHtml(r.stock.top))}
+      <p style="margin:26px 0 0"><a href="${escapeHtml(reportUrl)}" style="color:${BRAND};font-weight:bold">Open the full report in the CRM →</a></p>
+      <p style="color:#999;font-size:11px;margin:12px 0 0">
+        Automated Day End Report from Micky’s CRM · covers ${shortDay(r.date)} (IST) · sent ${istTime(new Date())} IST
       </p>
     </div>
   </div>`;
@@ -560,8 +392,9 @@ const hhmm = (h, m) => `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0
 // ----------------------------------------------------------------- sender ----
 
 /**
- * Builds and emails the digest for one IST day (defaults: yesterday, to the
- * configured recipients). Returns the send result plus the day's counts.
+ * Builds and emails the Day End Report for one IST day (defaults: yesterday,
+ * to the configured recipients). Returns the send result plus the day's
+ * headline figures.
  */
 async function sendDailyReport({ dayKey, to } = {}) {
   const day = dayKey || yesterdayKey();
@@ -570,16 +403,17 @@ async function sendDailyReport({ dayKey, to } = {}) {
     throw ApiError.badRequest('Not a valid calendar day — use YYYY-MM-DD');
   }
 
-  const digest = await buildDailyDigest(day);
+  const report = await buildDayEndReport(day);
+  const verdict = await revenueVerdict(day, report.sales.totalSales.mtd.value);
   const recipient = to || (await resolveSchedule()).to;
   const result = await sendMail({
     to: recipient,
-    subject: `Micky's CRM Daily Report — ${shortDay(day)}`,
-    html: renderDigestHtml(digest),
+    subject: `Micky’s Day End Report — ${shortDay(day)}`,
+    html: renderDayEndHtml(report, verdict),
     fromName: "Micky's CRM",
   });
 
-  // A successful send of yesterday's digest to the standard inbox counts as
+  // A successful send of yesterday's report to the standard inbox counts as
   // the day's scheduled send, so the morning job never mails a duplicate.
   if (!result.skipped && !to && day === yesterdayKey()) {
     const settings = await Setting.getGlobal();
@@ -589,19 +423,20 @@ async function sendDailyReport({ dayKey, to } = {}) {
     }
   }
 
+  const s = report.sales;
   return {
     ...result,
     day,
     to: [].concat(recipient).join(', '),
     counts: {
-      newLeads: digest.newLeads.length,
-      visits: digest.visits.length,
-      kitsGenerated: digest.generatedLeads.length,
-      kitsDelivered: digest.deliveredLeads.length,
-      invoices: digest.sales.invoices.length,
-      invoiced: digest.sales.invoicedValue,
-      ordersBooked: digest.sales.bookedOrders.length,
-      ordersConfirmed: digest.sales.confirmedOrders.length,
+      invoices: s.totalSales.today.count,
+      invoiced: s.totalSales.today.value,
+      ordersReceived: s.ordersReceived.today.count,
+      ordersDispatched: s.ordersDispatched.today.count,
+      collection: s.collection.today.value,
+      receivables: s.receivables?.total ?? null,
+      dueCustomers: report.dues.rows.length,
+      closingStock: report.stock.available ? report.stock.total : null,
     },
   };
 }
@@ -611,7 +446,7 @@ async function sendDailyReport({ dayKey, to } = {}) {
 let running = false;
 let timer = null;
 
-/** One guarded pass: sends yesterday's digest unless it already went out. */
+/** One guarded pass: sends yesterday's report unless it already went out. */
 async function runScheduledSend() {
   if (running) return;
   running = true;
@@ -628,9 +463,9 @@ async function runScheduledSend() {
     }
     const c = result.counts;
     console.log(
-      `[daily-report] sent ${day} digest to ${result.to} ` +
-        `(${c.invoices} invoices Rs. ${c.invoiced}, ${c.ordersBooked} orders booked, ${c.ordersConfirmed} confirmed; ` +
-        `${c.newLeads} leads, ${c.visits} visits, ${c.kitsGenerated} generated, ${c.kitsDelivered} delivered)`
+      `[daily-report] sent the ${day} Day End Report to ${result.to} ` +
+        `(${c.invoices} invoices Rs. ${c.invoiced}, ${c.ordersReceived} orders received, collection Rs. ${c.collection}, ` +
+        `${c.dueCustomers} customers with dues)`
     );
   } catch (err) {
     // The lastSentDay guard makes retries duplicate-safe.
@@ -681,7 +516,7 @@ async function rescheduleDailyReport() {
     `[daily-report] rescheduled: ${schedule.enabled ? `daily at ${hhmm(hour, minute)} IST to ${schedule.to.join(', ')}` : 'switched off in Settings'}`
   );
   // A time moved to earlier today must not skip today: if it is already past
-  // and yesterday's digest has not gone, send it now.
+  // and yesterday's report has not gone, send it now.
   const sinceIstMidnight = (Date.now() + IST_OFFSET_MS) % DAY_MS;
   if (schedule.enabled && sinceIstMidnight >= (hour * 60 + minute) * 60000) runScheduledSend();
   return schedule;
@@ -711,7 +546,7 @@ function startDailyReport() {
   scheduleNext().then(async ({ hour, minute }) => {
     const schedule = await resolveSchedule().catch(() => null);
     console.log(
-      `[daily-report] mailing yesterday's digest daily at ${hhmm(hour, minute)} IST` +
+      `[daily-report] mailing yesterday's Day End Report daily at ${hhmm(hour, minute)} IST` +
         (schedule ? ` to ${schedule.to.join(', ')}${schedule.enabled ? '' : ' (currently switched off in Settings)'}` : '')
     );
   });
@@ -724,9 +559,7 @@ function stopDailyReport() {
 }
 
 module.exports = {
-  REVENUE_EXPR,
-  buildDailyDigest,
-  renderDigestHtml,
+  renderDayEndHtml,
   sendDailyReport,
   resolveSchedule,
   rescheduleDailyReport,

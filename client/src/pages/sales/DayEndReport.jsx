@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import api, { apiError } from '@/lib/api';
 import useAutoRefresh from '@/lib/useAutoRefresh';
@@ -988,7 +989,12 @@ function TopStockTable({ top }) {
  * the production plan and the dues follow-up notes are typed in here.
  */
 export default function DayEndReport() {
-  const [date, setDate] = useState(todayInput());
+  // ?date=YYYY-MM-DD opens that day (the morning email links here); today otherwise.
+  const [searchParams] = useSearchParams();
+  const [date, setDate] = useState(() => {
+    const asked = searchParams.get('date') || '';
+    return /^\d{4}-\d{2}-\d{2}$/.test(asked) && asked <= todayInput() ? asked : todayInput();
+  });
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
   const [planOpen, setPlanOpen] = useState(false);
