@@ -94,7 +94,7 @@ export default function SalesSettings() {
       const { data } = await api.post('/reports/daily-email', body);
       const c = data.data?.counts || {};
       toast.success(data.message || `Daily report for ${data.data?.day} sent`, {
-        description: `${c.invoices ?? 0} invoices · ${c.ordersBooked ?? 0} orders booked · ${c.newLeads ?? 0} leads · ${c.visits ?? 0} visits`,
+        description: `Day End Report: ${c.invoices ?? 0} invoices · ${c.ordersReceived ?? 0} orders received · ${c.dueCustomers ?? 0} customers with dues`,
         duration: 8000,
       });
     } catch (err) {
@@ -264,9 +264,8 @@ export default function SalesSettings() {
         <CardHeader>
           <CardTitle className="text-base">Daily report — revenue target</CardTitle>
           <CardDescription>
-            The morning report email carries yesterday&rsquo;s sales invoices from Tally, the month-to-date invoiced
-            revenue, and an on-track / behind verdict against this monthly target, pro-rated to the day of the month.
-            Leave it at 0 for no verdict.
+            The morning Day End Report email shows the month-to-date invoiced revenue from Tally with an on-track /
+            behind verdict against this monthly target, pro-rated to the day of the month. Leave it at 0 for no verdict.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -302,8 +301,9 @@ export default function SalesSettings() {
               <Clock className="h-4 w-4 text-primary" /> Daily report — schedule &amp; send
             </CardTitle>
             <CardDescription>
-              The report for a day goes out the next day at this time (IST), to these addresses. It carries that
-              day&rsquo;s Tally invoices, orders, leads and visits.
+              Each morning at this time (IST) these addresses get the previous day&rsquo;s Day End Report: sales,
+              collections and receivables, the executives&rsquo; KPI, the due customer list, production and its cost,
+              closing stock with only the critical (expiring) SKUs listed, and the top 20% of stock by value.
               {dailyReport.effective && (
                 <>
                   {' '}Currently: {dailyReport.effective.enabled ? `daily at ${dailyReport.effective.time} IST` : 'switched off'} to{' '}

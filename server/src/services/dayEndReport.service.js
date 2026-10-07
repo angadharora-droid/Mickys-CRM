@@ -44,7 +44,13 @@ const StockSyncLog = require('../models/StockSyncLog');
 const Setting = require('../models/Setting');
 const { SALES_VOUCHER_TYPE, TDL_VERSION } = require('./tallyStock.service');
 const { DAYEND_TDL_VERSION, kgPerUnit } = require('./tallyDayEnd.service');
-const { REVENUE_EXPR } = require('./dailyReport.service');
+/**
+ * The revenue an invoice counts for: its basic value before GST — the "Basic
+ * Value" column of Tally's sales register, which is how the business reads
+ * its sales — falling back to the billed total for vouchers sent by a TDL
+ * that did not export it.
+ */
+const REVENUE_EXPR = { $cond: [{ $gt: ['$basicValue', 0] }, '$basicValue', '$amount'] };
 const { istDateKey } = require('../utils/istDate');
 
 const DAY_MS = 86400000;
