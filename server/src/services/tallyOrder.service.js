@@ -554,8 +554,19 @@ function statusOf(order, cfg, now = new Date()) {
   // the order is due again in this one.
   const sameMode = !cfg.enabled || !t.mode || t.mode === cfg.mode;
   if (sameMode && t.seenAt) {
+    // "Gone from Tally" only matters while the order still waits to be
+    // invoiced: once invoiced (or further on) the invoice stands, whatever
+    // became of the sales order voucher. And only a report that listed sales
+    // orders at all counts — the add-on's report has come back empty before,
+    // which would otherwise mark every order missing at once.
+    const awaitingInvoice = order.status === 'confirmed';
     const recent = order.confirmedAt && now - new Date(order.confirmedAt) < 55 * DAY_MS;
-    const gone = recent && cfg.lastSeenAt && new Date(t.seenAt) < new Date(cfg.lastSeenAt) - 60 * 1000;
+    const gone =
+      awaitingInvoice &&
+      recent &&
+      cfg.lastSeenAt &&
+      cfg.lastSeenCount > 0 &&
+      new Date(t.seenAt) < new Date(cfg.lastSeenAt) - 60 * 1000;
     return { ...base, state: gone ? 'missing' : 'in_tally' };
   }
   if (sameMode && t.sentAt) return { ...base, state: 'sent' };
