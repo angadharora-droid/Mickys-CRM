@@ -82,6 +82,7 @@ router.delete('/rate-items/:id', authenticate, authorize(ADMIN), rateItems.delet
 
 // ---------- Leads + Kit pipeline ----------
 router.get('/cities', authenticate, leads.listCities);
+router.post('/cities', authenticate, requireModule('leads'), validate(v.citySchema), leads.addCity);
 router.get('/states', authenticate, leads.listStates);
 router.get('/follow-ups', authenticate, leads.listFollowUps);
 router.get('/action-points', authenticate, leads.listActionPoints);

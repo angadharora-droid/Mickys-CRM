@@ -16,11 +16,14 @@ const mongoose = require('mongoose');
 const env = require('../config/env');
 const Lead = require('../models/Lead');
 const { canonicalCity, isKnownCity } = require('../config/indianCities');
+const { ensureCustomCities } = require('../services/city.service');
 
 async function main() {
   const apply = process.argv.includes('--apply');
   await mongoose.connect(env.mongoUri);
   console.log(`[cities] connected to ${env.mongoUri}${apply ? '' : '  (dry run — pass --apply to write)'}`);
+  // User-added cities (the City collection) are kept as-is, not snapped.
+  await ensureCustomCities({ force: true });
 
   const distinct = (await Lead.distinct('city')).filter(Boolean);
   let changed = 0;

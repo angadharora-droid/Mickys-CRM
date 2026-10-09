@@ -254,7 +254,7 @@ const NON_CITY = new Set([
   'saurashtra', 'kutch', 'kachchh', 'vidarbha', 'marathwada', 'malwa', 'konkan', 'bundelkhand',
   'oman', 'qatar', 'kuwait', 'bahrain', 'nepal', 'bangladesh', 'srilanka', 'pakistan', 'bhutan',
   'england', 'america', 'australia', 'canada', 'germany', 'france', 'russia', 'china', 'japan',
-  'malaysia', 'indonesia', 'thailand', 'vietnam', 'egypt', 'kenya', 'nigeria', 'africa',
+  'malaysia', 'indonesia', 'thailand', 'vietnam', 'brunei', 'egypt', 'kenya', 'nigeria', 'africa',
 ]);
 
 // Non-Latin spellings (norm() strips these to nothing, so they are matched on
@@ -278,6 +278,23 @@ const RAW_ALIASES = {
 const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z]/g, '');
 
 const CANONICAL_BY_KEY = new Map(INDIAN_CITIES.map((c) => [norm(c), c]));
+
+// Cities users added from the city dropdown (the City collection), keyed like
+// the canonical list. Loaded by services/city.service.js — this file stays
+// DB-free. A custom city matches exactly only: it never takes part in fuzzy
+// snapping, so it can't swallow typos of a real Indian city.
+let CUSTOM_BY_KEY = new Map();
+function setCustomCities(names) {
+  CUSTOM_BY_KEY = new Map();
+  for (const n of names || []) {
+    const key = norm(n);
+    if (key && !CANONICAL_BY_KEY.has(key) && !CUSTOM_BY_KEY.has(key)) CUSTOM_BY_KEY.set(key, n);
+  }
+}
+function addCustomCity(name) {
+  const key = norm(name);
+  if (key && !CANONICAL_BY_KEY.has(key) && !CUSTOM_BY_KEY.has(key)) CUSTOM_BY_KEY.set(key, name);
+}
 
 // Fuzzy matching searches alias spellings too ("Bangalor" is 1 edit from the
 // alias "bangalore", far from the canonical "Bengaluru"). Built lazily since
@@ -329,19 +346,29 @@ function matchKey(key) {
   if (exact) return exact;
   const alias = ALIASES[key];
   if (alias) return alias;
+  const custom = CUSTOM_BY_KEY.get(key);
+  if (custom) return custom;
   // States / regions / countries never snap to a city, however close a city
   // name happens to be.
   if (NON_CITY.has(key)) return null;
+  return fuzzyMatch(key);
+}
 
-  // Fuzzy: allow 1 edit for short names, 2 for medium, 3 for long — but only
-  // when there is a single best candidate, so ambiguous typos stay untouched.
-  // Two keys resolving to the same city (an alias and its canonical) are one
-  // candidate, not a tie.
+/**
+ * Unique best fuzzy match among the canonical cities and their aliases (plus
+ * `extra` [key, name] pairs when given), or null.
+ *
+ * Allows 1 edit for short names, 2 for medium, 3 for long — but only when
+ * there is a single best candidate, so ambiguous typos stay untouched. Two
+ * keys resolving to the same city (an alias and its canonical) are one
+ * candidate, not a tie.
+ */
+function fuzzyMatch(key, extra = []) {
   const max = key.length >= 9 ? 3 : key.length >= 5 ? 2 : 1;
   let best = null;
   let bestDist = max + 1;
   let tie = false;
-  for (const [candKey, cand] of fuzzyKeys()) {
+  for (const [candKey, cand] of [...fuzzyKeys(), ...extra]) {
     const d = editDistance(key, candKey, max);
     if (d < bestDist) {
       best = cand;
@@ -424,6 +451,39 @@ function stateForCity(city) {
   );
 }
 
+/**
+ * Duplicate check for a city a user wants to add to the dropdown. `name` is
+ * the tidied spelling it would be stored under. Spelling variants (case,
+ * spacing, punctuation), old names and aliases of a city already on the list —
+ * Indian, user-added, or in `otherNames` (cities stored on leads) — come back
+ * as `existing`. A unique near-miss comes back as `similar`, so the UI can ask
+ * before a typo becomes a second city; `state` flags a state name typed as a
+ * city.
+ */
+function checkNewCity(input, otherNames = []) {
+  const tidy = String(input || '').replace(/\s+/g, ' ').trim();
+  const name = titleCase(tidy);
+  const key = norm(tidy);
+  const raw = RAW_ALIASES[tidy.toLowerCase()];
+  if (raw) return { name, existing: raw };
+
+  const others = new Map();
+  for (const n of otherNames) {
+    const k = norm(n);
+    if (k && !others.has(k)) others.set(k, n);
+  }
+  const existing =
+    CANONICAL_BY_KEY.get(key) || ALIASES[key] || CUSTOM_BY_KEY.get(key) || others.get(key);
+  if (existing) return { name, existing };
+
+  const state = STATE_BY_STATE_KEY.get(key);
+  if (state) return { name, state };
+  if (NON_CITY.has(key)) return { name };
+
+  const similar = fuzzyMatch(key, [...CUSTOM_BY_KEY, ...others]);
+  return similar ? { name, similar } : { name };
+}
+
 module.exports = {
   CITIES_BY_STATE,
   INDIAN_CITIES,
@@ -432,4 +492,8 @@ module.exports = {
   isKnownCity,
   titleCase,
   stateForCity,
+  cityKey: norm,
+  setCustomCities,
+  addCustomCity,
+  checkNewCity,
 };

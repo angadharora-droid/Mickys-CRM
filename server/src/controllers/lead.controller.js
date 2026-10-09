@@ -15,7 +15,8 @@ const { sendKitEmail } = require('../services/email.service');
 const { generateKit, buildZip, getBrochureBuffer, BROCHURE_PATH, KITS_DIR } = require('../services/kit.service');
 const ExportCountry = require('../models/ExportCountry');
 const exportKitService = require('../services/exportKit.service');
-const { INDIAN_CITIES, canonicalCity, stateForCity } = require('../config/indianCities');
+const { canonicalCity, stateForCity } = require('../config/indianCities');
+const { ensureCustomCities, cityOptions, addCity: addCityToList } = require('../services/city.service');
 const { uploadBuffer, deleteFiles, openDownloadStream, getBuffer } = require('../services/fileStore.service');
 const { dlp, stockistPrice } = require('../config/kitContent');
 const { refreshLeadScore, setStage, markLive } = require('../services/leadScore.service');
@@ -290,6 +291,8 @@ const createLead = asyncHandler(async (req, res) => {
   const { assignedExecId, internalNotes, followUpDate, followUpNote, ...rest } = req.body;
   // Every stored city goes through the canonical Indian-city list, so one city
   // is always spelled one way ("mumbay" and "Bombay" both land as "Mumbai").
+  // User-added cities count as listed, so they aren't fuzzy-snapped away.
+  await ensureCustomCities();
   rest.city = canonicalCity(rest.city);
   // The state follows the chosen city; a hand-entered state only survives for
   // cities off the Indian list (e.g. foreign cities on export leads).
@@ -328,21 +331,26 @@ const createLead = asyncHandler(async (req, res) => {
   res.status(201).json({ success: true, data: populated });
 });
 
-// GET /api/cities — the city dropdown's options: the canonical Indian list
-// plus any distinct city already stored on a lead (legacy or foreign values
-// survive normalisation and stay selectable). With ?inUse=true it instead
-// returns only the cities on leads the caller can see — the option set for the
-// lead-list filter.
+// GET /api/cities — the city dropdown's options: the canonical Indian list,
+// user-added cities, and any distinct city already stored on a lead (legacy or
+// foreign values survive normalisation and stay selectable), one entry per
+// city. With ?inUse=true it instead returns only the cities on leads the
+// caller can see — the option set for the lead-list filter.
 const listCities = asyncHandler(async (req, res) => {
   if (req.query.inUse === 'true') {
     const inUse = await Lead.distinct('city', scopeFilter(req.user));
     return res.json({ success: true, data: inUse.filter(Boolean).sort((a, b) => a.localeCompare(b)) });
   }
-  const dbCities = await Lead.distinct('city');
-  const all = [...new Set([...INDIAN_CITIES, ...dbCities.filter(Boolean)])].sort((a, b) =>
-    a.localeCompare(b)
-  );
-  res.json({ success: true, data: all });
+  res.json({ success: true, data: await cityOptions() });
+});
+
+// POST /api/cities — add a city missing from the dropdown. Duplicates are
+// refused: any spelling, old name or alias of a listed city returns that city
+// instead, and a near-miss ("Mumbay") returns `similar` until resent with
+// force=true.
+const addCity = asyncHandler(async (req, res) => {
+  const result = await addCityToList(req.body.name, { force: req.body.force, user: req.user, ip: req.ip });
+  res.status(result.created ? 201 : 200).json({ success: true, data: result });
 });
 
 // GET /api/states — the lead-list State filter's option set: the distinct
@@ -658,6 +666,7 @@ const updateLead = asyncHandler(async (req, res) => {
     lead.assignedExecId = await resolveExecId(req, assignedExecId);
   }
   if (rest.city !== undefined) {
+    await ensureCustomCities();
     rest.city = canonicalCity(rest.city);
     // Re-derive the state from the (possibly changed) city; a manual state is
     // only kept when the city isn't on the Indian list.
@@ -1889,6 +1898,7 @@ const markDelivered = asyncHandler(async (req, res) => {
 
 module.exports = {
   listCities,
+  addCity,
   listStates,
   listUsageOptions,
   listCreators,
