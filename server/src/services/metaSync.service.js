@@ -42,6 +42,7 @@ const Counter = require('../models/Counter');
 const Setting = require('../models/Setting');
 const { logActivity } = require('./activity.service');
 const { canonicalCity, stateForCity } = require('../config/indianCities');
+const { ensureCustomCities } = require('./city.service');
 
 // The Meta Ads lead-form sheet this sync was originally built against. Used
 // only when no sheet has been configured yet (fresh deploy, no DB config) and
@@ -384,6 +385,9 @@ async function runSync(opts = {}) {
     : await listSheetSources();
 
   const metaUser = apply ? await getMetaUser() : await getMetaUser({ create: false });
+
+  // User-added cities count as listed, so form values matching one keep it.
+  await ensureCustomCities({ force: true });
 
   // Loaded once and shared across every sheet so a lead already imported from
   // (or a phone number already on) one sheet is correctly recognised while

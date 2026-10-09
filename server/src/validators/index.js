@@ -281,6 +281,12 @@ const emailSettingsSchema = z
   });
 
 // ---------- Export kit ----------
+// A city added from the city dropdown; force=true confirms a near-miss.
+const citySchema = z.object({
+  name: z.string().trim().min(2, 'City name is required').max(60, 'City name is too long'),
+  force: z.boolean().optional(),
+});
+
 const exportCountrySchema = z.object({
   name: z.string().min(2, 'Country name is required'),
   code: z.string().max(3).optional().or(z.literal('')),
@@ -777,6 +783,7 @@ module.exports = {
   dailyReportEmailSchema,
   dayEndPlanSchema,
   dayEndFollowUpSchema,
+  citySchema,
   exportCountrySchema,
   exchangeRatesSchema,
   exportRateCardSchema,
