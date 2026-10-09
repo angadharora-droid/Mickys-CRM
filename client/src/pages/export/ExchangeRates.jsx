@@ -8,13 +8,8 @@ import { Label } from '@/components/ui/label';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
+import { QUOTED_CURRENCIES as QUOTED } from '@/lib/currencies';
 import { Landmark, Pencil, RefreshCw } from 'lucide-react';
-
-const QUOTED = [
-  { code: 'USD', symbol: '$', name: 'US Dollar' },
-  { code: 'EUR', symbol: '€', name: 'Euro' },
-  { code: 'GBP', symbol: '£', name: 'British Pound' },
-];
 
 /**
  * The stored daily exchange rates used on every export rate card (INR per one
@@ -93,7 +88,7 @@ export default function ExchangeRates({ isAdmin }) {
               <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} /> {refreshing ? 'Refreshing…' : 'Refresh from feed'}
             </Button>
             {!draft && (
-              <Button size="sm" variant="ghost" onClick={() => setDraft({ USD: fx?.inrPer?.USD, EUR: fx?.inrPer?.EUR, GBP: fx?.inrPer?.GBP })} disabled={!fx}>
+              <Button size="sm" variant="ghost" onClick={() => setDraft(Object.fromEntries(QUOTED.map((c) => [c.code, fx?.inrPer?.[c.code]])))} disabled={!fx}>
                 <Pencil className="h-4 w-4" /> Set manually
               </Button>
             )}
@@ -102,18 +97,23 @@ export default function ExchangeRates({ isAdmin }) {
       </div>
 
       {loading ? (
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {QUOTED.map((c) => <Skeleton key={c.code} className="h-24 rounded-lg" />)}
         </div>
       ) : !fx ? null : !draft ? (
         <>
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             {QUOTED.map((c) => (
               <div key={c.code} className="rounded-lg border p-4">
                 <p className="text-xs uppercase tracking-wide text-muted-foreground">{c.name}</p>
-                <p className="text-2xl font-semibold tabular-nums mt-1">
-                  {c.symbol}1 = ₹{Number(fx.inrPer?.[c.code] || 0).toLocaleString('en-IN', { maximumFractionDigits: 4 })}
-                </p>
+                {/* A newly added currency has no rate until the next feed refresh. */}
+                {fx.inrPer?.[c.code] > 0 ? (
+                  <p className="text-xl font-semibold tabular-nums mt-1 whitespace-nowrap">
+                    {c.symbol}1 = ₹{Number(fx.inrPer[c.code]).toLocaleString('en-IN', { maximumFractionDigits: 4 })}
+                  </p>
+                ) : (
+                  <p className="text-sm text-muted-foreground mt-2">Not set yet — refresh from feed</p>
+                )}
               </div>
             ))}
           </div>
@@ -126,7 +126,7 @@ export default function ExchangeRates({ isAdmin }) {
         </>
       ) : (
         <div className="space-y-4">
-          <div className="grid gap-4 sm:grid-cols-3">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             {QUOTED.map((c) => (
               <div key={c.code} className="space-y-2">
                 <Label>{c.code} — ₹ per {c.symbol}1</Label>

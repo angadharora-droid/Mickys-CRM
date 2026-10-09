@@ -2,6 +2,7 @@ const asyncHandler = require('../utils/asyncHandler');
 const ApiError = require('../utils/ApiError');
 const ExportCountry = require('../models/ExportCountry');
 const ExchangeRate = require('../models/ExchangeRate');
+const { describeRates } = require('../config/currencies');
 const Setting = require('../models/Setting');
 const exportKit = require('../services/exportKit.service');
 const fx = require('../services/fx.service');
@@ -73,7 +74,7 @@ const refreshExchangeRates = asyncHandler(async (req, res) => {
   const doc = await fx.refreshRates();
   await logActivity({
     userId: req.user._id, action: 'FX_RATES_REFRESHED', entity: 'ExchangeRate', entityId: doc._id,
-    details: `Refreshed export exchange rates from ${doc.source} (USD ${doc.inrPer.USD} · EUR ${doc.inrPer.EUR} · GBP ${doc.inrPer.GBP})`, ip: req.ip,
+    details: `Refreshed export exchange rates from ${doc.source} (${describeRates(doc.inrPer)})`, ip: req.ip,
   });
   res.json({ success: true, data: doc });
 });
@@ -87,7 +88,7 @@ const updateExchangeRates = asyncHandler(async (req, res) => {
   await doc.save();
   await logActivity({
     userId: req.user._id, action: 'FX_RATES_UPDATED', entity: 'ExchangeRate', entityId: doc._id,
-    details: `Manually set export exchange rates (USD ${doc.inrPer.USD} · EUR ${doc.inrPer.EUR} · GBP ${doc.inrPer.GBP})`, ip: req.ip,
+    details: `Manually set export exchange rates (${describeRates(doc.inrPer)})`, ip: req.ip,
   });
   res.json({ success: true, data: doc });
 });
