@@ -157,6 +157,10 @@ function buildFobCard({ loadingType, containerSize, country, currency, lines, fx
     if (!(qty > 0)) throw ApiError.badRequest(`Quantity for "${l.productName}" must be at least 1`);
     const baseRateInr = round2(l.baseRateInr);
     const cartonInr = l.unitsPerCarton ? round2(baseRateInr * l.unitsPerCarton) : null;
+    // The printed per-pack rate is the price; carton and line amounts are
+    // built from it (not converted separately from INR), so the card
+    // reconciles: FOB/Carton = rate × units, Amount = rate × qty.
+    const exportRate = toCur(baseRateInr);
     return {
       ...l,
       qty,
@@ -167,16 +171,19 @@ function buildFobCard({ loadingType, containerSize, country, currency, lines, fx
       perUnitAddonInr: 0,
       exportRateInr: baseRateInr,
       cartonPriceInr: cartonInr,
-      baseRate: toCur(baseRateInr),
+      baseRate: exportRate,
       perUnitAddon: 0,
-      exportRate: toCur(baseRateInr),
-      cartonPrice: cartonInr === null ? null : toCur(cartonInr),
-      lineTotal: toCur(baseRateInr * qty),
+      exportRate,
+      cartonPrice: cartonInr === null ? null : round2(exportRate * l.unitsPerCarton),
+      lineTotal: round2(exportRate * qty),
     };
   });
   if (!computed.length) throw ApiError.badRequest('Select at least one product');
 
   const goodsValueInr = round2(computed.reduce((s, l) => s + l.lineValueInr, 0));
+  // The total is the sum of the Amount column as printed.
+  const goodsValue = round2(computed.reduce((s, l) => s + l.lineTotal, 0));
+  const totalQty = computed.reduce((s, l) => s + l.qty, 0);
   if (!(goodsValueInr > 0)) throw ApiError.badRequest('The shipment has no value — check the rates');
   const missingWeight = computed.filter((l) => l.unitWeightKg === null).map((l) => l.sku);
   const totalWeightKg = missingWeight.length
@@ -210,18 +217,23 @@ function buildFobCard({ loadingType, containerSize, country, currency, lines, fx
     lines: computed,
     summary: {
       lineCount: computed.length,
+      totalQty,
       totalWeightKg,
+      // Share of the standard payload the listed quantities fill (null when a
+      // pack weight is missing) — the rates are costed on a full payload.
+      payloadSharePercent:
+        totalWeightKg === null ? null : round2((totalWeightKg / assumptions.payloadKg) * 100),
       goodsValueInr,
       insuranceInr: 0,
       freightInr: 0,
       freightLabel,
       logisticsInr: 0,
       grandTotalInr: goodsValueInr,
-      goodsValue: toCur(goodsValueInr),
+      goodsValue,
       insurance: 0,
       freight: 0,
       logistics: 0,
-      grandTotal: toCur(goodsValueInr),
+      grandTotal: goodsValue,
       warnings,
     },
     rateCardTerms: rateCardTerms || '',
@@ -840,9 +852,9 @@ function fobRateTable(doc, y, card, footerLabel) {
 
   const defs = [
     ['sr', 'Sr', 20, 'left'],
-    ['name', 'Product Name', cur === 'INR' ? 185 : 140, 'left'],
+    ['name', 'Product Name', cur === 'INR' ? 175 : 130, 'left'],
     ['pack', 'Pack', 42, 'left'],
-    ['qty', 'Qty', 30, 'right'],
+    ['qty', 'Qty\n(packs)', 40, 'right'],
     ...(cur === 'INR' ? [] : [['rateInr', 'FOB Rate\n(Rs.)', 55, 'right']]),
     ['rate', `FOB Rate\n(${cur})`, 58, 'right'],
     ['upc', 'Units/\nCarton', 34, 'right'],
@@ -907,22 +919,41 @@ function fobRateTable(doc, y, card, footerLabel) {
   return y + 6;
 }
 
-/** FOB total: goods value only — freight/insurance are quoted separately. */
+/**
+ * FOB total: the sum of the Amount column for the quantities listed — goods
+ * only, freight/insurance are quoted separately. The note says what that sum
+ * covers and how far the listed quantities are from the standard payload the
+ * rates are costed on, so a basket of sample quantities can't be read as the
+ * value of a container.
+ */
 function fobTotalsBlock(doc, y, card, footerLabel) {
   const { summary, config } = card;
   const cur = config.currency;
   const W = contentWidth(doc);
-  if (y > bottomLimit(doc) - 60) y = newPage(doc, footerLabel);
+  if (y > bottomLimit(doc) - 70) y = newPage(doc, footerLabel);
   const valX = M + W - 200;
   doc.rect(M, y, W, 20).fill(MAROON);
-  doc.font('Helvetica-Bold').fontSize(9).fill('#ffffff').text('TOTAL FOB VALUE', M + 4, y + 6);
+  doc.font('Helvetica-Bold').fontSize(9).fill('#ffffff').text('TOTAL FOR QUANTITIES LISTED', M + 4, y + 6);
   doc.font('Helvetica-Bold').fontSize(9).fill(GOLD)
     .text(money(summary.grandTotal, cur) + (cur !== 'INR' ? `   (${inr(summary.grandTotalInr)})` : ''), valX, y + 6, { width: 200 - 4, align: 'right' });
   y += 26;
-  doc.font('Helvetica-Oblique').fontSize(7.5).fill(SLATE)
-    .text(`${summary.freightLabel}.`, M, y, { width: W });
+
+  const payloadMt = (config.fob.payloadKg / 1000).toLocaleString('en-IN');
+  const packs = `${summary.totalQty.toLocaleString('en-IN')} pack${summary.totalQty === 1 ? '' : 's'}`;
+  const share = summary.payloadSharePercent;
+  const weight =
+    summary.totalWeightKg === null
+      ? ''
+      : ` · ${summary.totalWeightKg.toLocaleString('en-IN')} kg, ${share < 0.1 ? 'under 0.1' : share.toLocaleString('en-IN', { maximumFractionDigits: 1 })}% of the ${payloadMt} MT standard payload`;
+  const notContainer =
+    share === null || share < 90
+      ? ` This is not the value of a full container — the rates are costed on the ${payloadMt} MT payload and apply per pack and per carton.`
+      : '';
+  const note = `Sum of the Amount column for the quantities listed (${packs}${weight}).${notContainer} ${summary.freightLabel}.`;
+  doc.font('Helvetica-Oblique').fontSize(7.5).fill(SLATE).text(note, M, y, { width: W });
+  y += doc.heightOfString(note, { width: W });
   doc.fillColor(INK);
-  return y + 16;
+  return y + 8;
 }
 
 function termsBlock(doc, y, termsText, footerLabel) {
@@ -1001,13 +1032,12 @@ function renderFobCardPdf(card, ctx = {}) {
     doc.font('Helvetica-Bold').fontSize(9).fill('#ffffff')
       .text('STANDARD FOB PRICE LIST BY SKU', M, y + 5, { width: W, align: 'center' });
     y += 24;
-    doc.font('Helvetica').fontSize(7.5).fill(SLATE)
-      .text(
-        `All prices in ${config.currency} per pack  ·  standard mixed-load export logistics and target margin ` +
-          'are built into every rate  ·  GST zero-rated for export',
-        M, y, { width: W }
-      );
-    y += 16;
+    const intro =
+      `All prices in ${config.currency} per pack, costed on the standard ${(config.fob.payloadKg / 1000).toLocaleString('en-IN')} MT ` +
+      'payload with export logistics and target margin built into every rate  ·  Qty and Amount cover only the ' +
+      'quantities listed, not a container load  ·  GST zero-rated for export';
+    doc.font('Helvetica').fontSize(7.5).fill(SLATE).text(intro, M, y, { width: W });
+    y += doc.heightOfString(intro, { width: W }) + 6;
     y = fobRateTable(doc, y, card, footerLabel);
     y = fobTotalsBlock(doc, y + 4, card, footerLabel);
 

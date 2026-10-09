@@ -422,7 +422,7 @@ export default function ExportKitStep({ lead, locked, busy, terms, onTermsChange
                 <TableHeader>
                   <TableRow>
                     <TableHead>Product</TableHead>
-                    <TableHead className="text-right">Qty</TableHead>
+                    <TableHead className="text-right">Qty (packs)</TableHead>
                     <TableHead className="text-right">Wt (kg)</TableHead>
                     <TableHead className="text-right">FOB rate</TableHead>
                     <TableHead className="text-right">Units/carton</TableHead>
@@ -451,7 +451,7 @@ export default function ExportKitStep({ lead, locked, busy, terms, onTermsChange
 
             <div className="grid gap-2 sm:max-w-md sm:ml-auto text-sm">
               <div className="flex justify-between gap-4 border-t pt-2 font-semibold">
-                <span>Total FOB value</span>
+                <span>Total for quantities listed</span>
                 <span className="tabular-nums">
                   {fmtMoney(preview.summary.grandTotal, preview.config.currency)}
                   {preview.config.currency !== 'INR' && (
@@ -462,8 +462,10 @@ export default function ExportKitStep({ lead, locked, busy, terms, onTermsChange
               <p className="text-xs text-muted-foreground text-right">{preview.summary.freightLabel}.</p>
               {preview.summary.totalWeightKg !== null && (
                 <p className="text-xs text-muted-foreground text-right">
-                  Shipment weight: {preview.summary.totalWeightKg.toLocaleString('en-IN')} kg
-                  {preview.config.fob ? ` · standard payload ${(preview.config.fob.payloadKg / 1000).toLocaleString('en-IN')} t` : ''}
+                  Quantities listed: {preview.summary.totalWeightKg.toLocaleString('en-IN')} kg
+                  {preview.config.fob && preview.summary.payloadSharePercent !== undefined
+                    ? ` · ${preview.summary.payloadSharePercent < 0.1 ? 'under 0.1' : preview.summary.payloadSharePercent.toLocaleString('en-IN', { maximumFractionDigits: 1 })}% of the ${(preview.config.fob.payloadKg / 1000).toLocaleString('en-IN')} t standard payload the rates are costed on`
+                    : ''}
                 </p>
               )}
             </div>
