@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import EmptyState from '@/components/shared/EmptyState';
 import TableSkeleton from '@/components/shared/TableSkeleton';
+import { CUR_SYMBOL, EXPORT_CURRENCIES } from '@/lib/currencies';
 import { Calculator, Loader2, Package, Search, Ship, TriangleAlert } from 'lucide-react';
 
 // Which FOB assumption set a shipment maps to (mirrors the server).
@@ -23,8 +24,6 @@ const CONTAINER_OPTIONS = [
   { size: 'ft40', label: '40 ft FCL' },
 ];
 
-const CURRENCIES = ['USD', 'EUR', 'GBP', 'INR'];
-const CUR_SYMBOL = { USD: '$', EUR: '€', GBP: '£', INR: '₹' };
 
 /** "500 g" / "1kg" -> pack weight in kg, or null (mirrors the server parser). */
 function parsePackWeightKg(packSize) {
@@ -234,7 +233,7 @@ export default function ExportKitStep({ lead, locked, busy, terms, onTermsChange
               <Select value={currency} onValueChange={(v) => { setCurrency(v); invalidate(); }} disabled={locked}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {CURRENCIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                  {EXPORT_CURRENCIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>

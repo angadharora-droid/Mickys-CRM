@@ -1,4 +1,5 @@
 const { z } = require('zod');
+const { QUOTED_CODES, EXPORT_CURRENCIES } = require('../config/currencies');
 
 const objectId = z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid id');
 
@@ -298,11 +299,7 @@ const exportCountrySchema = z.object({
 // Manual override of the stored daily rates (INR per 1 unit of currency).
 const exchangeRatesSchema = z.object({
   inrPer: z
-    .object({
-      USD: z.coerce.number().positive(),
-      EUR: z.coerce.number().positive(),
-      GBP: z.coerce.number().positive(),
-    })
+    .object(Object.fromEntries(QUOTED_CODES.map((c) => [c, z.coerce.number().positive()])))
     .partial()
     .refine((v) => Object.keys(v).length > 0, { message: 'Provide at least one rate' }),
 });
@@ -339,7 +336,7 @@ const exportShipmentBase = z.object({
   loadingType: z.enum(['full', 'part']),
   containerSize: z.enum(['ft20', 'ft40']).optional(),
   countryId: objectId.optional(),
-  currency: z.enum(['USD', 'EUR', 'GBP', 'INR']),
+  currency: z.enum(EXPORT_CURRENCIES),
   lines: z.array(exportLineSchema).min(1, 'Select at least one product'),
 });
 

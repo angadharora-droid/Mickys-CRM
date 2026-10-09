@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { EXPORT_CURRENCIES } = require('../config/currencies');
 
 const BUSINESS_TYPES = [
   'Hotel',
@@ -91,7 +92,7 @@ const exportConfigSchema = new mongoose.Schema(
     rateType: { type: String, enum: ['distributor', 'institution', 'fob'], default: 'distributor' },
     loadingType: { type: String, enum: ['full', 'part'], default: 'full' },
     containerSize: { type: String, enum: ['', 'ft20', 'ft40'], default: 'ft20' },
-    currency: { type: String, enum: ['USD', 'EUR', 'GBP', 'INR'], default: 'USD' },
+    currency: { type: String, enum: EXPORT_CURRENCIES, default: 'USD' },
     countryId: { type: mongoose.Schema.Types.ObjectId, ref: 'ExportCountry' },
     countryName: { type: String, default: '' },
     countryCode: { type: String, default: '' },

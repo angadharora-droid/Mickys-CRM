@@ -1,7 +1,7 @@
 /**
  * Daily exchange-rate sync for the Export Kit.
  *
- * Rates are quoted as INR per 1 unit of foreign currency (USD / EUR / GBP) and
+ * Rates are quoted as INR per 1 unit of foreign currency (config/currencies.js) and
  * stored in the ExchangeRate singleton, so rate cards always convert from a
  * known, dated rate rather than a hardcoded one. The refresher runs in-process
  * on the API's own schedule (same pattern as the Meta Ads sheet poller): once
@@ -15,8 +15,7 @@
  */
 const env = require('../config/env');
 const ExchangeRate = require('../models/ExchangeRate');
-
-const QUOTED = ['USD', 'EUR', 'GBP'];
+const { QUOTED_CODES: QUOTED, describeRates } = require('../config/currencies');
 
 /** Fetches the feed and returns { inrPer, source } or throws. */
 async function fetchLiveRates() {
@@ -60,8 +59,7 @@ async function runScheduledRefresh() {
   running = true;
   try {
     const doc = await refreshRates();
-    const quote = QUOTED.map((c) => `${c} ${doc.inrPer[c]}`).join(' · ');
-    console.log(`[fx-sync] rates updated (INR per unit): ${quote}`);
+    console.log(`[fx-sync] rates updated (INR per unit): ${describeRates(doc.inrPer)}`);
   } catch (err) {
     console.error(`[fx-sync] refresh failed, keeping stored rates: ${err.message}`);
   } finally {
@@ -71,8 +69,9 @@ async function runScheduledRefresh() {
 
 /**
  * Start the in-process daily refresher. The boot pass only fires when the
- * stored rates are older than a day, so a restart loop doesn't hammer the feed.
- * Disable with FX_SYNC_ENABLED=false.
+ * stored rates are older than a day — or a quoted currency has no rate yet
+ * (one just added to config/currencies.js) — so a restart loop doesn't hammer
+ * the feed. Disable with FX_SYNC_ENABLED=false.
  */
 function startFxSync() {
   const { enabled, intervalHours } = env.fxSync;
@@ -86,7 +85,8 @@ function startFxSync() {
     try {
       const doc = await ExchangeRate.getGlobal();
       const ageMs = doc.fetchedAt ? Date.now() - doc.fetchedAt.getTime() : Infinity;
-      if (ageMs > intervalHours * 60 * 60 * 1000) await runScheduledRefresh();
+      const missing = QUOTED.some((c) => !(doc.inrPer?.[c] > 0));
+      if (missing || ageMs > intervalHours * 60 * 60 * 1000) await runScheduledRefresh();
     } catch (err) {
       console.error(`[fx-sync] boot check failed: ${err.message}`);
     }

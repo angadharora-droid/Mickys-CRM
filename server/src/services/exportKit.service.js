@@ -24,6 +24,7 @@ const RateItem = require('../models/RateItem');
 const FobItem = require('../models/FobItem');
 const ExportCountry = require('../models/ExportCountry');
 const ExchangeRate = require('../models/ExchangeRate');
+const { QUOTED_CURRENCIES } = require('../config/currencies');
 const Setting = require('../models/Setting');
 const ApiError = require('../utils/ApiError');
 const brand = require('../config/brand');
@@ -541,11 +542,10 @@ const BAND = '#efe7e0';
 const BORDER = '#e2ddd7';
 const M = 40;
 
-// £ and € are in PDFKit's WinAnsi built-ins; ₹ is not, hence the Rs. prefix.
+// Price prefixes come from config/currencies.js; ₹ isn't in PDFKit's WinAnsi
+// built-ins, hence the Rs. prefix for INR.
 const CUR_FMT = {
-  USD: { prefix: '$', locale: 'en-US' },
-  EUR: { prefix: '€', locale: 'en-US' },
-  GBP: { prefix: '£', locale: 'en-US' },
+  ...Object.fromEntries(QUOTED_CURRENCIES.map((c) => [c.code, { prefix: c.pdf, locale: 'en-US' }])),
   INR: { prefix: 'Rs. ', locale: 'en-IN' },
 };
 const money = (n, currency) => {
