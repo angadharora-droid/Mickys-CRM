@@ -24,7 +24,7 @@ const RateItem = require('../models/RateItem');
 const FobItem = require('../models/FobItem');
 const ExportCountry = require('../models/ExportCountry');
 const ExchangeRate = require('../models/ExchangeRate');
-const { QUOTED_CURRENCIES } = require('../config/currencies');
+const { QUOTED_CURRENCIES, currencyDecimals } = require('../config/currencies');
 const Setting = require('../models/Setting');
 const ApiError = require('../utils/ApiError');
 const brand = require('../config/brand');
@@ -39,6 +39,12 @@ const CONTAINER_SIZES = ['ft20', 'ft40'];
 const MASTER_FOR = { distributor: 'distributor', institution: 'institutional' };
 
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+/** Rounder for amounts in the quote currency: 2 places, 3 for KWD / OMR / BHD. */
+const currencyRounder = (currency) => {
+  const f = 10 ** currencyDecimals(currency);
+  return (n) => Math.round((Number(n) || 0) * f) / f;
+};
 
 /** "500 g" / "1kg" / "250 gm" -> weight of one pack in kg, or null. */
 function parsePackWeightKg(packSize) {
@@ -150,7 +156,8 @@ async function resolveFobLines(lines, fobCfg, variant) {
 function buildFobCard({ loadingType, containerSize, country, currency, lines, fxDoc, assumptions, rateCardTerms }) {
   const fxRate = currency === 'INR' ? 1 : Number(fxDoc.inrPer?.[currency]);
   if (!(fxRate > 0)) throw ApiError.badRequest(`No stored exchange rate for ${currency} — refresh or set rates first`);
-  const toCur = (inr) => round2(inr / fxRate);
+  const roundCur = currencyRounder(currency);
+  const toCur = (inr) => roundCur(inr / fxRate);
 
   const computed = lines.map((l) => {
     const qty = Math.floor(Number(l.qty));
@@ -174,15 +181,15 @@ function buildFobCard({ loadingType, containerSize, country, currency, lines, fx
       baseRate: exportRate,
       perUnitAddon: 0,
       exportRate,
-      cartonPrice: cartonInr === null ? null : round2(exportRate * l.unitsPerCarton),
-      lineTotal: round2(exportRate * qty),
+      cartonPrice: cartonInr === null ? null : roundCur(exportRate * l.unitsPerCarton),
+      lineTotal: roundCur(exportRate * qty),
     };
   });
   if (!computed.length) throw ApiError.badRequest('Select at least one product');
 
   const goodsValueInr = round2(computed.reduce((s, l) => s + l.lineValueInr, 0));
   // The total is the sum of the Amount column as printed.
-  const goodsValue = round2(computed.reduce((s, l) => s + l.lineTotal, 0));
+  const goodsValue = roundCur(computed.reduce((s, l) => s + l.lineTotal, 0));
   const totalQty = computed.reduce((s, l) => s + l.qty, 0);
   if (!(goodsValueInr > 0)) throw ApiError.badRequest('The shipment has no value — check the rates');
   const missingWeight = computed.filter((l) => l.unitWeightKg === null).map((l) => l.sku);
@@ -262,7 +269,8 @@ async function listFobItems(variant) {
 function buildCard({ rateType, loadingType, containerSize, container, country, currency, lines, fxDoc, rateCardTerms }) {
   const fxRate = currency === 'INR' ? 1 : Number(fxDoc.inrPer?.[currency]);
   if (!(fxRate > 0)) throw ApiError.badRequest(`No stored exchange rate for ${currency} — refresh or set rates first`);
-  const toCur = (inr) => round2(inr / fxRate);
+  const roundCur = currencyRounder(currency);
+  const toCur = (inr) => roundCur(inr / fxRate);
 
   const computed = lines.map((l) => {
     const qty = Math.floor(Number(l.qty));
@@ -560,9 +568,13 @@ const CUR_FMT = {
   ...Object.fromEntries(QUOTED_CURRENCIES.map((c) => [c.code, { prefix: c.pdf, locale: 'en-US' }])),
   INR: { prefix: 'Rs. ', locale: 'en-IN' },
 };
+/** "1,234.50" — table figures; pass the quote currency's decimals for prices. */
+const fixed = (n, dp = 2) =>
+  Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: dp, maximumFractionDigits: dp });
 const money = (n, currency) => {
   const f = CUR_FMT[currency] || CUR_FMT.INR;
-  return f.prefix + Number(n || 0).toLocaleString(f.locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const dp = currencyDecimals(currency);
+  return f.prefix + Number(n || 0).toLocaleString(f.locale, { minimumFractionDigits: dp, maximumFractionDigits: dp });
 };
 const inr = (n) => money(n, 'INR');
 
@@ -741,7 +753,7 @@ function rateTable(doc, y, card, footerLabel) {
     ...Object.keys(groups).filter((cat) => !content.CATEGORY_ORDER.includes(cat)),
   ];
 
-  const num = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const dp = currencyDecimals(cur);
   let sr = 0;
   categoryOrder.forEach((cat) => {
     const rows = groups[cat];
@@ -759,11 +771,11 @@ function rateTable(doc, y, card, footerLabel) {
         name: l.productName,
         pack: l.packSize,
         qty: String(l.qty),
-        wt: l.unitWeightKg === null ? '-' : num(l.unitWeightKg * l.qty),
-        base: num(l.baseRate),
-        addon: num(l.perUnitAddon),
-        rate: num(l.exportRate),
-        total: num(l.lineTotal),
+        wt: l.unitWeightKg === null ? '-' : fixed(l.unitWeightKg * l.qty),
+        base: fixed(l.baseRate, dp),
+        addon: fixed(l.perUnitAddon, dp),
+        rate: fixed(l.exportRate, dp),
+        total: fixed(l.lineTotal, dp),
       };
       doc.font('Helvetica').fontSize(7.5);
       cols.forEach((c) => doc.fill(c.key === 'rate' ? MAROON : INK).text(vals[c.key], c.x + 3, y + 4, { width: c.w - 6, align: c.align, lineBreak: false }));
@@ -886,7 +898,7 @@ function fobRateTable(doc, y, card, footerLabel) {
     ...Object.keys(groups).filter((cat) => !content.CATEGORY_ORDER.includes(cat)),
   ];
 
-  const num = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const dp = currencyDecimals(cur);
   let sr = 0;
   categoryOrder.forEach((cat) => {
     const rows = groups[cat];
@@ -904,11 +916,11 @@ function fobRateTable(doc, y, card, footerLabel) {
         name: l.productName,
         pack: l.packSize,
         qty: String(l.qty),
-        rateInr: num(l.baseRateInr),
-        rate: num(l.exportRate),
+        rateInr: fixed(l.baseRateInr),
+        rate: fixed(l.exportRate, dp),
         upc: l.unitsPerCarton ? String(l.unitsPerCarton) : '-',
-        carton: l.cartonPrice === null ? '-' : num(l.cartonPrice),
-        total: num(l.lineTotal),
+        carton: l.cartonPrice === null ? '-' : fixed(l.cartonPrice, dp),
+        total: fixed(l.lineTotal, dp),
       };
       doc.font('Helvetica').fontSize(7.5);
       cols.forEach((c) => doc.fill(c.key === 'rate' ? MAROON : INK).text(vals[c.key], c.x + 3, y + 4, { width: c.w - 6, align: c.align, lineBreak: false }));

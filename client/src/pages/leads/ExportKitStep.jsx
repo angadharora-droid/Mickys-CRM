@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import EmptyState from '@/components/shared/EmptyState';
 import TableSkeleton from '@/components/shared/TableSkeleton';
-import { CUR_SYMBOL, EXPORT_CURRENCIES } from '@/lib/currencies';
+import { CUR_SYMBOL, EXPORT_CURRENCIES, currencyDecimals } from '@/lib/currencies';
 import { Calculator, Loader2, Package, Search, Ship, TriangleAlert } from 'lucide-react';
 
 // Which FOB assumption set a shipment maps to (mirrors the server).
@@ -36,8 +36,8 @@ function parsePackWeightKg(packSize) {
 
 const fmtMoney = (n, cur) =>
   `${CUR_SYMBOL[cur] || ''}${Number(n || 0).toLocaleString(cur === 'INR' ? 'en-IN' : 'en-US', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
+    minimumFractionDigits: currencyDecimals(cur),
+    maximumFractionDigits: currencyDecimals(cur),
   })}`;
 
 /**
