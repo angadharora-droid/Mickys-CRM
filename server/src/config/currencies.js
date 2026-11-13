@@ -17,6 +17,7 @@ const QUOTED_CURRENCIES = [
   { code: 'EUR', name: 'Euro', pdf: '€', seed: 109 },
   { code: 'GBP', name: 'British Pound', pdf: '£', seed: 127 },
   { code: 'BND', name: 'Brunei Dollar', pdf: 'B$' },
+  { code: 'AUD', name: 'Australian Dollar', pdf: 'A$' },
 ];
 
 const QUOTED_CODES = QUOTED_CURRENCIES.map((c) => c.code);

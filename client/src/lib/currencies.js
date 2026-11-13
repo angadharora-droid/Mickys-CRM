@@ -5,6 +5,7 @@ export const QUOTED_CURRENCIES = [
   { code: 'EUR', symbol: '€', name: 'Euro' },
   { code: 'GBP', symbol: '£', name: 'British Pound' },
   { code: 'BND', symbol: 'B$', name: 'Brunei Dollar' },
+  { code: 'AUD', symbol: 'A$', name: 'Australian Dollar' },
 ];
 
 export const EXPORT_CURRENCIES = [...QUOTED_CURRENCIES.map((c) => c.code), 'INR'];
